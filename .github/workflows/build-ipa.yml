@@ -200,6 +200,32 @@ jobs:
           mv romfs.zip.part-* romfs.zip.sha256 "$GITHUB_WORKSPACE/out-romfs/"
           ls -lh "$GITHUB_WORKSPACE/out-romfs"
 
+      - name: Pack the app-only IPA (no bundled RomFS, for Documents/romfs)
+        if: success()
+        run: |
+          # The same app without its bundled RomFS: a small single-file download.
+          # The app prefers Documents/romfs over the bundled one, so anyone who
+          # already placed the RomFS pack there can install this over the top;
+          # the full split IPA below remains the self-contained fallback.
+          cd "$RUNNER_TEMP" && rm -rf slim-pack && mkdir slim-pack && cd slim-pack
+          unzip -q "$GITHUB_WORKSPACE/out/game.ipa"
+          rm -rf Payload/DmIOS.app/romfs
+          mkdir -p "$GITHUB_WORKSPACE/out-slim"
+          zip -q -r "$GITHUB_WORKSPACE/out-slim/game-slim.ipa" Payload
+          cd "$GITHUB_WORKSPACE/out-slim"
+          shasum -a 256 game-slim.ipa > game-slim.ipa.sha256
+          ls -lh
+
+      - name: Upload app-only IPA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nxnative-ipa-slim
+          path: |
+            out-slim/game-slim.ipa
+            out-slim/game-slim.ipa.sha256
+          retention-days: 7
+
       - name: Upload RomFS parts
         if: success()
         uses: actions/upload-artifact@v4
