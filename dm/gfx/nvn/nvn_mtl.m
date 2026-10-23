@@ -8264,8 +8264,10 @@ static int g_link_owns_layer, g_classic_busy;   // Under g_pq_mu: nextDrawable t
 static int link_on(void) { return g_dm_present_link && g_link != nil; }
 // Screens whose refresh rate is not a multiple of the link's (144 or 165 Hz against 60 or 30): asked for 60 Hz, the system fires the link on every third refresh of a 165 Hz screen,
 // 55 Hz, and a game paced by the link runs at 55 fps (27.5 at 30). There the link runs at the screen's rate and only the refreshes nearest a steady clock of the wanted rate count as
-// ticks (g_link_vperiod, NvMetalDisplayLinkDelegate): 60 a second on average, each frame shown on the refreshes nearest its 1/60 s slot. DM_LINK_VTICK=0 keeps the system's choice
+// ticks (g_link_vperiod, NvMetalDisplayLinkDelegate): 60 a second on average, each frame shown on the refreshes nearest its 1/60 s slot. DM_LINK_VTICK=0 keeps the system's choice.
+// In fullscreen the Mac front end switches such a screen to a rate that is a multiple where it has one (front_screen_match), and the range is set again for it (link_sync)
 __attribute__((weak)) int front_screen_max_fps(void) { return 0; }   // front_mac.m; graphics unit tests and iOS have none
+__attribute__((weak)) void front_screen_match(int fps) { (void)fps; }   // front_mac.m; graphics unit tests and iOS have none
 static CAFrameRateRange link_range(int mode) {
     static int on = -1; if (on < 0) { const char *e = getenv("DM_LINK_VTICK"); on = !(e && !strcmp(e, "0")); }
     int rate = mode == 3 ? 30 : mode == 2 ? 120 : 60, hz = on ? front_screen_max_fps() : 0;
@@ -8299,6 +8301,11 @@ static void link_sync(void) {   // Called every frame by the game's present thre
     static int applied; int want = g_dm_present_link;
     if (want < 0 || want > 2) { g_dm_present_link = applied == 3 ? 1 : applied; return; }
     if (want && mtl_fps_target() == 30) want = 3;   // Power-saving mode: display link at 30 Hz
+    if (want) front_screen_match(want == 3 ? 30 : want == 2 ? 120 : 60);
+    // The screen's rate changed (switched by front_screen_match, or another screen): the range again, virtual ticks or none. Taken only once the link object exists, so a change
+    // while its thread starts (after link_main read the rate) is not lost
+    static int hz_was; int hz = front_screen_max_fps(); CAMetalDisplayLink *lk = g_link;
+    if (lk && hz != hz_was) { hz_was = hz; if (want && want == applied) { lk.preferredFrameRateRange = link_range(want); MLOG("display link: the screen runs at %d Hz now, range set again (frame %llu)", hz, (unsigned long long)atomic_load(&g_cur_frame)); } }
     if (want == applied) return;
     g_link_mode = want;
     if (!g_link_started) {

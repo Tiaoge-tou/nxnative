@@ -1155,6 +1155,8 @@ def split_shaders(py, repo, roms, mains, pkg, env, logs, g, provisional=False, o
     tmp = pkg.with_name(pkg.name + '.partial'); rmtree(tmp); (tmp / 'tables').mkdir(parents=True)
     run([py, repo / 'dm/gfx/tools/shader_split.py', ','.join(map(str, roms)), ','.join(map(str, mains)), tmp / 'pkg'] + [tmp / 'tables' / n for n in names], logs / 'shader_split.log', env=env)
     m = re.search(r'shaders: (\d+) \(', (logs / 'shader_split.log').read_text(errors='replace'))
+    if m and m.group(1) == '0':   # dmsh_build.py would make no library, and the iOS shader step stop with no word of why
+        raise BuildError('the shader split found no shaders in main or the RomFS: the game keeps them in a form shader_split.py does not read; locate them (docs/agents) and add a reader')
     if provisional:   # a provisional profile takes the tables as they come
         for n in names: shutil.copyfile(tmp / 'tables' / n, g.table(n))
     else:
