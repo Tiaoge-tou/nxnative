@@ -97,6 +97,9 @@ jobs:
           fi
           unzip -q "$RUNNER_TEMP/game.zip" -d "$RUNNER_TEMP/game"
           rm -f "$RUNNER_TEMP/game.zip"
+          # Drop macOS metadata junk (._ AppleDouble files masquerade as .nsp/.nsz).
+          rm -rf "$RUNNER_TEMP/game/__MACOSX"
+          find "$RUNNER_TEMP/game" -name '._*' -delete
           # Accept one extra nesting level (a folder inside the zip).
           if ! find "$RUNNER_TEMP/game" -maxdepth 2 \( -iname '*.nsp' -o -iname '*.xci' -o -iname '*.nsz' \) | grep -q .; then
             echo "::error::No .nsp/.xci/.nsz found in the downloaded zip."
