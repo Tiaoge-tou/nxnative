@@ -956,6 +956,16 @@ void hle_signal_system_event(void *ev) {   // An unbound one is bound on the spo
         hle_bind_system_event(ev, 0);   // guest code (SVCs take G): outside the lock
     }
 }
+// Signal only a bound one, from any thread; 0 when it is not bound (never bound, or the game destroyed it). For state changes the front end reports (hle_hid.c: a controller
+// connected or removed), where binding on the spot is impossible off a guest thread and a destroyed event must not be bound again
+int hle_signal_bound_system_event(void *ev) {
+    pthread_mutex_lock(&G);
+    pthread_mutex_lock(&g_se_lock); uint32_t wh = se_find(ev); pthread_mutex_unlock(&g_se_lock);
+    event_t *e = wh ? h_get(wh, O_EVENT_W) : NULL;
+    if (e) { e->signaled = 1; wake_sync_waiters(e); }
+    pthread_mutex_unlock(&G);
+    return e != NULL;
+}
 void hle_clear_system_event(void *ev) {   // Clear a bound service-layer SystemEvent (any thread), as the service does when its condition ends; an unbound one has nothing to clear
     pthread_mutex_lock(&G);
     pthread_mutex_lock(&g_se_lock); uint32_t wh = se_find(ev); pthread_mutex_unlock(&g_se_lock);

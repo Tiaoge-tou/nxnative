@@ -88,6 +88,7 @@ void *objmap_get(const void *guest); void objmap_put(const void *guest, void *ho
 void hle_signal_system_event(void *g);   // hle_thread.c: signal a service-layer SystemEvent (any thread)
 void hle_bind_system_event(void *g, int autoclear);   // On a guest thread, bind a guest SystemEvent to a kernel event
 void hle_clear_system_event(void *g);    // hle_thread.c: clear a bound service-layer SystemEvent (any thread)
+int hle_signal_bound_system_event(void *g);   // hle_thread.c: signal a service-layer SystemEvent only if it is bound (any thread); 0 when it is not
 // Page fault hook / hook before the host writes guest memory (crash.c; used for write-protect dirty page tracking)
 void dm_fault_hook_register(int (*fn)(void *addr, int is_write, void *uc));
 void dm_guest_write_prep_register(void (*fn)(void *addr, size_t len));
