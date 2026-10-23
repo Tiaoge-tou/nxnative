@@ -90,7 +90,8 @@ jobs:
           # plain curl cannot pass); anything else is fetched as a direct download.
           if printf '%s' "$NSP_ZIP_URL" | grep -q 'drive\.google\.com\|drive\.usercontent\.google\.com'; then
             python3 -m pip install --user gdown
-            python3 -m gdown --fuzzy "$NSP_ZIP_URL" -O "$RUNNER_TEMP/game.zip"
+            # gdown 6.x takes the share URL (or file ID) directly; --fuzzy was removed.
+            python3 -m gdown "$NSP_ZIP_URL" -O "$RUNNER_TEMP/game.zip"
           else
             curl -fL --retry 3 -o "$RUNNER_TEMP/game.zip" "$NSP_ZIP_URL"
           fi
