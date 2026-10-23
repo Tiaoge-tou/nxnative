@@ -55,10 +55,13 @@ jobs:
           fi
           dotnet --list-sdks
           python3 -m pip install --user --break-system-packages lz4 capstone fonttools
-          # The script needs backports.zstd on Python 3.14+
+          # zstd: stdlib compression.zstd from Python 3.14; the backport is only for older Pythons.
           python3 - <<'EOF'
-          import sys, subprocess
-          if sys.version_info >= (3, 14):
+          import subprocess, sys
+          try:
+              import compression.zstd
+              print("stdlib compression.zstd OK")
+          except ImportError:
               subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "--break-system-packages", "backports.zstd"])
           EOF
 
