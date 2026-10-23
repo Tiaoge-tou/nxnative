@@ -94,19 +94,27 @@ int dm_opmode(void);   // hle_oe.c: 0 = handheld
 
 // ---- Skin layout (DM_PAD_SKIN=1 in dm/env.txt or Documents/env.txt; art in dm/padskin, staged into the bundle by build_ipa.sh) ----
 // Drawn controls are replaced by image controls in the layout of the fan Android port of Silksong: a fixed stick disc
-// bottom-left (its medallion knob follows the touch), three action keys and Bind bottom-right, quick map / inventory / pause
+// bottom-left (its medallion knob follows the touch), the action keys bottom-right in two rows, quick map / inventory / pause
 // small at the top-right. Centres are fractions of the whole screen, radii a fraction of its width. Keys follow the game's
-// Switch defaults; the ones the skin does not draw (X Needolin, R tool, ZL harpoon) stay available on a physical controller.
+// Switch defaults. The three skill keys (grp SK_SKILL: tool, Needolin, Clawline) do nothing until the skill is earned and
+// the pad cannot know the game's progress, so the eye key (grp SK_TOGGLE, not a game key) shows or hides them; they are
+// shown again at each launch.
 static BOOL padSkin(void) { const char *e = getenv("DM_PAD_SKIN"); return e && atoi(e); }
-static const struct { const char *art; int bit; CGFloat x, y, r; } k_skin[] = {
-    {"attack", B_Y,     0.684, 0.822, 0.034},   // needle attack
-    {"jump",   B_B,     0.781, 0.822, 0.034},
-    {"dash",   B_ZR,    0.876, 0.822, 0.034},   // Swift Step: tap dashes, hold sprints
-    {"bind",   B_A,     0.877, 0.616, 0.034},   // Bind (heal), above the row
-    {"map",    B_L,     0.746, 0.080, 0.020},   // quick map
-    {"bag",    B_MINUS, 0.820, 0.080, 0.020},   // inventory
-    {"pause",  B_PLUS,  0.893, 0.080, 0.020},
+enum { SK_ALWAYS, SK_SKILL, SK_TOGGLE };
+static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_skin[] = {
+    {"attack",   B_Y,     SK_ALWAYS, 0.684, 0.822, 0.040},   // needle attack
+    {"jump",     B_B,     SK_ALWAYS, 0.781, 0.822, 0.040},
+    {"dash",     B_ZR,    SK_ALWAYS, 0.876, 0.822, 0.040},   // Swift Step: tap dashes, hold sprints
+    {"tool",     B_R,     SK_SKILL,  0.684, 0.616, 0.040},   // the equipped tool
+    {"needolin", B_X,     SK_SKILL,  0.781, 0.616, 0.040},   // Needolin
+    {"bind",     B_A,     SK_ALWAYS, 0.877, 0.616, 0.040},   // Bind (heal)
+    {"clawline", B_ZL,    SK_SKILL,  0.877, 0.410, 0.040},   // Clawline
+    {"eye",      0,       SK_TOGGLE, 0.672, 0.080, 0.023},   // show / hide the skill keys
+    {"map",      B_L,     SK_ALWAYS, 0.746, 0.080, 0.023},   // quick map
+    {"bag",      B_MINUS, SK_ALWAYS, 0.820, 0.080, 0.023},   // inventory
+    {"pause",    B_PLUS,  SK_ALWAYS, 0.893, 0.080, 0.023},
 };
+#define SKIN_N (int)(sizeof k_skin / sizeof k_skin[0])
 static CALayer *imgLayer(CALayer *parent, const char *name) {
     NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"dm/padskin/%s.png", name]];
     CALayer *l = [CALayer layer]; l.contents = (id)[UIImage imageWithContentsOfFile:p].CGImage; [parent addSublayer:l]; return l;
@@ -132,7 +140,8 @@ static __weak DmGamepad *g_view;
     UITouch *_game[16];                            // touches on the game's touch screen by finger slot
     BOOL _skin;                                    // DM_PAD_SKIN: the image controls below replace the drawn ones
     CALayer *_skinDisc, *_skinKnob;                // the skin's stick disc and its knob (the knob follows the touch)
-    CALayer *_skinBtn[7];                          // the skin's keys, in k_skin order
+    CALayer *_skinBtn[SKIN_N];                     // the skin's keys, in k_skin order
+    BOOL _skillOff;                                // the skill keys (grp SK_SKILL) are hidden by the eye key
 }
 
 static UIColor *k_idle, *k_on, *k_line, *k_ringFill, *k_text, *k_textOn;
@@ -174,7 +183,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
         if (_skin) {   // image controls instead of the drawn ones; the drawn layers stay hidden for good
             _skinDisc = imgLayer(_controls, "stick"); _skinDisc.opacity = 0.75;
             _skinKnob = imgLayer(_controls, "knob"); _skinKnob.opacity = 0.95;
-            for (int i = 0; i < 7; i++) { _skinBtn[i] = imgLayer(_controls, k_skin[i].art); _skinBtn[i].opacity = 0.75; }
+            for (int i = 0; i < SKIN_N; i++) { _skinBtn[i] = imgLayer(_controls, k_skin[i].art); _skinBtn[i].opacity = 1.0; }
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _swap.hidden = YES; _swapLabel.hidden = YES; _ring.hidden = YES; _knob.hidden = YES;
         }
@@ -236,9 +245,10 @@ static BOOL isClick(int b) { return b == B_LS || b == B_RS; }
 - (CGPoint)swapCenter { CGRect s = self.safe; return CGPointMake(CGRectGetMidX(s), CGRectGetMinY(s) + K_PILL_Y * self.u); }
 
 static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); }
-- (int)skinBtnAt:(CGPoint)p {   // skin mode: the image key under the point, or -1
+- (int)skinBtnAt:(CGPoint)p {   // skin mode: the image key under the point, or -1 (hidden skill keys take no touch)
     CGRect b = self.bounds;
-    for (int i = 0; i < 7; i++) { CGPoint c = CGPointMake(k_skin[i].x * b.size.width, k_skin[i].y * b.size.height);
+    for (int i = 0; i < SKIN_N; i++) { if (_skillOff && k_skin[i].grp == SK_SKILL) continue;
+        CGPoint c = CGPointMake(k_skin[i].x * b.size.width, k_skin[i].y * b.size.height);
         if (dist(p, c) <= k_skin[i].r * b.size.width * 1.35) return i; }
     return -1;
 }
@@ -326,6 +336,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         CGPoint p = [t locationInView:self];
         if (_skin) {   // skin mode: an image key, the disc (a fixed stick), else the game's touch screen
             int sb = [self skinBtnAt:p];
+            if (sb >= 0 && k_skin[sb].grp == SK_TOGGLE) { _skillOff = !_skillOff; [self refresh]; continue; }   // the eye key only flips the skill keys' visibility
             if (sb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_skin[sb].bit << 8) forKey:t]; continue; }
             if (!_stick[0] && dist(p, self.stickHome) <= [self stickR:0] * K_STICK_GRAB) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p; continue; }
             game |= [self gameBegin:t]; continue;
@@ -416,7 +427,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         CGRect b = self.bounds; CGFloat d = 0.148 * b.size.width; CGPoint hc = self.stickHome;
         _skinDisc.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d);
         CGFloat kd = d * 0.67; _skinKnob.bounds = CGRectMake(0, 0, kd, kd); _skinKnob.position = hc;
-        for (int i = 0; i < 7; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width;
+        for (int i = 0; i < SKIN_N; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width;
             _skinBtn[i].frame = CGRectMake(k_skin[i].x * b.size.width - dd / 2, k_skin[i].y * b.size.height - dd / 2, dd, dd); }
         [CATransaction commit]; [self refresh]; return;
     }
@@ -452,9 +463,12 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     _swap.fillColor = (_swapHeld ? k_on : k_idle).CGColor; _swapLabel.foregroundColor = (_swapHeld ? k_textOn : k_text).CGColor;
     CGPoint h = self.stickHome, o = [self knobOffset:0];
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
-    if (_skin) {   // pressed keys light up and dip; the medallion knob follows the touch, kept inside the disc
-        for (int i = 0; i < 7; i++) { BOOL on = (_btnBits >> k_skin[i].bit) & 1;
-            _skinBtn[i].opacity = on ? 1.0 : 0.75;
+    if (_skin) {   // pressed keys dip; the eye key dims while the skill keys are hidden; the medallion knob follows the touch, kept inside the disc
+        for (int i = 0; i < SKIN_N; i++) {
+            if (k_skin[i].grp == SK_TOGGLE) { _skinBtn[i].opacity = _skillOff ? 0.45 : 1.0; _skinBtn[i].transform = CATransform3DIdentity; continue; }
+            _skinBtn[i].hidden = _skillOff && k_skin[i].grp == SK_SKILL;
+            BOOL on = (_btnBits >> k_skin[i].bit) & 1;
+            _skinBtn[i].opacity = 1.0;
             _skinBtn[i].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
         CGFloat ol = hypot(o.x, o.y), maxO = 0.30 * [self stickR:0];
         if (ol > maxO) { o.x *= maxO / ol; o.y *= maxO / ol; }
