@@ -92,6 +92,26 @@ static const int k_btns[] = {B_ZL, B_L, B_ZR, B_R, B_MINUS, B_PLUS, B_LS, B_RS};
 static NSString *const k_layout_key = @"DmPadLayout";   // NSUserDefaults: 0 = 2D, 1 = 3D, 2 = Tap (DM_GAME_PAD_LAYOUT's numbers)
 int dm_opmode(void);   // hle_oe.c: 0 = handheld
 
+// ---- Skin layout (DM_PAD_SKIN=1 in dm/env.txt or Documents/env.txt; art in dm/padskin, staged into the bundle by build_ipa.sh) ----
+// Drawn controls are replaced by image controls in the layout of the fan Android port of Silksong: a fixed stick disc
+// bottom-left (its medallion knob follows the touch), three action keys and Bind bottom-right, quick map / inventory / pause
+// small at the top-right. Centres are fractions of the whole screen, radii a fraction of its width. Keys follow the game's
+// Switch defaults; the ones the skin does not draw (X Needolin, R tool, ZL harpoon) stay available on a physical controller.
+static BOOL padSkin(void) { const char *e = getenv("DM_PAD_SKIN"); return e && atoi(e); }
+static const struct { const char *art; int bit; CGFloat x, y, r; } k_skin[] = {
+    {"attack", B_Y,     0.684, 0.822, 0.034},   // needle attack
+    {"jump",   B_B,     0.781, 0.822, 0.034},
+    {"dash",   B_ZR,    0.876, 0.822, 0.034},   // Swift Step: tap dashes, hold sprints
+    {"bind",   B_A,     0.877, 0.616, 0.034},   // Bind (heal), above the row
+    {"map",    B_L,     0.746, 0.080, 0.020},   // quick map
+    {"bag",    B_MINUS, 0.820, 0.080, 0.020},   // inventory
+    {"pause",  B_PLUS,  0.893, 0.080, 0.020},
+};
+static CALayer *imgLayer(CALayer *parent, const char *name) {
+    NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"dm/padskin/%s.png", name]];
+    CALayer *l = [CALayer layer]; l.contents = (id)[UIImage imageWithContentsOfFile:p].CGImage; [parent addSublayer:l]; return l;
+}
+
 @interface DmGamepad : UIView
 @end
 static __weak DmGamepad *g_view;
@@ -110,6 +130,9 @@ static __weak DmGamepad *g_view;
     CALayer *_controls;                            // holds every control layer: hidden while a physical controller is connected (the view itself stays, for game touches)
     BOOL _padOff;                                  // a physical controller is connected: every touch goes to the game
     UITouch *_game[16];                            // touches on the game's touch screen by finger slot
+    BOOL _skin;                                    // DM_PAD_SKIN: the image controls below replace the drawn ones
+    CALayer *_skinDisc, *_skinKnob;                // the skin's stick disc and its knob (the knob follows the touch)
+    CALayer *_skinBtn[7];                          // the skin's keys, in k_skin order
 }
 
 static UIColor *k_idle, *k_on, *k_line, *k_ringFill, *k_text, *k_textOn;
@@ -147,6 +170,14 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             if (names[b]) _label[b] = label(_key[b], names[b]);   // the D-pad arms carry no label
         }
         _swap = shape(_controls); _swapLabel = label(_swap, @"");
+        _skin = padSkin();
+        if (_skin) {   // image controls instead of the drawn ones; the drawn layers stay hidden for good
+            _skinDisc = imgLayer(_controls, "stick"); _skinDisc.opacity = 0.75;
+            _skinKnob = imgLayer(_controls, "knob"); _skinKnob.opacity = 0.95;
+            for (int i = 0; i < 7; i++) { _skinBtn[i] = imgLayer(_controls, k_skin[i].art); _skinBtn[i].opacity = 0.75; }
+            for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
+            _swap.hidden = YES; _swapLabel.hidden = YES; _ring.hidden = YES; _knob.hidden = YES;
+        }
         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:k_layout_key];
         int l = saved ? (int)saved.integerValue : DM_GAME_PAD_LAYOUT;
         if (l == 2 && dm_opmode() != 0) l = 0;   // Tap only in handheld mode (env.txt's DM_OPMODE may have changed it)
@@ -162,8 +193,8 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
 }
 - (void)applyLayout {   // show / hide the controls for the current layout
     [CATransaction begin]; [CATransaction setDisableActions:YES];
-    for (int b = 0; b < B_N; b++) _key[b].hidden = _tap || (fullOnly(b) && !_full);
-    _ring.hidden = _knob.hidden = _tap;
+    for (int b = 0; b < B_N; b++) _key[b].hidden = _skin || _tap || (fullOnly(b) && !_full);
+    _ring.hidden = _knob.hidden = _skin || _tap;
     _swapLabel.string = _tap ? @"Tap" : _full ? @"3D" : @"2D";
     [CATransaction commit];
 }
@@ -185,9 +216,11 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
 - (CGFloat)faceR { return K_FACE_R * self.u; }
 - (CGPoint)facePos:(int)b { CGPoint c = self.faceCenter; CGFloat g = self.faceGap;
     switch (b) { case B_A: return CGPointMake(c.x + g, c.y); case B_B: return CGPointMake(c.x, c.y + g); case B_X: return CGPointMake(c.x, c.y - g); default: return CGPointMake(c.x - g, c.y); } }
-- (CGPoint)stickHome { CGRect s = self.corner; return side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u); }   // the left stick's ring centre
+- (CGPoint)stickHome {   // the left stick's ring centre; in skin mode the disc centre (a fraction of the whole screen)
+    if (_skin) { CGRect b = self.bounds; return CGPointMake(0.162 * b.size.width, 0.742 * b.size.height); }
+    CGRect s = self.corner; return side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u); }
 - (CGPoint)stickCentre:(int)i { return i ? _rCentre : self.stickHome; }
-- (CGFloat)stickR:(int)i { return (i ? K_RSTICK_R : K_STICK_R) * self.u; }
+- (CGFloat)stickR:(int)i { if (_skin && !i) return 0.074 * self.bounds.size.width; return (i ? K_RSTICK_R : K_STICK_R) * self.u; }
 - (BOOL)inRightArea:(CGPoint)p { CGRect b = self.bounds; return p.x >= CGRectGetMaxX(b) - b.size.width * K_RSWIPE; }
 - (CGPoint)dpadCenter { CGRect s = self.corner; CGFloat u = self.u; return side(s, 0, K_LOW_X * u, CGRectGetMaxY(s) - K_LOW_Y * u); }
 - (CGFloat)dpadR { return K_DPAD_R * self.u; }
@@ -203,6 +236,12 @@ static BOOL isClick(int b) { return b == B_LS || b == B_RS; }
 - (CGPoint)swapCenter { CGRect s = self.safe; return CGPointMake(CGRectGetMidX(s), CGRectGetMinY(s) + K_PILL_Y * self.u); }
 
 static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); }
+- (int)skinBtnAt:(CGPoint)p {   // skin mode: the image key under the point, or -1
+    CGRect b = self.bounds;
+    for (int i = 0; i < 7; i++) { CGPoint c = CGPointMake(k_skin[i].x * b.size.width, k_skin[i].y * b.size.height);
+        if (dist(p, c) <= k_skin[i].r * b.size.width * 1.35) return i; }
+    return -1;
+}
 - (int)btnAt:(CGPoint)p {   // locked keys (tested on touch-down only, then locked)
     CGFloat u = self.u;
     for (int i = 0; i < (int)(sizeof k_btns / sizeof *k_btns); i++) { int b = k_btns[i];
@@ -266,7 +305,8 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (void)pushGame {
     CGRect b = self.bounds; CGFloat w = b.size.width, h = b.size.height;
     if (w <= 0 || h <= 0) return;
-    if (w / h > 16.0 / 9.0) w = h * 16.0 / 9.0; else h = w * 9.0 / 16.0;
+    const char *fs = getenv("DM_FULLSCREEN");   // with the full-screen picture (front_ios.m) the touch maps to the whole screen
+    if (!(fs && atoi(fs))) { if (w / h > 16.0 / 9.0) w = h * 16.0 / 9.0; else h = w * 9.0 / 16.0; }
     CGFloat x0 = (b.size.width - w) / 2, y0 = (b.size.height - h) / 2;
     dm_touch t[16]; int n = 0;
     for (int i = 0; i < 16; i++) if (_game[i]) {
@@ -283,7 +323,14 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     BOOL game = NO;
     for (UITouch *t in ts) {
         if (_padOff) { game |= [self gameBegin:t]; continue; }
-        CGPoint p = [t locationInView:self]; int hit = _tap ? -1 : [self btnAt:p];
+        CGPoint p = [t locationInView:self];
+        if (_skin) {   // skin mode: an image key, the disc (a fixed stick), else the game's touch screen
+            int sb = [self skinBtnAt:p];
+            if (sb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_skin[sb].bit << 8) forKey:t]; continue; }
+            if (!_stick[0] && dist(p, self.stickHome) <= [self stickR:0] * K_STICK_GRAB) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p; continue; }
+            game |= [self gameBegin:t]; continue;
+        }
+        int hit = _tap ? -1 : [self btnAt:p];
         if (hit >= 0) { [_owner setObject:@(C_BTN | (uint64_t)hit << 8) forKey:t]; continue; }
         if ([self inSwap:p]) { [_owner setObject:@(C_SWAP) forKey:t]; continue; }
         if (_tap) { game |= [self gameBegin:t]; continue; }
@@ -365,6 +412,14 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     CGFloat u = self.u;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     _controls.frame = self.layer.bounds;
+    if (_skin) {   // the skin's image controls, at fractions of the whole screen (k_skin); the drawn ones stay hidden
+        CGRect b = self.bounds; CGFloat d = 0.148 * b.size.width; CGPoint hc = self.stickHome;
+        _skinDisc.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d);
+        CGFloat kd = d * 0.67; _skinKnob.bounds = CGRectMake(0, 0, kd, kd); _skinKnob.position = hc;
+        for (int i = 0; i < 7; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width;
+            _skinBtn[i].frame = CGRectMake(k_skin[i].x * b.size.width - dd / 2, k_skin[i].y * b.size.height - dd / 2, dd, dd); }
+        [CATransaction commit]; [self refresh]; return;
+    }
     for (int b = B_A; b <= B_Y; b++) { CGPoint c = [self facePos:b]; setPath(_key[b], circlePath(c, self.faceR)); placeLabel(_label[b], c, 20 * u); }
     for (int i = 0; i < (int)(sizeof k_btns / sizeof *k_btns); i++) { int b = k_btns[i];
         if (isDrop(b)) {
@@ -397,6 +452,14 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     _swap.fillColor = (_swapHeld ? k_on : k_idle).CGColor; _swapLabel.foregroundColor = (_swapHeld ? k_textOn : k_text).CGColor;
     CGPoint h = self.stickHome, o = [self knobOffset:0];
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
+    if (_skin) {   // pressed keys light up and dip; the medallion knob follows the touch, kept inside the disc
+        for (int i = 0; i < 7; i++) { BOOL on = (_btnBits >> k_skin[i].bit) & 1;
+            _skinBtn[i].opacity = on ? 1.0 : 0.75;
+            _skinBtn[i].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
+        CGFloat ol = hypot(o.x, o.y), maxO = 0.30 * [self stickR:0];
+        if (ol > maxO) { o.x *= maxO / ol; o.y *= maxO / ol; }
+        _skinKnob.position = CGPointMake(h.x + o.x, h.y + o.y); _skinKnob.opacity = _stick[0] ? 1.0 : 0.95;
+    }
     [CATransaction commit];
 }
 
