@@ -48,7 +48,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install xcodegen zstd spirv-cross
+          brew install xcodegen zstd spirv-cross glslang
           # The build script requires the .NET 10 SDK specifically.
           if ! dotnet --list-sdks 2>/dev/null | grep -q '^10\.'; then
             brew install --cask dotnet-sdk
