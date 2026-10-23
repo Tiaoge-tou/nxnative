@@ -15,6 +15,9 @@
 # Every intermediate file is under <id>_build/ in the NSP folder: extract/ (the extracted game files, kept for the next build unless KEEP_EXTRACTED / --no-keep-extracted), aoc/ (each DLC's RomFS by index), tools/ (nx_extract, and the Mac host for a run-time shader capture), patched_*/, shader/ (shader package and caches, kept so the next build is fast), logs/ (each step's full output), tmp/, ipa/. The finished IPA also goes to the NSP folder by default.
 # The DLC, the rewrite, the shader split and the iOS (or Vulkan) shaders are reused when all their inputs are as at their last successful run (the game files, the tools, the profile, Xcode and spirv-cross: fingerprint() keys beside their output);
 #   the iOS shaders' inputs are the shader package's content and the chain's own tools, so a split that runs again and writes the same package leaves them reused.
+#   A registered profile's chain version header (dmsh_chain.h) is written again when a chain change left it behind (chain_header: it follows from the source alone), so a run may leave it changed
+#   in the profile folder. The c1 / uniform extent tables (c1_full.tsv, cb_extent.tsv) are not in the repository: the iOS shader step makes them in the profile folder from this build's shaders
+#   (chain_tables), where git ignores them.
 # The shader translator is the in-repo dm/gfx/tools/dmsh_xlate_bin (the build whose fingerprints match dmsh_chain.lock; a rebuilt dll has different fingerprints and dmsh_build refuses it; its launcher is universal, so an Intel Mac runs it too). The Metal compiler and spirv-cross may be other than the lock's: the iOS shaders
 #   are built through dm/gfx/tools/own_compilers.py, which says so in one line and leaves the lock and the chain version as they are.
 # The Python running this file needs lz4, capstone and fonttools (and backports.zstd before Python 3.14); also needed: Xcode, xcodegen, .NET SDK 10, zstd, spirv-cross. A first run takes 2 (Metroid Dread) to 10 minutes (Breath of the Wild: 5 of them the shader split), longer when shader libraries must be compiled; a repeat run with unchanged inputs takes about 20 s (Metroid Dread), mostly packing the IPA. Key values are never printed.
@@ -681,8 +684,9 @@ def package_key(pkg):   # the shader package's content (file names and bytes): w
     return fingerprint(fs, ('files', [pkg / f for f in fs]))
 
 
-def profile_files(g):   # every file of the game profile (game.tsv and its tables)
-    return sorted(p for p in g.dir.iterdir() if p.is_file())
+def profile_files(g):   # every file of the game profile (game.tsv and its tables) but the c1 / uniform extent tables, which the iOS shader step makes (chain_tables): no step reads them
+    out = {name for name, _, _ in CHAIN_TABLES}
+    return sorted(p for p in g.dir.iterdir() if p.is_file() and p.name not in out)
 
 
 # ---- Steps ----
@@ -1022,6 +1026,44 @@ def provisional_prep(py, repo, env, logs, g):
     run([py, repo / 'dm/gfx/tools/dmsh_chain.py', '--header'], logs / 'dmsh_chain.log', env=env)
 
 
+def chain_of(g):   # the chain version the profile's dmsh_chain.h holds (None when it has none)
+    try: m = re.search(r'#define DMSH_CHAIN "(.*)"', g.table('dmsh_chain.h').read_text())
+    except OSError: return None
+    return m.group(1) if m else None
+
+
+def chain_header(py, repo, env, logs, g):
+    """A registered profile's chain version header, written again when it no longer holds the version the source tree gives: dmsh_build.py stops on a stale one, and the host and build_ipa.sh
+    read it. The version follows from the source alone (dmsh_chain.py), so a chain change that rewrote only some profiles' headers stops no build (GitHub issue #78: Breath of the Wild after bb585cd)"""
+    r = subprocess.run([str(py), str(repo / 'dm/gfx/tools/dmsh_chain.py')], env=env, capture_output=True, text=True)
+    if r.returncode or not r.stdout.split(): raise BuildError(f'dmsh_chain.py exit code {r.returncode}: {(r.stderr.strip() or "no version")[-500:]}')
+    want, have = r.stdout.split()[-1], chain_of(g)
+    if have == want: return
+    run([py, repo / 'dm/gfx/tools/dmsh_chain.py', '--header'], logs / 'dmsh_chain.log', env=env)
+    say(f'chain version header rewritten: {g.table("dmsh_chain.h")} held {have or "no version"}, the source tree gives {want}')
+
+
+CHAIN_TABLES = (('c1_full.tsv', 'c1_guard.py', 'c1 guard'), ('cb_extent.tsv', 'cb_extent.py', 'uniform read extents'))   # made from the shader build's Mac outputs: the host takes each only when its header names its chain
+
+
+def chain_tables(py, repo, sh, env, logs, g, chain, every=False):
+    """c1_full.tsv (c1_guard.py: shaders whose c1 reads are not proven bounded) and cb_extent.tsv (cb_extent.py: how far each shader reads into its uniform blocks) from the Mac outputs of the
+    shader build (sh/cache/b-<chain>/), into the profile folder. They are not in the repository (git ignores them): they follow from the shaders this Mac built, so every pack makes its own.
+    every: both (a provisional or derived profile's tables come from its own build); else only those missing or whose header names another chain, which the host would ignore (every c1 its
+    own 64 KiB, whole uniform bindings copied; GitHub issue #78). True when both name the chain; False when one does not and there are no Mac outputs to make it from"""
+    lib = sh / 'cache' / f'b-{chain}'
+    for name, tool, step in CHAIN_TABLES:
+        p = g.table(name)
+        try: head = p.read_text(errors='replace').partition('\n')[0]
+        except OSError: head = ''
+        if not every and head.startswith(f'# chain b-{chain}'): continue
+        if not lib.is_dir(): return False
+        PROG.set(step=step)
+        run([py, repo / 'dm/gfx/tools' / tool, lib, p], logs / f'{tool[:-3]}.log', env=env)
+        if not every: say(f'{name} ' + (f'named {head[len("# chain "):].split(" ")[0]}' if head.startswith('# chain ') else 'names no chain' if head else 'missing') + f': made for chain {chain} ({p})')
+    return True
+
+
 def refine_after_rewrite(g, ex_dir, patched):
     """Keys of a provisional profile that need the rewritten modules: mem_used (dm/games/profile_guess.py), for a game without virtual address memory that sizes its heap as pool − used memory"""
     if any(k == 'mem_used' for k, _ in g.rows) or pg.npdm(ex_dir / 'ExeFS/main.npdm')[0]: return g
@@ -1119,8 +1161,7 @@ class ShaderWatch:
         pairs = {ln.split()[0] for ln in open(g.table('shader_pairs.tsv'), errors='replace') if ln.strip() and not ln.startswith('#')}
         order = sorted(keys - pairs) + sorted(keys & pairs)
         self.pos, self.n = {k: i for i, k in enumerate(order)}, len(order)
-        chain = re.search(r'#define DMSH_CHAIN "(.*)"', g.table('dmsh_chain.h').read_text()).group(1)
-        self.out, self.tmp, self.t0, self.t1, self.w = ios / f'b-{chain}', tmp, time.time(), None, None
+        self.out, self.tmp, self.t0, self.t1, self.w = ios / f'b-{chain_of(g)}', tmp, time.time(), None, None
         self.hits, self.fin, self.top = set(), set(), -1
 
     def written(self, keys, since):   # those of keys whose <key>_b.json in the iOS output was written after since
@@ -1162,13 +1203,14 @@ def build_shaders(py, repo, sh, xlate, env, logs, g, provisional=False, pkg_key=
     if provisional:
         PROG.set(step='chain header')
         run([py, repo / 'dm/gfx/tools/dmsh_chain.py', '--header'], logs / 'dmsh_chain.log', env=env)   # the profile's chain version header (dmsh_build checks it)
-    chain = re.search(r'#define DMSH_CHAIN "(.*)"', g.table('dmsh_chain.h').read_text()).group(1)
+    chain = chain_of(g)
     libs = ios / f'b-{chain}'; kf = libs.with_name(libs.name + '.key')
     if pkg_key:
         PROG.set(step='checking the inputs')
         key = fingerprint(pkg_key, ('files', chain_files(repo)), ('stat', xlate.parent), ('files', profile_files(g)), *toolchain(), str(xlate),
                           {k: env.get(k) for k in ('XLATE_DEBUG', 'XLATE_REDUCED')}, env=env)
-        if next(libs.glob('*_b.metallib'), None) and (note := reused(kf, key)) is not None:
+        # the libraries are the last build's, so are tables that name the chain; a missing or stale one is made from that build's Mac outputs, and without them the step runs again
+        if next(libs.glob('*_b.metallib'), None) and (note := reused(kf, key)) is not None and chain_tables(py, repo, sh, env, logs, g, chain):
             PROG.end(f'{note}, reused (inputs unchanged)'); return ios
     else: key = None
     rmtree(kf)
@@ -1176,11 +1218,7 @@ def build_shaders(py, repo, sh, xlate, env, logs, g, provisional=False, pkg_key=
     except Exception: pass   # progress never stops the build (a missing table is dmsh_build.py's to report)
     run([py, repo / 'dm/gfx/tools/own_compilers.py', sh / 'pkg', sh / 'cache'], log, env=dict(env, XLATE=str(xlate), IOSOUT=str(ios)))   # dmsh_build.py with this Mac's Metal compiler and spirv-cross
     PROG.watch(None)
-    if provisional:
-        PROG.set(step='c1 guard')
-        run([py, repo / 'dm/gfx/tools/c1_guard.py', sh / 'cache' / f'b-{chain}', g.table('c1_full.tsv')], logs / 'c1_guard.log', env=env)   # shaders whose c1 reads are not proven bounded
-        PROG.set(step='uniform read extents')
-        run([py, repo / 'dm/gfx/tools/cb_extent.py', sh / 'cache' / f'b-{chain}', g.table('c1_full.tsv').with_name('cb_extent.tsv')], logs / 'cb_extent.log', env=env)   # how far each shader reads into its uniform blocks
+    if not chain_tables(py, repo, sh, env, logs, g, chain, every=provisional): raise BuildError(f'no Mac shader outputs in {sh / "cache" / f"b-{chain}"} to make c1_full.tsv and cb_extent.tsv from')
     n = sum(1 for _ in libs.glob('*_b.metallib')) if libs.is_dir() else 0
     if n == 0: raise BuildError(f'no iOS shader libraries in {libs}')
     say(f'{n} iOS shader libraries ({libs})')
@@ -1485,6 +1523,7 @@ def main(args=None):
 
     patched = work / f'patched_{pkg_ver}'
     rewrite(py, repo, game / 'ExeFS', patched, env, logs, g)
+    if not (provisional or derived): chain_header(py, repo, env, logs, g)   # before any host is built for the profile
     if provisional or derived:   # the keys that need the rewritten modules, then (provisional) the heap check (both only change keys the host is built with, not the rewrite or the shader steps)
         provisional_prep(py, repo, env, logs, g)
         g = refine_after_rewrite(g, game, patched)

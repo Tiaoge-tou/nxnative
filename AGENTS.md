@@ -11,7 +11,7 @@
 - After changing anything on the shader translation chain, run the chain procedure for each affected profile. The chain covers `dm/gfx/tools/dmsh_*`, `Program.cs`, the profile's `shader_map.tsv` / `shader_facts.tsv` / `shader_pairs.tsv`, and its `shader_*` keys. The procedure:
   1. Run `dmsh_chain.py --header`, which writes the profile's `dmsh_chain.h`.
   2. Rebuild the shaders (Mac and, with `IOSOUT`, iOS).
-  3. Regenerate the profile's `c1_full.tsv` (`c1_guard.py`) and `cb_extent.tsv` (`cb_extent.py`).
+  3. Regenerate the profile's `c1_full.tsv` (`c1_guard.py`) and `cb_extent.tsv` (`cb_extent.py`) for Mac runs. They are made from each build's Mac outputs and git ignores them; the NSP script makes its own.
   4. Rebuild the host.
 
   The host only loads libraries of its own chain version. The translator is `dm/gfx/tools/dmsh_xlate_bin`, which matches `dmsh_chain.lock`; a fresh `dotnet publish` does not.

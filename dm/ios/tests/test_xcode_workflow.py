@@ -55,7 +55,7 @@ class XcodePipelineTests(unittest.TestCase):
                 'extract': extraction, 'can_clone': False, 'build_mismatch': [],
                 'extract_aoc': None, 'rewrite': None, 'split_shaders': 'fixture-key',
                 'build_shaders': root / 'shaders', 'build_vk_shaders': root / 'shaders',
-                'build_gl_shaders': root / 'shaders', 'provisional_prep': None,
+                'build_gl_shaders': root / 'shaders', 'provisional_prep': None, 'chain_header': None,
                 'refine_after_rewrite': profile, 'derive_profile': '1.0.0', 'run': None,
             }.items():
                 mocks[name] = stack.enter_context(patch.object(build, name, return_value=value))
