@@ -54,12 +54,12 @@ jobs:
             brew install --cask dotnet-sdk
           fi
           dotnet --list-sdks
-          python3 -m pip install --user lz4 capstone fonttools
+          python3 -m pip install --user --break-system-packages lz4 capstone fonttools
           # The script needs backports.zstd on Python 3.14+
           python3 - <<'EOF'
           import sys, subprocess
           if sys.version_info >= (3, 14):
-              subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "backports.zstd"])
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "--break-system-packages", "backports.zstd"])
           EOF
 
       - name: Fetch game files and keys (from secrets, never printed)
@@ -89,7 +89,7 @@ jobs:
           # Google Drive share links need gdown (large files have a confirm step
           # plain curl cannot pass); anything else is fetched as a direct download.
           if printf '%s' "$NSP_ZIP_URL" | grep -q 'drive\.google\.com\|drive\.usercontent\.google\.com'; then
-            python3 -m pip install --user gdown
+            python3 -m pip install --user --break-system-packages gdown
             # gdown 6.x takes the share URL (or file ID) directly; --fuzzy was removed.
             python3 -m gdown "$NSP_ZIP_URL" -O "$RUNNER_TEMP/game.zip"
           else
