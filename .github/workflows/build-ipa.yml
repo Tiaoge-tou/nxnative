@@ -137,6 +137,12 @@ jobs:
           LANGCODE: ${{ inputs.language }}
         run: |
           set -eu
+          set -o pipefail
+          # nx_extract is a .NET apphost: it does not search PATH for the runtime,
+          # only DOTNET_ROOT / the default /usr/local/share/dotnet. The runner image
+          # keeps its SDKs in ~/.dotnet, so point DOTNET_ROOT there.
+          export DOTNET_ROOT="$HOME/.dotnet"
+          export DOTNET_ROOT_ARM64="$HOME/.dotnet"
           # If the zip nested the NSPs in one folder, build from that folder.
           GAME_DIR="$RUNNER_TEMP/game"
           if ! ls "$GAME_DIR"/*.nsp "$GAME_DIR"/*.xci >/dev/null 2>&1; then
@@ -151,6 +157,8 @@ jobs:
           [ -n "$PKG" ] && ARGS+=(-p "$PKG")
           [ -n "$APPNAME" ] && ARGS+=(--app-name "$APPNAME")
           python3 scripts/build_ipa_from_nsp.py "${ARGS[@]}" 2>&1 | tee build.log
+          # Guard: an internal tool failure must not pass silently (empty out/).
+          test -s "$GITHUB_WORKSPACE/out/game.ipa" || { echo "::error::Build finished without producing out/game.ipa — see build.log"; exit 1; }
           ls -lh "$GITHUB_WORKSPACE/out"
 
       - name: Split and checksum the IPA
