@@ -1,7 +1,7 @@
 # nxnative cloud build — build an unsigned IPA on a GitHub Actions macOS runner.
 #
 # How the pieces arrive (nothing sensitive is ever a workflow input or in the repo):
-#   - Repository secret PROD_KEYS_B64 : your prod.keys, base64-encoded (see setup doc)
+#   - Repository secret PROD_KEYS_B64 : your prod.keys, base64-encoded or raw text
 #   - Repository secret NSP_ZIP_URL   : a direct-download URL for ONE .zip that
 #                                       contains the game's .nsp file(s) at its top level
 # The IPA is split into <2 GB parts and uploaded as a workflow artifact.
@@ -73,7 +73,15 @@ jobs:
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/game"
-          printf '%s' "$PROD_KEYS_B64" | base64 --decode > "$RUNNER_TEMP/prod.keys"
+          # The secret may hold prod.keys either base64-encoded or as raw text;
+          # accept both (raw text contains the key names in plain form).
+          printf '%s' "$PROD_KEYS_B64" > "$RUNNER_TEMP/keys_secret.txt"
+          if grep -q 'aes_kek_generation_source' "$RUNNER_TEMP/keys_secret.txt"; then
+            cp "$RUNNER_TEMP/keys_secret.txt" "$RUNNER_TEMP/prod.keys"
+          else
+            base64 --decode < "$RUNNER_TEMP/keys_secret.txt" > "$RUNNER_TEMP/prod.keys"
+          fi
+          rm -f "$RUNNER_TEMP/keys_secret.txt"
           chmod 600 "$RUNNER_TEMP/prod.keys"
           # Sanity-check the keys file shape without printing any key material.
           grep -q 'aes_kek_generation_source' "$RUNNER_TEMP/prod.keys" \
@@ -89,12 +97,31 @@ jobs:
           unzip -q "$RUNNER_TEMP/game.zip" -d "$RUNNER_TEMP/game"
           rm -f "$RUNNER_TEMP/game.zip"
           # Accept one extra nesting level (a folder inside the zip).
-          if ! find "$RUNNER_TEMP/game" -maxdepth 2 \( -iname '*.nsp' -o -iname '*.xci' \) | grep -q .; then
-            echo "::error::No .nsp/.xci found in the downloaded zip."
+          if ! find "$RUNNER_TEMP/game" -maxdepth 2 \( -iname '*.nsp' -o -iname '*.xci' -o -iname '*.nsz' \) | grep -q .; then
+            echo "::error::No .nsp/.xci/.nsz found in the downloaded zip."
             find "$RUNNER_TEMP/game" -maxdepth 2 | head -50
             exit 1
           fi
           df -h / | cat
+
+      - name: Decompress any .nsz files to .nsp
+        run: |
+          set -eu
+          # nxnative only reads .nsp/.xci; an .nsz is a compressed NSP and must
+          # be decompressed first (nsz tool, using the same prod.keys).
+          NSZ_LIST=$(find "$RUNNER_TEMP/game" -maxdepth 3 -iname '*.nsz')
+          if [ -z "$NSZ_LIST" ]; then
+            echo "No .nsz files, skipping."
+            exit 0
+          fi
+          python3 -m venv "$RUNNER_TEMP/nsz-venv"
+          "$RUNNER_TEMP/nsz-venv/bin/pip" install -q nsz
+          echo "$NSZ_LIST" | while IFS= read -r f; do
+            echo "Decompressing: $f"
+            "$RUNNER_TEMP/nsz-venv/bin/nsz" -D -w --keys "$RUNNER_TEMP/prod.keys" -o "$(dirname "$f")" "$f"
+            rm -f "$f"
+          done
+          find "$RUNNER_TEMP/game" -iname '*.nsp' -exec ls -lh {} \;
 
       - name: Build the IPA
         env:
