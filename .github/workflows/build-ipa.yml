@@ -78,7 +78,14 @@ jobs:
           # Sanity-check the keys file shape without printing any key material.
           grep -q 'aes_kek_generation_source' "$RUNNER_TEMP/prod.keys" \
             || { echo "::error::prod.keys does not look like a prod.keys file."; exit 1; }
-          curl -fL --retry 3 -o "$RUNNER_TEMP/game.zip" "$NSP_ZIP_URL"
+          # Google Drive share links need gdown (large files have a confirm step
+          # plain curl cannot pass); anything else is fetched as a direct download.
+          if printf '%s' "$NSP_ZIP_URL" | grep -q 'drive\.google\.com\|drive\.usercontent\.google\.com'; then
+            python3 -m pip install --user gdown
+            python3 -m gdown --fuzzy "$NSP_ZIP_URL" -O "$RUNNER_TEMP/game.zip"
+          else
+            curl -fL --retry 3 -o "$RUNNER_TEMP/game.zip" "$NSP_ZIP_URL"
+          fi
           unzip -q "$RUNNER_TEMP/game.zip" -d "$RUNNER_TEMP/game"
           rm -f "$RUNNER_TEMP/game.zip"
           # Accept one extra nesting level (a folder inside the zip).
