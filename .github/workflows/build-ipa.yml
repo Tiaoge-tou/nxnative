@@ -151,6 +151,13 @@ jobs:
           fi
           echo "Game folder: $GAME_DIR"
           ls -lh "$GAME_DIR"
+          # The repo's shader chain lock was registered with the author's tools;
+          # re-register it with this runner's tools before building (upstream's
+          # documented local flow in dm/gfx/README.md). The lock is tool-only
+          # fingerprints; DM_GAME just satisfies the tool's profile loading.
+          GAME_ID=$(ls "$GAME_DIR" | grep -oiE '01[0-9a-f]{14}' | head -1)
+          echo "Registering shader chain lock for game: $GAME_ID"
+          DM_GAME="$GAME_ID" python3 dm/gfx/tools/dmsh_chain.py --update-lock
           mkdir -p "$GITHUB_WORKSPACE/out"
           ARGS=("$GAME_DIR" -k "$RUNNER_TEMP/prod.keys" -o "$GITHUB_WORKSPACE/out/game.ipa"
                 -l "$LANGCODE" --no-keep-extracted --progress lines)
