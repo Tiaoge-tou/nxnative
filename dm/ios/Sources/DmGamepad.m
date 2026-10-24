@@ -121,6 +121,39 @@ static CALayer *imgLayer(CALayer *parent, const char *name) {
     CALayer *l = [CALayer layer]; l.contents = (id)[UIImage imageWithContentsOfFile:p].CGImage; [parent addSublayer:l]; return l;
 }
 
+// ---- Hades layout (DM_PAD_HADES=1 in an env file) ----
+// The touch layout of the earlier Hades II port this build replaces, measured from its recordings: a row of small keys at the
+// top right, the face keys in a quarter-circle fan around a larger Y, four separate D-pad circles along the bottom, and a
+// floating left stick. The keys are real Liquid Glass discs (UIGlassEffect; the app needs iOS 26 anyway): a glass view per key,
+// with its label and a press wash as plain layers above the glass. Centres are fractions of the whole screen, radii of its width.
+static BOOL padHades(void) { const char *e = getenv("DM_PAD_HADES"); return e && atoi(e); }
+enum { H_TOP, H_FACE, H_DPAD };   // a D-pad entry carries a direction in dir (0 left, 1 up, 2 down, 3 right) and no label
+static const struct { int bit; int kind; int dir; const char *label; CGFloat x, y, r; } k_hades[] = {
+    {B_MINUS, H_TOP,  0, "−", 0.691, 0.086, 0.020},
+    {B_PLUS,  H_TOP,  0, "+",  0.754, 0.086, 0.020},
+    {B_L,     H_TOP,  0, "L",  0.817, 0.086, 0.020},
+    {B_ZL,    H_TOP,  0, "ZL", 0.880, 0.086, 0.020},
+    {B_ZR,    H_TOP,  0, "ZR", 0.943, 0.086, 0.020},
+    {B_R,     H_FACE, 0, "R",  0.903, 0.400, 0.031},
+    {B_A,     H_FACE, 0, "A",  0.831, 0.442, 0.031},
+    {B_X,     H_FACE, 0, "X",  0.778, 0.558, 0.031},
+    {B_B,     H_FACE, 0, "B",  0.758, 0.715, 0.031},
+    {B_Y,     H_FACE, 0, "Y",  0.903, 0.715, 0.038},
+    {B_LEFT,  H_DPAD, 0, NULL, 0.645, 0.896, 0.019},
+    {B_UP,    H_DPAD, 1, NULL, 0.701, 0.896, 0.019},
+    {B_DOWN,  H_DPAD, 2, NULL, 0.753, 0.896, 0.019},
+    {B_RIGHT, H_DPAD, 3, NULL, 0.807, 0.896, 0.019},
+};
+#define HADES_N (int)(sizeof k_hades / sizeof k_hades[0])
+static UIVisualEffectView *glassDisc(UIView *parent, CGFloat tint) {
+    UIGlassEffect *e = [[UIGlassEffect alloc] initWithStyle:UIGlassEffectStyleRegular];
+    e.tintColor = [UIColor colorWithWhite:0.04 alpha:tint]; e.interactive = NO;
+    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:e];
+    v.userInteractionEnabled = NO;
+    [parent addSubview:v];
+    return v;
+}
+
 @interface DmGamepad : UIView
 @end
 static __weak DmGamepad *g_view;
@@ -145,6 +178,14 @@ static __weak DmGamepad *g_view;
     CALayer *_skinDisc, *_skinKnob;                // the skin's stick disc and its knob (the knob follows the touch)
     CALayer *_skinBtn[SKIN_N];                     // the skin's keys, in k_skin order
     BOOL _skillOff;                                // the skill keys (grp SK_SKILL) are hidden by the eye key
+    BOOL _hades;                                   // DM_PAD_HADES: the glass controls below replace the drawn ones
+    UIView *_glassBox;                             // holds the Hades glass controls: hidden while a physical controller is connected
+    UIVisualEffectView *_hGlass[HADES_N];          // one Liquid Glass disc per Hades key
+    CAShapeLayer *_hWash[HADES_N];                 // a white wash over a disc, lit while its key is pressed
+    CATextLayer *_hLabel[HADES_N];                 // the Hades keys' labels (the D-pad keys carry a triangle layer instead)
+    CAShapeLayer *_hTri[4];                        // the D-pad triangles, in k_hades dir order
+    UIVisualEffectView *_hStick, *_hKnob;          // the floating stick's glass disc and its knob
+    CGPoint _lCentre;                              // the floating left stick's centre: where its touch landed
 }
 
 static UIColor *k_idle, *k_on, *k_line, *k_ringFill, *k_text, *k_textOn;
@@ -195,6 +236,24 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _swap.hidden = YES; _swapLabel.hidden = YES; _ring.hidden = YES; _knob.hidden = YES;
         }
+        _hades = padHades();
+        if (_hades) {   // glass controls instead of the drawn ones; the drawn layers stay hidden for good
+            _glassBox = [[UIView alloc] initWithFrame:self.bounds];
+            _glassBox.userInteractionEnabled = NO; _glassBox.backgroundColor = UIColor.clearColor;
+            _glassBox.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [self addSubview:_glassBox];
+            for (int i = 0; i < HADES_N; i++) _hGlass[i] = glassDisc(_glassBox, 0.30);
+            _hStick = glassDisc(_glassBox, 0.16); _hKnob = glassDisc(_glassBox, 0.32);
+            CALayer *ov = [CALayer layer]; [_glassBox.layer addSublayer:ov];   // washes and labels, above every glass disc
+            for (int i = 0; i < HADES_N; i++) {
+                _hWash[i] = shape(ov); _hWash[i].fillColor = UIColor.whiteColor.CGColor; _hWash[i].opacity = 0;
+                _hWash[i].strokeColor = nil; _hWash[i].shadowOpacity = 0;
+                if (k_hades[i].label) _hLabel[i] = label(ov, [NSString stringWithUTF8String:k_hades[i].label]);
+                else { _hTri[k_hades[i].dir] = shape(ov); _hTri[k_hades[i].dir].fillColor = k_text.CGColor; _hTri[k_hades[i].dir].strokeColor = nil; _hTri[k_hades[i].dir].shadowOpacity = 0; }
+            }
+            for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
+            _swap.hidden = YES; _swapLabel.hidden = YES; _ring.hidden = YES; _knob.hidden = YES;
+        }
         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:k_layout_key];
         int l = saved ? (int)saved.integerValue : DM_GAME_PAD_LAYOUT;
         if (l == 2 && dm_opmode() != 0) l = 0;   // Tap only in handheld mode (env.txt's DM_OPMODE may have changed it)
@@ -210,8 +269,8 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
 }
 - (void)applyLayout {   // show / hide the controls for the current layout
     [CATransaction begin]; [CATransaction setDisableActions:YES];
-    for (int b = 0; b < B_N; b++) _key[b].hidden = _skin || _tap || (fullOnly(b) && !_full);
-    _ring.hidden = _knob.hidden = _skin || _tap;
+    for (int b = 0; b < B_N; b++) _key[b].hidden = _skin || _hades || _tap || (fullOnly(b) && !_full);
+    _ring.hidden = _knob.hidden = _skin || _hades || _tap;
     _swapLabel.string = _tap ? @"Tap" : _full ? @"3D" : @"2D";
     [CATransaction commit];
 }
@@ -234,10 +293,11 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
 - (CGPoint)facePos:(int)b { CGPoint c = self.faceCenter; CGFloat g = self.faceGap;
     switch (b) { case B_A: return CGPointMake(c.x + g, c.y); case B_B: return CGPointMake(c.x, c.y + g); case B_X: return CGPointMake(c.x, c.y - g); default: return CGPointMake(c.x - g, c.y); } }
 - (CGPoint)stickHome {   // the left stick's ring centre; in skin mode the disc centre (a fraction of the whole screen)
+    if (_hades) { CGRect b = self.bounds; return CGPointMake(0.168 * b.size.width, 0.664 * b.size.height); }
     if (_skin) { CGRect b = self.bounds; return CGPointMake(0.162 * b.size.width, 0.742 * b.size.height); }
     CGRect s = self.corner; return side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u); }
-- (CGPoint)stickCentre:(int)i { return i ? _rCentre : self.stickHome; }
-- (CGFloat)stickR:(int)i { if (_skin && !i) return 0.074 * self.bounds.size.width; return (i ? K_RSTICK_R : K_STICK_R) * self.u; }
+- (CGPoint)stickCentre:(int)i { return i ? _rCentre : _hades && _stick[0] ? _lCentre : self.stickHome; }
+- (CGFloat)stickR:(int)i { if (_hades && !i) return 0.061 * self.bounds.size.width; if (_skin && !i) return 0.074 * self.bounds.size.width; return (i ? K_RSTICK_R : K_STICK_R) * self.u; }
 - (BOOL)inRightArea:(CGPoint)p { CGRect b = self.bounds; return p.x >= CGRectGetMaxX(b) - b.size.width * K_RSWIPE; }
 - (CGPoint)dpadCenter { CGRect s = self.corner; CGFloat u = self.u; return side(s, 0, K_LOW_X * u, CGRectGetMaxY(s) - K_LOW_Y * u); }
 - (CGFloat)dpadR { return K_DPAD_R * self.u; }
@@ -258,6 +318,13 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     for (int i = 0; i < SKIN_N; i++) { if (_skillOff && k_skin[i].grp == SK_SKILL) continue;
         CGPoint c = CGPointMake(k_skin[i].x * b.size.width, k_skin[i].y * b.size.height);
         if (dist(p, c) <= k_skin[i].r * b.size.width * 1.35) return i; }
+    return -1;
+}
+- (int)hadesBtnAt:(CGPoint)p {   // Hades mode: the glass key under the point, or -1
+    CGRect b = self.bounds;
+    for (int i = 0; i < HADES_N; i++) {
+        CGPoint c = CGPointMake(k_hades[i].x * b.size.width, k_hades[i].y * b.size.height);
+        if (dist(p, c) <= k_hades[i].r * b.size.width * 1.4) return i; }
     return -1;
 }
 - (int)btnAt:(CGPoint)p {   // locked keys (tested on touch-down only, then locked)
@@ -348,6 +415,13 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     for (UITouch *t in ts) {
         if (_padOff) { game |= [self gameBegin:t]; continue; }
         CGPoint p = [t locationInView:self];
+        if (_hades) {   // Hades mode: a glass key, the floating left stick (a touch in the left half), the right stick (the right third), else the game's touch screen
+            int hb = [self hadesBtnAt:p];
+            if (hb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_hades[hb].bit << 8) forKey:t]; continue; }
+            if (!_stick[0] && p.x < self.bounds.size.width * 0.5) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p; _lCentre = p; continue; }
+            if (!_stick[1] && [self inRightArea:p]) { [_owner setObject:@(C_STICK | 1ull << 8) forKey:t]; _stick[1] = t; _stickNow[1] = p; _rCentre = p; continue; }
+            game |= [self gameBegin:t]; continue;
+        }
         if (_skin) {   // skin mode: an image key, the disc (a fixed stick), else the game's touch screen
             int sb = [self skinBtnAt:p];
             if (sb >= 0 && k_skin[sb].grp == SK_TOGGLE) { _skillOff = !_skillOff; [self refresh]; continue; }   // the eye key only flips the skill keys' visibility
@@ -404,6 +478,18 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 
 // ---- Shapes ----
 static CGPathRef circlePath(CGPoint c, CGFloat r) { return CGPathCreateWithEllipseInRect(CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r), NULL); }
+static CGPathRef triPath(CGPoint c, CGFloat s, int dir) {   // a D-pad triangle: dir 0 left, 1 up, 2 down, 3 right
+    CGPoint v[3];
+    switch (dir) {
+        case 0:  v[0] = CGPointMake(c.x - s, c.y); v[1] = CGPointMake(c.x + s, c.y - s * 0.8); v[2] = CGPointMake(c.x + s, c.y + s * 0.8); break;
+        case 1:  v[0] = CGPointMake(c.x, c.y - s); v[1] = CGPointMake(c.x - s * 0.8, c.y + s); v[2] = CGPointMake(c.x + s * 0.8, c.y + s); break;
+        case 2:  v[0] = CGPointMake(c.x, c.y + s); v[1] = CGPointMake(c.x - s * 0.8, c.y - s); v[2] = CGPointMake(c.x + s * 0.8, c.y - s); break;
+        default: v[0] = CGPointMake(c.x + s, c.y); v[1] = CGPointMake(c.x - s, c.y - s * 0.8); v[2] = CGPointMake(c.x - s, c.y + s * 0.8); break;
+    }
+    CGMutablePathRef p = CGPathCreateMutable();
+    CGPathMoveToPoint(p, NULL, v[0].x, v[0].y); CGPathAddLineToPoint(p, NULL, v[1].x, v[1].y); CGPathAddLineToPoint(p, NULL, v[2].x, v[2].y);
+    CGPathCloseSubpath(p); return p;
+}
 static CGPathRef dropPath(CGPoint c, CGFloat r, CGFloat tipAngle, CGFloat round) {   // teardrop: circle + two tangents meeting at the tip, tip slightly rounded
     CGFloat d = r * K_DROP_TIP, th = acos(r / d);
     CGPoint tip = CGPointMake(c.x + d * cos(tipAngle), c.y + d * sin(tipAngle));
@@ -443,6 +529,17 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         CGFloat kd = d * 0.67; _skinKnob.bounds = CGRectMake(0, 0, kd, kd); _skinKnob.position = hc;
         for (int i = 0; i < SKIN_N; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width;
             _skinBtn[i].frame = CGRectMake(k_skin[i].x * b.size.width - dd / 2, k_skin[i].y * b.size.height - dd / 2, dd, dd); }
+        [CATransaction commit]; [self refresh]; return;
+    }
+    if (_hades) {   // the glass discs at fractions of the whole screen (k_hades); the stick disc is placed by refresh (it floats)
+        CGRect b = self.bounds;
+        _glassBox.frame = b;
+        for (int i = 0; i < HADES_N; i++) { CGFloat r = k_hades[i].r * b.size.width;
+            CGPoint c = CGPointMake(k_hades[i].x * b.size.width, k_hades[i].y * b.size.height);
+            _hGlass[i].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); _hGlass[i].layer.cornerRadius = r;
+            setPath(_hWash[i], circlePath(c, r));
+            if (_hLabel[i]) placeLabel(_hLabel[i], c, r * 0.92);
+            else setPath(_hTri[k_hades[i].dir], triPath(c, r * 0.38, k_hades[i].dir)); }
         [CATransaction commit]; [self refresh]; return;
     }
     for (int b = B_A; b <= B_Y; b++) { CGPoint c = [self facePos:b]; setPath(_key[b], circlePath(c, self.faceR)); placeLabel(_label[b], c, 20 * u); }
@@ -488,6 +585,22 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         if (ol > maxO) { o.x *= maxO / ol; o.y *= maxO / ol; }
         _skinKnob.position = CGPointMake(h.x + o.x, h.y + o.y); _skinKnob.opacity = _stick[0] ? 1.0 : 0.95;
     }
+    if (_hades) {   // pressed keys: wash lit and a small dip; the stick's glass follows its touch (full opacity), at half opacity at rest
+        for (int i = 0; i < HADES_N; i++) { BOOL on = (_btnBits >> k_hades[i].bit) & 1;
+            _hWash[i].opacity = on ? 0.28 : 0;
+            _hGlass[i].transform = on ? CGAffineTransformMakeScale(0.93, 0.93) : CGAffineTransformIdentity;
+            if (_hLabel[i]) _hLabel[i].foregroundColor = (on ? k_textOn : k_text).CGColor;
+            if (k_hades[i].kind == H_DPAD) _hTri[k_hades[i].dir].fillColor = (on ? k_textOn : k_text).CGColor; }
+        CGPoint c = [self stickCentre:0]; CGFloat R = [self stickR:0];
+        CGPoint so = [self knobOffset:0]; CGFloat ol = hypot(so.x, so.y), maxO = R * 0.56;
+        if (ol > maxO) { so.x *= maxO / ol; so.y *= maxO / ol; }
+        CGFloat kr = R * 0.44;
+        [UIView performWithoutAnimation:^{
+            _hStick.frame = CGRectMake(c.x - R, c.y - R, 2 * R, 2 * R); _hStick.layer.cornerRadius = R;
+            _hKnob.frame = CGRectMake(c.x + so.x - kr, c.y + so.y - kr, 2 * kr, 2 * kr); _hKnob.layer.cornerRadius = kr;
+            _hStick.alpha = _hKnob.alpha = _stick[0] ? 1.0 : 0.5;
+        }];
+    }
     [CATransaction commit];
 }
 
@@ -516,7 +629,7 @@ static void read_pad(GCExtendedGamepad *g) {
         read_pad(c.extendedGamepad);
     }
     if (!any) { dm_haptics_apple_controller(0, nil); pthread_mutex_lock(&g_mu); g_pad_btn = 0; g_pad_lx = g_pad_ly = g_pad_rx = g_pad_ry = 0; pthread_mutex_unlock(&g_mu); publish(); }
-    dispatch_async(dispatch_get_main_queue(), ^{ self->_padOff = any; self->_controls.hidden = any; [self reset]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ self->_padOff = any; self->_controls.hidden = any; self->_glassBox.hidden = any; [self reset]; });
 }
 @end
 
