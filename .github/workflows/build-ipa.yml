@@ -4,6 +4,11 @@
 #   - Repository secret PROD_KEYS_B64 : your prod.keys, base64-encoded or raw text
 #   - Repository secret NSP_ZIP_URL   : a direct-download URL for ONE .zip that
 #                                       contains the game's .nsp file(s) at its top level
+#   - Repository secret QUARK_COOKIE  : only for source=quark — your Quark drive
+#                                       cookie; the runner then pulls the game's
+#                                       .nsp/.nsz files straight from Quark
+#                                       through a throwaway local AList server,
+#                                       so no zip has to be uploaded anywhere.
 # Only the app-only (slim) IPA is uploaded as a workflow artifact: the game's
 # RomFS is installed once into the app's Documents, and later builds ship
 # without it.
@@ -33,6 +38,23 @@ on:
         type: boolean
         required: false
         default: true
+      source:
+        description: "Where the game files come from: drive = the zip at NSP_ZIP_URL; quark = pull the .nsp/.nsz files straight from your Quark drive (needs the QUARK_COOKIE secret)"
+        type: choice
+        options:
+          - drive
+          - quark
+        required: false
+        default: drive
+      quark_dir:
+        description: "Quark only: folder holding the game files (empty = look at the drive root, then one folder down)"
+        required: false
+        default: ""
+      fetch_only:
+        description: "Only fetch and verify the game files, then stop (no build)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -40,7 +62,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 180
+    timeout-minutes: 350
     steps:
       - name: Check out nxnative
         uses: actions/checkout@v4
@@ -76,10 +98,13 @@ jobs:
         env:
           PROD_KEYS_B64: ${{ secrets.PROD_KEYS_B64 }}
           NSP_ZIP_URL: ${{ secrets.NSP_ZIP_URL }}
+          QUARK_COOKIE: ${{ secrets.QUARK_COOKIE }}
+          SOURCE: ${{ inputs.source }}
+          QUARK_DIR: ${{ inputs.quark_dir }}
         run: |
           set -eu
-          if [ -z "${PROD_KEYS_B64:-}" ] || [ -z "${NSP_ZIP_URL:-}" ]; then
-            echo "::error::Set repository secrets PROD_KEYS_B64 and NSP_ZIP_URL first (see the setup doc)."
+          if [ -z "${PROD_KEYS_B64:-}" ]; then
+            echo "::error::Set the repository secret PROD_KEYS_B64 first (see the setup doc)."
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/game"
@@ -96,29 +121,142 @@ jobs:
           # Sanity-check the keys file shape without printing any key material.
           grep -q 'aes_kek_generation_source' "$RUNNER_TEMP/prod.keys" \
             || { echo "::error::prod.keys does not look like a prod.keys file."; exit 1; }
-          # Google Drive share links need gdown (large files have a confirm step
-          # plain curl cannot pass); anything else is fetched as a direct download.
-          if printf '%s' "$NSP_ZIP_URL" | grep -q 'drive\.google\.com\|drive\.usercontent\.google\.com'; then
-            python3 -m pip install --user --break-system-packages gdown
-            # gdown 6.x takes the share URL (or file ID) directly; --fuzzy was removed.
-            python3 -m gdown "$NSP_ZIP_URL" -O "$RUNNER_TEMP/game.zip"
+          if [ "$SOURCE" = "quark" ]; then
+            # ---- Quark route: serve the drive through a local AList and pull
+            # the game files directly; the cookie never leaves the env.
+            if [ -z "${QUARK_COOKIE:-}" ]; then
+              echo "::error::Set the repository secret QUARK_COOKIE first."
+              exit 1
+            fi
+            ALIST_DIR="$RUNNER_TEMP/alist"
+            mkdir -p "$ALIST_DIR" && cd "$ALIST_DIR"
+            ALIST_VER=$(curl -s https://api.github.com/repos/AlistGo/alist/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
+            echo "AList version: $ALIST_VER"
+            curl -fL --retry 3 -o alist.tar.gz "https://github.com/AlistGo/alist/releases/download/$ALIST_VER/alist-darwin-arm64.tar.gz"
+            tar -xzf alist.tar.gz
+            ALIST_PW=$(openssl rand -hex 16)
+            ./alist admin set "$ALIST_PW" >/dev/null
+            ./alist server >alist.log 2>&1 &
+            for i in $(seq 1 30); do
+              curl -s -o /dev/null http://127.0.0.1:5244/api/public/settings && break || sleep 1
+            done
+            TOKEN=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$ALIST_PW\"}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["token"])' || true)
+            if [ -z "$TOKEN" ]; then
+              echo "::error::AList admin login failed."
+              tail -20 alist.log || true
+              exit 1
+            fi
+            export ALIST_TOKEN="$TOKEN"
+            export MANIFEST="$RUNNER_TEMP/manifest.tsv"
+            # Create the Quark storage and locate the game files: the named
+            # folder, else the drive root, else the single first-level folder
+            # that holds game files (several such folders = ambiguous, stop).
+            python3 - <<'EOF'
+          import json, os, urllib.request
+          TOK = os.environ["ALIST_TOKEN"]
+          def api(path, body):
+              req = urllib.request.Request("http://127.0.0.1:5244" + path,
+                  data=json.dumps(body).encode(), method="POST",
+                  headers={"Content-Type": "application/json", "Authorization": TOK})
+              return json.load(urllib.request.urlopen(req))
+          body = {"mount_path": "/quark", "driver": "Quark",
+                  "addition": json.dumps({"cookie": os.environ["QUARK_COOKIE"],
+                                          "root_folder_id": "0",
+                                          "use_transcoding_address": False})}
+          resp = api("/api/admin/storage/create", body)
+          assert resp.get("code") == 200, "storage create failed: %s" % resp.get("message")
+          def listdir(path):
+              resp = api("/api/fs/list", {"path": path, "refresh": True, "page": 1, "per_page": 200})
+              if resp.get("code") != 200:
+                  raise SystemExit("listing %s failed: %s" % (path, resp.get("message")))
+              return resp["data"]["content"] or []
+          WANT = (".nsp", ".xci", ".nsz")
+          def games_in(path):
+              return [(i["name"], i["size"], path.rstrip("/") + "/" + i["name"])
+                      for i in listdir(path)
+                      if not i["is_dir"] and i["name"].lower().endswith(WANT)]
+          root = "/quark"
+          if os.environ.get("QUARK_DIR"):
+              root = "/quark/" + os.environ["QUARK_DIR"].strip("/")
+          found = games_in(root)
+          if not found and root == "/quark":
+              holders = []
+              for item in listdir(root):
+                  if item["is_dir"]:
+                      g = games_in(root + "/" + item["name"])
+                      if g:
+                          holders.append(g)
+              if len(holders) > 1:
+                  raise SystemExit("Several folders hold game files; set the quark_dir input.")
+              if holders:
+                  found = holders[0]
+          if not found:
+              raise SystemExit("No .nsp/.xci/.nsz found in Quark at " + root)
+          with open(os.environ["MANIFEST"], "w") as f:
+              for name, size, path in found:
+                  f.write("%s\t%d\t%s\n" % (name, size, path))
+          total = 0
+          for name, size, path in found:
+              print("Found: %s (%d bytes)" % (name, size))
+              total += size
+          print("Total: %d bytes" % total)
+          EOF
+            # Probe the throughput on the first file before committing to the
+            # full pull: Quark throttles datacenter IPs hard for some accounts,
+            # and a crawl is not worth a multi-hour run.
+            FIRST_PATH=$(head -1 "$MANIFEST" | cut -f3)
+            FIRST_URL="http://127.0.0.1:5244/d$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$FIRST_PATH")"
+            SPEED=$(curl -sL --max-filesize 157286400 --max-time 70 -o /dev/null -w '%{speed_download}' "$FIRST_URL" || true)
+            echo "Quark probe speed: ${SPEED:-0} B/s"
+            if ! python3 -c "import sys; sys.exit(0 if float('${SPEED:-0}') >= 262144 else 1)"; then
+              echo "::error::Quark download from this runner is too slow (<256 KB/s) or failed; aborting. Use the Drive route instead."
+              exit 1
+            fi
+            while IFS="$(printf '\t')" read -r NAME SIZE P; do
+              URL="http://127.0.0.1:5244/d$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$P")"
+              echo "Downloading $NAME ($SIZE bytes)"
+              ok=""
+              for try in 1 2 3 4 5; do
+                if curl -fL -C - --retry 3 -o "$RUNNER_TEMP/game/$NAME" "$URL"; then ok=1; break; fi
+                echo "Retrying $NAME (attempt $try failed)"
+                sleep 5
+              done
+              [ -n "$ok" ] || { echo "::error::Download failed: $NAME"; exit 1; }
+              ACTUAL=$(stat -f%z "$RUNNER_TEMP/game/$NAME")
+              [ "$ACTUAL" = "$SIZE" ] || { echo "::error::Size mismatch for $NAME: got $ACTUAL, want $SIZE"; exit 1; }
+            done < "$MANIFEST"
+            pkill -f 'alist server' || true
           else
-            curl -fL --retry 3 -o "$RUNNER_TEMP/game.zip" "$NSP_ZIP_URL"
+            # ---- Drive route: one zip from NSP_ZIP_URL.
+            if [ -z "${NSP_ZIP_URL:-}" ]; then
+              echo "::error::Set the repository secret NSP_ZIP_URL first (see the setup doc)."
+              exit 1
+            fi
+            # Google Drive share links need gdown (large files have a confirm step
+            # plain curl cannot pass); anything else is fetched as a direct download.
+            if printf '%s' "$NSP_ZIP_URL" | grep -q 'drive\.google\.com\|drive\.usercontent\.google\.com'; then
+              python3 -m pip install --user --break-system-packages gdown
+              # gdown 6.x takes the share URL (or file ID) directly; --fuzzy was removed.
+              python3 -m gdown "$NSP_ZIP_URL" -O "$RUNNER_TEMP/game.zip"
+            else
+              curl -fL --retry 3 -o "$RUNNER_TEMP/game.zip" "$NSP_ZIP_URL"
+            fi
+            unzip -q "$RUNNER_TEMP/game.zip" -d "$RUNNER_TEMP/game"
+            rm -f "$RUNNER_TEMP/game.zip"
           fi
-          unzip -q "$RUNNER_TEMP/game.zip" -d "$RUNNER_TEMP/game"
-          rm -f "$RUNNER_TEMP/game.zip"
           # Drop macOS metadata junk (._ AppleDouble files masquerade as .nsp/.nsz).
           rm -rf "$RUNNER_TEMP/game/__MACOSX"
           find "$RUNNER_TEMP/game" -name '._*' -delete
           # Accept one extra nesting level (a folder inside the zip).
           if ! find "$RUNNER_TEMP/game" -maxdepth 2 \( -iname '*.nsp' -o -iname '*.xci' -o -iname '*.nsz' \) | grep -q .; then
-            echo "::error::No .nsp/.xci/.nsz found in the downloaded zip."
+            echo "::error::No .nsp/.xci/.nsz found in the fetched game files."
             find "$RUNNER_TEMP/game" -maxdepth 2 | head -50
             exit 1
           fi
           df -h / | cat
 
       - name: Decompress any .nsz files to .nsp
+        if: ${{ !inputs.fetch_only }}
         run: |
           set -eu
           # nxnative only reads .nsp/.xci; an .nsz is a compressed NSP and must
@@ -138,6 +276,7 @@ jobs:
           find "$RUNNER_TEMP/game" -iname '*.nsp' -exec ls -lh {} \;
 
       - name: Build the IPA
+        if: ${{ !inputs.fetch_only }}
         env:
           PKG: ${{ inputs.package }}
           APPNAME: ${{ inputs.app_name }}
@@ -185,7 +324,7 @@ jobs:
           ls -lh "$GITHUB_WORKSPACE/out"
 
       - name: Pack the app-only IPA (no bundled RomFS, for Documents/romfs)
-        if: success()
+        if: ${{ success() && !inputs.fetch_only }}
         run: |
           # The same app without its bundled RomFS: a small single-file download.
           # The app prefers Documents/romfs over the bundled one, so anyone who
@@ -200,7 +339,7 @@ jobs:
           ls -lh
 
       - name: Upload app-only IPA
-        if: success()
+        if: ${{ success() && !inputs.fetch_only }}
         uses: actions/upload-artifact@v4
         with:
           name: nxnative-ipa-slim
