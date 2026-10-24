@@ -12,8 +12,12 @@
 # fork). The handheld/movie path (1280x720) is deliberately untouched.
 # Encodings verified with capstone: mov w8, #2344 = 08 25 81 52; mov w1, #2344 = 01 25 81 52.
 # (An earlier draft of these values encoded 2340 by mistake -- always decode-check.)
-# The two IL2CPP Screen.SetResolution(1920, 1080) call sites are NOT cut: on Switch they record a
-# request and do not resize the NVN window; add cuts there only if a device test shows otherwise.
+# The two IL2CPP Screen.SetResolution(1920, 1080) call sites ARE cut as well (added after build
+# #19's device test): on this stack the managed request is not a no-op -- the native player stores
+# it in its display-state object, and the apply step feeds exactly that pair to nvnWindowSetCrop,
+# so with only the six cuts above the swapchain was 2344x1080 but the final crop stayed
+# 1920x1080 and the host presented the 16:9 crop stretched. Both sites materialise the width as
+# `mov w0, #1920` right before the icall; their heights are already `mov w1, #1080`.
 
 CUTS = {
   # Silksong main (build ID as dm/tools/patch_nso.py computes it; matches the main= value in
@@ -31,5 +35,9 @@ CUTS = {
      'swapchain texture 2: width 1920 -> 2344'),
     (0x128c148, '01f08052', '01258152',
      'swapchain texture 3: width 1920 -> 2344'),
+    (0x23f1354, '00f08052', '00258152',
+     'Screen.SetResolution request (defaults initialiser): width 1920 -> 2344 (drives the window crop)'),
+    (0x296b530, '00f08052', '00258152',
+     'Screen.SetResolution request (settings apply): width 1920 -> 2344 (drives the window crop)'),
   ],
 }
