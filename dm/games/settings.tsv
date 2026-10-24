@@ -9,6 +9,7 @@
 DM_FPS_TARGET	choice	30=30 帧,60=60 帧	DM_GAME_FPS_TARGET	DM_GAME_FPS_TARGET!=0	帧率	目标帧率（游戏支持时可选）
 DM_RENDER_SCALE	range	0.5:1.0:0.05	1.0	fixups:RENDER_SCALE	渲染缩放	低于 100% 更流畅，画面稍糊
 DM_OPMODE	choice	1=底座模式,0=掌机模式	DM_GAME_OPMODE	always	主机模式	底座 = 1080p 电视模式；掌机 = 720p，部分游戏的触屏功能仅掌机模式可用
+DM_FULLSCREEN	choice	1=自适应全屏,0=原生比例	1	always	画面比例	自适应 = 拉满整屏；原生 = 16:9 居中，两侧黑边
 DM_LANG	choice	languages	build:DM_LANG	languages>1	游戏语言	游戏内文本语言
 DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	always	帧数计数器	左上角显示实时帧数
 DM_METAL_HUD	toggle	-	0	always	性能面板	苹果开发者性能浮层（GPU、帧时间等），一般保持关闭
