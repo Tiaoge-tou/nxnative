@@ -213,25 +213,48 @@ jobs:
           EOF
             # Probe the throughput on the first file before committing to the
             # full pull: Quark throttles datacenter IPs hard for some accounts,
-            # and a crawl is not worth a multi-hour run.
+            # and a crawl is not worth a multi-hour run. The cap looks
+            # per-connection (a single curl stream measured ~55 KB/s in run
+            # #26), so probe and pull with aria2 over 16 parallel connections
+            # and judge the AGGREGATE speed against the same 256 KB/s floor.
+            command -v aria2c >/dev/null 2>&1 || brew install aria2
             FIRST_PATH=$(head -1 "$MANIFEST" | cut -f3)
             FIRST_URL="http://127.0.0.1:5244/d$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$FIRST_PATH")"
-            SPEED=$(curl -sL --max-filesize 157286400 --max-time 70 -o /dev/null -w '%{speed_download}' "$FIRST_URL" || true)
-            echo "Quark probe speed: ${SPEED:-0} B/s"
+            mkdir -p "$RUNNER_TEMP/probe"
+            aria2c -x16 -s16 --file-allocation=none --summary-interval=10 \
+              --console-log-level=notice -d "$RUNNER_TEMP/probe" -o probe.bin \
+              "$FIRST_URL" > "$RUNNER_TEMP/probe.log" 2>&1 &
+            PROBE_PID=$!
+            sleep 70
+            kill "$PROBE_PID" 2>/dev/null || true
+            wait "$PROBE_PID" 2>/dev/null || true
+            SPEED=$(python3 -c '
+            import re
+            try:
+                txt = open(__import__("os").environ["RUNNER_TEMP"] + "/probe.log").read()
+            except Exception:
+                txt = ""
+            hits = re.findall(r"DL:([0-9.]+)(KiB|MiB|GiB|B)", txt)
+            if not hits:
+                print(0)
+            else:
+                val, unit = hits[-1]
+                mult = {"B": 1, "KiB": 1024, "MiB": 1048576, "GiB": 1073741824}[unit]
+                print(int(float(val) * mult))
+            ')
+            echo "Quark probe speed (16 connections): ${SPEED:-0} B/s"
+            rm -rf "$RUNNER_TEMP/probe" "$RUNNER_TEMP/probe.log"
             if ! python3 -c "import sys; sys.exit(0 if float('${SPEED:-0}') >= 262144 else 1)"; then
-              echo "::error::Quark download from this runner is too slow (<256 KB/s) or failed; aborting. Use the Drive route instead."
+              echo "::error::Quark download from this runner is too slow (<256 KB/s aggregate over 16 connections) or failed; aborting. Use the Drive route instead."
               exit 1
             fi
             while IFS="$(printf '\t')" read -r NAME SIZE P; do
               URL="http://127.0.0.1:5244/d$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$P")"
               echo "Downloading $NAME ($SIZE bytes)"
-              ok=""
-              for try in 1 2 3 4 5; do
-                if curl -fL -C - --retry 3 -o "$RUNNER_TEMP/game/$NAME" "$URL"; then ok=1; break; fi
-                echo "Retrying $NAME (attempt $try failed)"
-                sleep 5
-              done
-              [ -n "$ok" ] || { echo "::error::Download failed: $NAME"; exit 1; }
+              if ! aria2c -x16 -s16 -c --file-allocation=none --retry-wait=5 -m 5 \
+                   --console-log-level=warn -d "$RUNNER_TEMP/game" -o "$NAME" "$URL"; then
+                echo "::error::Download failed: $NAME"; exit 1
+              fi
               ACTUAL=$(stat -f%z "$RUNNER_TEMP/game/$NAME")
               [ "$ACTUAL" = "$SIZE" ] || { echo "::error::Size mismatch for $NAME: got $ACTUAL, want $SIZE"; exit 1; }
             done < "$MANIFEST"
