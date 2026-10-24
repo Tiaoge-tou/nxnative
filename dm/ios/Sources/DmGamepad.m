@@ -124,8 +124,9 @@ static CALayer *imgLayer(CALayer *parent, const char *name) {
 // ---- Hades layout (DM_PAD_HADES=1 in an env file) ----
 // The touch layout of the earlier Hades II port this build replaces, measured from its recordings: a row of small keys at the
 // top right, the face keys in a quarter-circle fan around a larger Y, four separate D-pad circles along the bottom, and a
-// floating left stick. The keys are real Liquid Glass discs (UIGlassEffect; the app needs iOS 26 anyway): a glass view per key,
-// with its label and a press wash as plain layers above the glass. Centres are fractions of the whole screen, radii of its width.
+// floating left stick. The keys are clear dark discs (a translucent black fill and a thin light rim, no material
+// blur): a view per key, with its label and a press wash as plain layers above it. Centres are fractions of the
+// whole screen, radii of its width.
 static BOOL padHades(void) { const char *e = getenv("DM_PAD_HADES"); return e && atoi(e); }
 enum { H_TOP, H_FACE, H_DPAD };   // a D-pad entry carries a direction in dir (0 left, 1 up, 2 down, 3 right) and no label
 static const struct { int bit; int kind; int dir; const char *label; CGFloat x, y, r; } k_hades[] = {
@@ -145,26 +146,15 @@ static const struct { int bit; int kind; int dir; const char *label; CGFloat x, 
     {B_RIGHT, H_DPAD, 3, NULL, 0.807, 0.896, 0.019},
 };
 #define HADES_N (int)(sizeof k_hades / sizeof k_hades[0])
-static UIVisualEffectView *glassDisc(UIView *parent, CGFloat tint) {
-    // iOS 26 Liquid Glass: the real system material (refraction, rim light,
-    // speculars) — not a drawn imitation. The iOS 26 SDK headers do not
-    // declare UIGlassEffect's initialisers to Objective-C (Swift-facing only),
-    // so resolve the class at runtime and use its default initialiser, which
-    // is the Regular style; the tint goes through performSelector for the
-    // same reason. interactive defaults to NO — the pad's own press wash
-    // drives feedback. Falls back to the system thin material if the class
-    // is somehow absent.
-    UIVisualEffect *eff = nil;
-    Class gc = NSClassFromString(@"UIGlassEffect");
-    if (gc) {
-        id g = [[gc alloc] init];
-        if ([g respondsToSelector:@selector(setTintColor:)])
-            [g performSelector:@selector(setTintColor:)
-                    withObject:[UIColor colorWithWhite:0.04 alpha:tint]];
-        eff = (UIVisualEffect *)g;
-    }
-    if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
-    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:eff];
+static UIView *clearDisc(UIView *parent, CGFloat tint) {
+    // A plain translucent disc: a black fill at the given alpha and a thin light rim, nothing else.
+    // The keys first used the system Liquid Glass material here (UIGlassEffect, regular style): over a
+    // bright scene it reads as frosted grey and hides the game behind the key, so the discs are plain
+    // now, like the earlier Hades II port's keys.
+    UIView *v = [[UIView alloc] init];
+    v.backgroundColor = [UIColor colorWithWhite:0 alpha:tint];
+    v.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.35].CGColor;
+    v.layer.borderWidth = 1;
     v.userInteractionEnabled = NO;
     [parent addSubview:v];
     return v;
@@ -196,11 +186,11 @@ static __weak DmGamepad *g_view;
     BOOL _skillOff;                                // the skill keys (grp SK_SKILL) are hidden by the eye key
     BOOL _hades;                                   // DM_PAD_HADES: the glass controls below replace the drawn ones
     UIView *_glassBox;                             // holds the Hades glass controls: hidden while a physical controller is connected
-    UIVisualEffectView *_hGlass[HADES_N];          // one Liquid Glass disc per Hades key
+    UIView *_hGlass[HADES_N];          // one clear disc per Hades key
     CAShapeLayer *_hWash[HADES_N];                 // a white wash over a disc, lit while its key is pressed
     CATextLayer *_hLabel[HADES_N];                 // the Hades keys' labels (the D-pad keys carry a triangle layer instead)
     CAShapeLayer *_hTri[4];                        // the D-pad triangles, in k_hades dir order
-    UIVisualEffectView *_hStick, *_hKnob;          // the floating stick's glass disc and its knob
+    UIView *_hStick, *_hKnob;          // the floating stick's clear disc and its knob
     CGPoint _lCentre;                              // the floating left stick's centre: where its touch landed
 }
 
@@ -258,8 +248,8 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             _glassBox.userInteractionEnabled = NO; _glassBox.backgroundColor = UIColor.clearColor;
             _glassBox.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             [self addSubview:_glassBox];
-            for (int i = 0; i < HADES_N; i++) _hGlass[i] = glassDisc(_glassBox, 0.30);
-            _hStick = glassDisc(_glassBox, 0.16); _hKnob = glassDisc(_glassBox, 0.32);
+            for (int i = 0; i < HADES_N; i++) _hGlass[i] = clearDisc(_glassBox, 0.30);
+            _hStick = clearDisc(_glassBox, 0.30); _hKnob = clearDisc(_glassBox, 0.30);
             CALayer *ov = [CALayer layer]; [_glassBox.layer addSublayer:ov];   // washes and labels, above every glass disc
             for (int i = 0; i < HADES_N; i++) {
                 _hWash[i] = shape(ov); _hWash[i].fillColor = UIColor.whiteColor.CGColor; _hWash[i].opacity = 0;
