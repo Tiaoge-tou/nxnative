@@ -81,6 +81,8 @@ The game language (`--language`, `LANGUAGE`; English by default) is what `nn::oe
 
 On the device, environment switches go in `Documents/env.txt` (one `KEY=VALUE` per line), and game files are also accepted at `Documents/romfs`.
 
+Game rumble is enabled by default (`DM_RUMBLE=0` disables it); `DM_RUMBLE_GAIN=0..3` scales its strength (default 1, zero is silent). Both are launcher settings, independent of `DM_TOUCH_HAPTICS`. `hle_hid.c` decodes SDK vibration handles (style index / npad / motor bytes, as in libnx's `_hidGetVibrationDeviceHandles`) and routes them through the same player assignments as input. `hle_haptics.c` retains each motor's two amplitude/frequency bands, commits batches atomically and invalidates queued output on lifecycle or route changes. `haptics_apple.m` provides shared Core Haptics output for Mac controllers and iOS: left/right handle localities when available, otherwise one combined output; on iPhone, the phone is used while no controller is selected. A connected controller without haptics produces no game rumble. Continuous effects keep running until the game stops them; short effects are not extended. Engine resets, focus loss and interruptions clear the old values and require a fresh game signal. The frequency-to-sharpness mapping is approximate and physical feel / controller compatibility require device testing. The headless Mac host has no output. `make -C dm/host/tests GAME=<id> run` covers state and HID routing without hardware.
+
 ### A Mac-only build for development
 
 The Mac is the development host, not a platform for players: there is no Mac app. To test or debug a game on the Mac, `--platform mac` (`PLATFORM = 'mac'` in Spyder) builds only what running it in the Mac host needs, from the same NSP folder:
