@@ -4,7 +4,9 @@
 #   - Repository secret PROD_KEYS_B64 : your prod.keys, base64-encoded or raw text
 #   - Repository secret NSP_ZIP_URL   : a direct-download URL for ONE .zip that
 #                                       contains the game's .nsp file(s) at its top level
-# The IPA is split into <2 GB parts and uploaded as a workflow artifact.
+# Only the app-only (slim) IPA is uploaded as a workflow artifact: the game's
+# RomFS is installed once into the app's Documents, and later builds ship
+# without it.
 #
 # Runner choice: macos-26 (Apple Silicon, ships Xcode 26 / iOS 26 SDK — the games
 # need a minimum of iOS 26, so an older SDK cannot build them).
@@ -182,31 +184,12 @@ jobs:
           test -s "$GITHUB_WORKSPACE/out/game.ipa" || { echo "::error::Build finished without producing out/game.ipa — see build.log"; exit 1; }
           ls -lh "$GITHUB_WORKSPACE/out"
 
-      - name: Pack the RomFS separately (one-time, for Documents/romfs)
-        if: success()
-        run: |
-          # The same RomFS the IPA carries, zipped with a top-level "romfs" folder:
-          # unzip it into the app's Documents once, and later builds can ship a
-          # data-less IPA (the app prefers Documents/romfs over the bundled one).
-          cd "$RUNNER_TEMP" && rm -rf romfs-pack && mkdir romfs-pack && cd romfs-pack
-          unzip -q "$GITHUB_WORKSPACE/out/game.ipa" 'Payload/DmIOS.app/romfs/*'
-          mv Payload/DmIOS.app/romfs ./romfs
-          rm -rf Payload
-          zip -9 -q -r romfs.zip romfs
-          shasum -a 256 romfs.zip > romfs.zip.sha256
-          split -b 1900m romfs.zip romfs.zip.part-
-          rm -f romfs.zip
-          mkdir -p "$GITHUB_WORKSPACE/out-romfs"
-          mv romfs.zip.part-* romfs.zip.sha256 "$GITHUB_WORKSPACE/out-romfs/"
-          ls -lh "$GITHUB_WORKSPACE/out-romfs"
-
       - name: Pack the app-only IPA (no bundled RomFS, for Documents/romfs)
         if: success()
         run: |
           # The same app without its bundled RomFS: a small single-file download.
           # The app prefers Documents/romfs over the bundled one, so anyone who
-          # already placed the RomFS pack there can install this over the top;
-          # the full split IPA below remains the self-contained fallback.
+          # already placed the RomFS pack there can install this over the top.
           cd "$RUNNER_TEMP" && rm -rf slim-pack && mkdir slim-pack && cd slim-pack
           unzip -q "$GITHUB_WORKSPACE/out/game.ipa"
           rm -rf Payload/DmIOS.app/romfs
@@ -224,36 +207,6 @@ jobs:
           path: |
             out-slim/game-slim.ipa
             out-slim/game-slim.ipa.sha256
-          retention-days: 7
-
-      - name: Upload RomFS parts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nxnative-romfs
-          path: |
-            out-romfs/romfs.zip.part-*
-            out-romfs/romfs.zip.sha256
-          retention-days: 7
-
-      - name: Split and checksum the IPA
-        if: success()
-        run: |
-          cd "$GITHUB_WORKSPACE/out"
-          shasum -a 256 game.ipa > game.ipa.sha256
-          # Release assets and some download paths cap at 2 GB per file; split at 1.9 GB.
-          split -b 1900m game.ipa game.ipa.part-
-          rm -f game.ipa
-          ls -lh
-
-      - name: Upload IPA parts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nxnative-ipa
-          path: |
-            out/game.ipa.part-*
-            out/game.ipa.sha256
           retention-days: 7
 
       - name: Upload build log on failure
