@@ -16,5 +16,13 @@ CUTS = {
     # (dm/host/hle_oe.c) covers the resolution query this build never makes.
     (0x2a6080, '08a080d2', '082581d2', 'render width: mov x8, #1280 -> #2344 (platform display size, low half)'),
     (0x2a6084, '085ac0f2', '0887c0f2', 'render height: movk x8, #720, lsl #32 -> #1080, lsl #32 (platform display size, high half)'),
+    # GUI reference size: the screen initialiser (main+0x2abf8c) writes the "Screen" statics struct (main+0x483c4a0) a
+    # design/reference size of 1920x1080 unconditionally, and the GUI lays out against that pair (right anchors resolve to
+    # 1920-margin, centre to 960) while the struct's actual-size fields already follow the renderer pair above -- so on a
+    # 2344-wide frame every right/centre-anchored GUI element sat ~18% left of where it belongs. Widen the design width to
+    # match; the height twin (1080) already agrees. The initialiser's own scale/inset math uses immediates rather than the
+    # stored field, so nothing else at init changes. (A dormant resize-handler recompute would read the field, but nxnative
+    # pins docked mode, so it never runs; see re-wide/FINDINGS2.md.)
+    (0x2abfbc, '0bf08052', '0b258152', 'GUI reference width: mov w11, #1920 -> #2344 (screen statics design size, main+0x483c4a0+0)'),
   ],
 }
