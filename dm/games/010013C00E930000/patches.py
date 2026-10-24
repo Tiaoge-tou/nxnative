@@ -39,5 +39,7 @@ CUTS = {
      'Screen.SetResolution request (defaults initialiser): width 1920 -> 2344 (drives the window crop)'),
     (0x296b530, '00f08052', '00258152',
      'Screen.SetResolution request (settings apply): width 1920 -> 2344 (drives the window crop)'),
+    (0x6679248, '80070000', '28090000',
+     'display-mode max width in the screen-state ctor template: 1920 -> 2344 (the ctor copies the rodata block at 0x6679240 into the state object +0xa4..+0xb3; the +0xac word is the clamp ceiling of the native SetResolution setter, so widened requests were still clamped to 1920)'),
   ],
 }
