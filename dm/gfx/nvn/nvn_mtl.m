@@ -4408,6 +4408,24 @@ static id<MTLSamplerState> dummy_samp(void) {
 static uint64_t dummy_samp_rid(void) { static uint64_t rid; if (!rid) rid = dummy_samp().gpuResourceID._impl; return rid; }
 static id<MTLBuffer> dummy_buf(void) { static id<MTLBuffer> b; if (!b) { b = [g_dev newBufferWithLength:64 << 10 options:MTLResourceStorageModeShared]; res_add(b); } return b; }
 static uint64_t dummy_buf_gpu(void) { static uint64_t gpu; if (!gpu) gpu = dummy_buf().gpuAddress; return gpu; }
+// Image atomics that are not followed into the image's storage (a block-linear image, or storage in no memory pool) go to a scratch buffer at least as large as the image. SPIRV-Cross indexes
+// them by the image bound in the same slot (spvImage2DAtomicCoord: x + y × its width), so in the 64 KB dummy buffer they ran up to the image's size past its end, into whatever GPU memory followed:
+// Pokémon Legends: Z-A's atomic max into an r32ui 2D array (texture ID 302, fragment shader 2bd5037003980716) wrote into zero-copy pools over the game's heap, which broke pointers in the game's
+// objects and in the host's program objects, and into unmapped addresses, a GPU page fault (GitHub issue #101). The results are discarded as before; the buffer only grows
+static __strong id<MTLBuffer> g_atom_scratch;
+static id<MTLBuffer> atom_scratch(const tex_t *t) {
+    int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
+    uint64_t layers = t->d.target == 8 ? 6 : t->d.depth > 1 ? t->d.depth : 1;   // 3D, 2D array and cube array: depth (a cube array's counts layer-faces, tex_desc)
+    uint64_t need = (uint64_t)MAX(t->d.width, 1u) * MAX(t->d.height, 1u) * layers * (uint64_t)MAX(bpb, 4);
+    if (need < t->L.size) need = t->L.size;
+    if (g_atom_scratch.length >= need) return g_atom_scratch;
+    uint64_t len = (need + (1u << 20) - 1) & ~(uint64_t)((1u << 20) - 1);
+    id<MTLBuffer> b = [g_dev newBufferWithLength:len options:MTLResourceStorageModePrivate];
+    if (!b) { static int once; if (!once++) MLOG("[RED] image atomics: cannot create a %llu MB scratch buffer, they go to the 64 KB dummy buffer", (unsigned long long)(len >> 20)); return nil; }
+    res_add(b); if (g_atom_scratch) defer_obj_release(g_atom_scratch); g_atom_scratch = b;
+    MLOG("image atomics that are not followed: scratch buffer of %llu MB (texture %ux%u, %llu layers)", (unsigned long long)(len >> 20), t->d.width, t->d.height, (unsigned long long)layers);
+    return b;
+}
 // Snapshot substitution for same-pass feedback sampling (registered by fb_prepare, used by encode_args; see the notes before draw)
 static uint64_t g_draw_seq, g_fb_seq, g_fb_count; static int g_fb_n, g_fb_rebind;
 static __unsafe_unretained id<MTLTexture> g_fb_src[4]; static __strong id<MTLTexture> g_fb_use[4]; static uint64_t g_fb_rid[4];
@@ -4567,13 +4585,15 @@ static int encode_args_(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, i
             int tid = reg < 32 ? (int)(S.img[nvn_stage][reg] & 0xfffff) : 0;
             const tex_t *tt = tid && tid < g_ntreg && g_treg[tid].ok ? &g_treg[tid].t : NULL;
             void *mb; uint64_t mo, gpu;
-            // A block-linear image is a deswizzled Metal copy whose pool memory has another layout (and is re-uploaded from): its atomics go to the dummy buffer instead (logged)
+            // A block-linear image is a deswizzled Metal copy whose pool memory has another layout (and is re-uploaded from): its atomics go to a scratch buffer instead (logged, atom_scratch)
             int linear = tt && (tt->d.target == 10 || (tt->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)));
-            if (tt && !linear) RED_ONCE(93, "image atomics on a block-linear texture (texture ID %d target %d): not followed, the atomics go to a dummy buffer", tid, (int)tt->d.target);
+            if (tt && !linear) RED_ONCE(93, "image atomics on a block-linear texture (texture ID %d target %d): not followed, the atomics go to a scratch buffer", tid, (int)tt->d.target);
+            id<MTLBuffer> sb = nil;
             if (linear && tt->mem && mtl_gpu_addr((uint64_t)tt->mem, tt->L.size ? tt->L.size : 4, &mb, &mo, &gpu)) {
                 slots[aid] = gpu; USE((__bridge id<MTLBuffer>)mb, MTLResourceUsageRead | MTLResourceUsageWrite);
                 static int nlog; if (nlog < 8 && !(sh->logged & 2)) { sh->logged |= 2; nlog++; MLOG("shader %s (stage %d): image atomics on image slot %d, texture ID %d (target %d, %llu bytes)", sh->key, nvn_stage, reg, tid, (int)tt->d.target, (unsigned long long)tt->L.size); }
-            } else { slots[aid] = dummy_buf_gpu(); USE(dummy_buf(), MTLResourceUsageRead | MTLResourceUsageWrite); }   // unbound: the writes go to the 64 KB dummy buffer
+            } else if (tt && (sb = atom_scratch(tt))) { slots[aid] = sb.gpuAddress; USE(sb, MTLResourceUsageRead | MTLResourceUsageWrite); }
+            else { slots[aid] = dummy_buf_gpu(); USE(dummy_buf(), MTLResourceUsageRead | MTLResourceUsageWrite); }   // unbound: the image slot has the dummy image, so the writes stay in the 64 KB dummy buffer
             if (bl) PD("B %llu st%d imga reg%d tid=%d %s", g_stat_pass, nvn_stage, reg, tid, tt && tt->mem ? "real" : "dummy");
         } else if (b->kind == NVN_RB_TBUF) {   // Typed buffer: the buffer texture (target BUFFER) in texture slot r
             int tid = (int)(tex_slot_h(S.tex[nvn_stage], S.img[nvn_stage], reg) & 0xfffff);
@@ -6561,6 +6581,9 @@ static void tf_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di) {
     __unsafe_unretained id<MTLRenderPipelineState> ps = tf_pso(vs);
     if (!ps) return;
     rp_end(); ubd_land();   // the deferred inline updates first: this draw comes before draw's conflict check (ubd_conflict) and writes its capture buffers
+    // ubd_land copies them in the copy encoder and leaves it open, as does a copy or dispatch just before: a render encoder opened beside it is invalid (Metal validation: "Command buffer already
+    // has an open command encoder"). Pokémon Legends: Z-A crashed in the driver when that copy encoder ended, two minutes into a new game on the Mac (GitHub issue #101)
+    if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     MTL4RenderPassDescriptor *d = [MTL4RenderPassDescriptor new]; d.renderTargetWidth = 1; d.renderTargetHeight = 1; d.defaultRasterSampleCount = 1;
     id<MTL4RenderCommandEncoder> en = enc_r_begin(d);
     enc_r_pso(en, ps);

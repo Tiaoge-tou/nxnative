@@ -474,11 +474,28 @@ static void remap_at(module_t *m, vm_address_t to, const void *from, unsigned lo
     if ((cur & need) != need) die("%s permissions after vm_remap %#x, missing %#x", m->name, cur, need);
 }
 #define IMAGE_MH (&_mh_execute_header)
+// The NRO modules (loader.c "NRO modules") are packed instead of getting sections of their own: a Mach-O file has at most 255 sections, and Super Smash Bros. Ultimate's 98 NROs would
+// take 294. gen_embed.py puts their pieces one after another, each 16K aligned, in __TEXT,__dm_nro_x0 / __DM_NRO_W,__img / __TEXT,__dm_nro_x1, and __DATA,__dm_nro_tab lists them:
+// 32 bytes of name, then the offset and length of its x0, W and x1 pieces in their sections (u64 each). A module name never holds an underscore, so these names meet no module's
+typedef struct { char name[32]; uint64_t off[3][2]; } nro_ent;
+static int nro_pieces(const char *name, const uint8_t **x0, unsigned long *z0, const uint8_t **w, unsigned long *zw, const uint8_t **x1, unsigned long *z1) {
+    unsigned long zt, s0, sw, s1;
+    const nro_ent *t = (const nro_ent *)getsectiondata(IMAGE_MH, "__DATA", "__dm_nro_tab", &zt);
+    const uint8_t *b0 = getsectiondata(IMAGE_MH, "__TEXT", "__dm_nro_x0", &s0), *bw = getsectiondata(IMAGE_MH, "__DM_NRO_W", "__img", &sw), *b1 = getsectiondata(IMAGE_MH, "__TEXT", "__dm_nro_x1", &s1);
+    if (!t || !b0 || !bw || !b1) return 0;
+    for (unsigned long i = 0; i < zt / sizeof *t; i++) if (!strncmp(t[i].name, name, sizeof t[i].name)) {
+        *x0 = b0 + t[i].off[0][0]; *z0 = t[i].off[0][1]; *w = bw + t[i].off[1][0]; *zw = t[i].off[1][1]; *x1 = b1 + t[i].off[2][0]; *z1 = t[i].off[2][1];
+        return 1;
+    }
+    return 0;
+}
 static void map_image(module_t *m, const char *dir) {
     (void)dir;
     char sx0[17], sx1[17], dm[17]; snprintf(sx0, sizeof sx0, "__dm%sx0", m->name); snprintf(sx1, sizeof sx1, "__dm%sx1", m->name); snprintf(dm, sizeof dm, "__DM%sW", m->name);
-    unsigned long z0, zw, z1;
-    const uint8_t *x0 = getsectiondata(IMAGE_MH, "__TEXT", sx0, &z0), *w = getsectiondata(IMAGE_MH, dm, "__img", &zw), *x1 = getsectiondata(IMAGE_MH, "__TEXT", sx1, &z1);
+    unsigned long z0 = 0, zw = 0, z1 = 0;
+    const uint8_t *x0 = NULL, *w = NULL, *x1 = NULL;
+    if (m->nro) { if (!nro_pieces(m->name, &x0, &z0, &w, &zw, &x1, &z1)) die("NRO %s: not in the embedded NRO table (__DATA,__dm_nro_tab)", m->name); }
+    else { x0 = getsectiondata(IMAGE_MH, "__TEXT", sx0, &z0); w = getsectiondata(IMAGE_MH, dm, "__img", &zw); x1 = getsectiondata(IMAGE_MH, "__TEXT", sx1, &z1); }
     if (!x0 || !w || !x1) die("embedded sections %s / %s / %s missing", sx0, dm, sx1);
     // Patch area before the base (patch_off < 0): W ends at the end of data (FILE_IMAGE_LEN); bss and the key page are zero pages from vm_allocate and are not in the executable
     int front = m->patch_off < 0;
