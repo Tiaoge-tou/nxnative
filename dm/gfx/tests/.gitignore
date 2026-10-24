@@ -72,3 +72,5 @@ t_clear_ds
 t_clear_ds.dSYM/
 t_upgrade_alias
 t_upgrade_alias.dSYM/
+t_stencil_view
+t_stencil_view.dSYM/
