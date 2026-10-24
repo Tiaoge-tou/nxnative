@@ -28,6 +28,7 @@
 #   · data.arc (Super Smash Bros. Ultimate, smash_arc.py): GLSLC outputs in its SSBH shader databases and BNSH in its effects and UI layouts, each of its current files (zstd) scanned, see smash_arc_jobs
 #   · PKZ (PlatinumGames, Bayonetta 3): shader objects (VSO / PSO / CSO / HSO / DSO, a control section and a code area each) in the DAT archives of the PKZ entries (Oodle Kraken, decoded by the
 #       game's own decoder in the Mac host), see pkz_entries, pgdat_members and pg_shader
+#   · control sections loose in main, in no GLSLC output or BNSH file (Advance Wars 1+2: Re-Boot Camp's Bink 2 shaders): paired with their code areas by data records or adjacency, see raw_shaders
 # Code area: 0x30 header + (graphics) 0x50 SPH + instructions; header magic 0x12345678 for graphics, 0x12345679 for compute. The control section starts with 0x98761234, +0x704 = code area length,
 #   +0x700 = start of the c1 constant segment within the code area; for compute +0x748 thread group xyz (u32 ×3), +0x754 shared memory bytes (checked one by one against PC reflection on D2R's 22 compute shaders).
 # Stage: BNSH uses the stage slot; BAHS uses bits 10..13 of SPH word 0 (1 vertex 2 hull 3 domain 4 geometry 5 pixel), and a compute header means compute.
@@ -713,6 +714,75 @@ def mgfx_shaders(d, label):
     if label.endswith('.xnb') and b'EffectReader' in d[:0x200] and not out: red(f'{label}: an XNB effect without an MGFX version 8 effect of NVN shaders')
     return out
 
+def rel_targets(img):
+    """A module image's relative relocations: {slot: target}, both module offsets. RELA's R_AARCH64_RELATIVE entries (type 0x403) carry the target as their addend; DT_RELR (SDK 20, tag 36,
+    size tag 35) packs slots whose own 8 bytes are the target: an even entry is a slot (the next slot follows it), an odd one a bitmap of the 63 slots after the last (as loader.c relr_apply)"""
+    m = struct.unpack_from('<I', img, 4)[0]; o = m + struct.unpack_from('<i', img, m + 4)[0]; t = {}
+    while o + 16 <= len(img):
+        tag, v = struct.unpack_from('<qQ', img, o); o += 16
+        if tag == 0: break
+        t.setdefault(tag, v)
+    out = {}
+    for i in range(0, t.get(8, 0) if 7 in t else 0, 24):
+        off, info, add = struct.unpack_from('<QQq', img, t[7] + i)
+        if info & 0xffffffff == 0x403: out[off] = add
+    nxt = 0
+    for i in range(0, t.get(35, 0) if 36 in t else 0, 8):
+        e = struct.unpack_from('<Q', img, t[36] + i)[0]
+        if not e & 1: out[e] = struct.unpack_from('<Q', img, e)[0]; nxt = e + 8; continue
+        for b in range(63):
+            if e >> (b + 1) & 1: s = nxt + 8 * b; out[s] = struct.unpack_from('<Q', img, s)[0]
+        nxt += 8 * 63
+    return out
+
+def adrp_targets(d, lo, hi):
+    """Addresses in [lo, hi) that the code builds with adrp + add on the same register (the add within the next 8 instructions) → the offsets of those adds, all module offsets. Every word of
+    the image is tried (a data word that decodes so only adds a candidate)"""
+    w, out = memoryview(d)[:len(d) & ~3].cast('I'), collections.defaultdict(list)
+    for i, x in enumerate(w):
+        if x & 0x9f000000 != 0x90000000: continue
+        rd = x & 31; page = (i * 4 & ~0xfff) + ((((x >> 5 & 0x7ffff) << 2 | x >> 29 & 3) << 44 >> 44) << 12)
+        if not lo - 0x1000 <= page < hi: continue
+        for j, y in enumerate(w[i + 1:i + 9]):
+            if y & 0xffc00000 == 0x91000000 and y >> 5 & 31 == rd:
+                t = page + (y >> 10 & 0xfff)
+                if lo <= t < hi: out[t].append((i + 1 + j) * 4)
+                break
+    return out
+
+def raw_shaders(d, label, known=()):
+    """Control sections in main that are in no GLSLC output and no BNSH file: a shader compiled offline whose control section and code area the code hands to nvnShaderData itself (Advance Wars 1+2:
+    Re-Boot Camp, Unity 2020.2 with Bink 2: the movie player's 32: 2 vertex, 22 pixel and 8 compute shaders; without them its movies drew white). Most are 0x20-byte records in data {code area
+    pointer, control section pointer, u32 code length, u32 control length} (two tables, main+0x49eae50 and +0x49fb5c0), found as two relocated slots, the second pointing at the control section and
+    the first at a code area of the length its control +0x704 gives. The rest the code uses by address (main+0x1546b4c, +0x1547efc): adrp + add to the control section and to a code area it copies
+    from, which lies right after the control section's own length (control +0x20, at 16-byte alignment) or right before it. Only a code area the code builds the address of is taken: both neighbours
+    can look right, so the one whose address the code builds nearest to the control section's (within 1 KB) is taken: main+0x4a2c670 is a compute shader whose code is the 0x100 bytes before it (adds 0x20 apart,
+    main+0x1548014 / +0x1548034); after it lies another vertex shader's code area, whose first 0x100 bytes pass the header and length checks, and that area is the vertex shader main+0x4a2d290 takes from
+    before itself (main+0x1548358 / +0x1548374, 0x324 bytes from the first). Compute code areas have no header (SDK 10), so the stage is glslc_stage's, and a headerless one is checked by its length only, never
+    across a control section. known: the control sections the other readers took from this main (Celeste's MonoGame effect in main holds some outside any GLSLC output or BNSH file), left out.
+    Of 25 mains on hand only that one has such control sections, so the tables of every other game stay as they were"""
+    skip = []
+    for m in re.finditer(b'\x91\x68\x86\x19', d):
+        size = struct.unpack_from('<I', d, m.start() + 0x44)[0]
+        if 0x760 < size <= len(d) - m.start(): skip.append((m.start(), m.start() + size))
+    for m in re.finditer(b'BNSH\0\0\0\0', d): skip.append((m.start(), m.start() + struct.unpack_from('<I', d, m.start() + 0x1c)[0]))
+    ctls = [c for m in re.finditer(re.escape(CTL_MAGIC), d) if not (c := m.start()) & 3 and not any(a <= c < b for a, b in skip) and d[c:c + struct.unpack_from('<I', d, c + 0x20)[0]] not in known]
+    if not ctls: return []
+    rel, code_of, cset = rel_targets(d), {}, set(ctls)
+    for s, c in rel.items():
+        if c in cset and s - 8 in rel and c not in code_of and struct.unpack_from('<I', d, s + 8)[0] == struct.unpack_from('<I', d, c + 0x704)[0]: code_of[c] = rel[s - 8]
+    built = adrp_targets(d, min(ctls) - 0x100000, max(ctls) + 0x100000) if any(c not in code_of for c in ctls) else {}
+    out = []
+    for c in ctls:
+        nctl, n = struct.unpack_from('<I', d, c + 0x20)[0], struct.unpack_from('<I', d, c + 0x704)[0]
+        ctl, why = d[c:c + nctl], 'no code area: no data record points at one, and the code builds the address of none right after or right before it'
+        near = lambda k: min(abs(a - b) for a in built[k] for b in built[c])   # how close the code builds this code area's address to the control section's
+        for k in ([code_of[c]] if c in code_of else sorted((k for k in ((c + nctl + 15) & ~15, c - n) if k in built and c in built and near(k) < 0x400), key=near)):
+            code = d[k:k + n]; st = glslc_stage(ctl, code) if k >= 0 and CTL_MAGIC not in code else None
+            if st and not check(label, st, ctl, code): out.append((f'{label}#RAW@{c:#x}', st, ctl, code)); why = None; break
+        if why: print(f'[RED] {label} control section @{c:#x}: {why}; left out', flush=True)
+    return out
+
 ONEPACK = b'ONEPACK\0'
 def fb_field(d, t, i):
     """FlatBuffers: absolute offset of field i of the table at t, None when the field is absent"""
@@ -1045,9 +1115,10 @@ def ps_inputs(code):
     """Generic attributes a pixel shader reads: SPH words 6–13 are the input map, 8 bits for each of the 32 attributes (Ryujinx ShaderHeader.ImapTypes), non-zero = read; the translated MSL inputs are exactly user(locn<attribute>)"""
     return {i for i in range(32) if struct.unpack_from('<I', code, 0x30 + 4 * (6 + (i >> 2)))[0] >> ((i & 3) * 8) & 0xff}
 
-SINGLE_STAGE = ('#GLSLC@', '#UE', '#MTSPK@', '#MGFX@', '#NLG', '#PGSO')   # sources whose every shader is a program of one stage: GLSLC outputs, Unreal's shader records, MT Framework's shader package (BNSH variations, Unity programs, MSHD and SDF pair theirs);
+SINGLE_STAGE = ('#GLSLC@', '#UE', '#MTSPK@', '#MGFX@', '#NLG', '#PGSO', '#RAW@')   # sources whose every shader is a program of one stage: GLSLC outputs, Unreal's shader records, MT Framework's shader package (BNSH variations, Unity programs, MSHD and SDF pair theirs);
 # MonoGame's effects, whose passes may name no vertex shader and keep the one bound (Celeste: 10 of its 13 effects draw through SpriteBatch's vertex shader, which is in main); Next Level Games'
-# archives (Luigi's Mansion 3 makes 5,317 programs of one stage each at boot); and PlatinumGames' shader objects (Bayonetta 3: one stage each, pg_shader)
+# archives (Luigi's Mansion 3 makes 5,317 programs of one stage each at boot); PlatinumGames' shader objects (Bayonetta 3: one stage each, pg_shader); and control sections loose in main
+# (Advance Wars 1+2: Re-Boot Camp's Bink shaders, raw_shaders), which no file pairs
 def separable_pairs(keys):
     """Single-stage programs (13 Sentinels: each GLSLC output becomes a program with one stage, and BindProgram's stage bits combine vertex and pixel programs per draw; Unreal combines its shaders per draw
     from the pipeline state) have their real pairs only at draw time. vs_pad uses only the union of the locations the paired pixel shaders read, so every single-stage vertex shader is paired with
@@ -1190,6 +1261,7 @@ def main():
             except ValueError: common = None   # not a Unity game
         found = []; scan_blob(img, 'main' + ('@' + tag if tag else ''), found)
         found += glslc_shaders(img, 'main' + ('@' + tag if tag else ''), need=False)
+        found += raw_shaders(img, 'main' + ('@' + tag if tag else ''), {c for _, _, c, _ in found})
         # GLSLC outputs the game compiles at run time, captured on the Mac (hle_glslc.c): <version dir>/glslc_capture, or DM_GLSLC_CAPTURE. A game needs them when main holds GLSL sources and
         # calls glslcCompile in a module it loads (Fire Emblem: Three Houses; profile_guess.py shader_sources). Captain Toad: Treasure Tracker imports it with agl's GLSL sources, but no module defines it
         cap = os.environ.get('DM_GLSLC_CAPTURE') or os.path.join(os.path.dirname(os.path.abspath(romfs)), 'glslc_capture')
