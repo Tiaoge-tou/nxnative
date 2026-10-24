@@ -146,9 +146,25 @@ static const struct { int bit; int kind; int dir; const char *label; CGFloat x, 
 };
 #define HADES_N (int)(sizeof k_hades / sizeof k_hades[0])
 static UIVisualEffectView *glassDisc(UIView *parent, CGFloat tint) {
-    UIGlassEffect *e = [[UIGlassEffect alloc] initWithStyle:UIGlassEffectStyleRegular];
-    e.tintColor = [UIColor colorWithWhite:0.04 alpha:tint]; e.interactive = NO;
-    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:e];
+    // iOS 26 Liquid Glass: the real system material (refraction, rim light,
+    // speculars) — not a drawn imitation. The iOS 26 SDK headers do not
+    // declare UIGlassEffect's initialisers to Objective-C (Swift-facing only),
+    // so resolve the class at runtime and use its default initialiser, which
+    // is the Regular style; the tint goes through performSelector for the
+    // same reason. interactive defaults to NO — the pad's own press wash
+    // drives feedback. Falls back to the system thin material if the class
+    // is somehow absent.
+    UIVisualEffect *eff = nil;
+    Class gc = NSClassFromString(@"UIGlassEffect");
+    if (gc) {
+        id g = [[gc alloc] init];
+        if ([g respondsToSelector:@selector(setTintColor:)])
+            [g performSelector:@selector(setTintColor:)
+                    withObject:[UIColor colorWithWhite:0.04 alpha:tint]];
+        eff = (UIVisualEffect *)g;
+    }
+    if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
+    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:eff];
     v.userInteractionEnabled = NO;
     [parent addSubview:v];
     return v;
