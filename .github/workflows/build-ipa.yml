@@ -55,6 +55,11 @@ on:
         type: boolean
         required: false
         default: false
+      full:
+        description: "Also upload the full IPA (with RomFS) split into ~450 MB parts — needed for a game's first install; later builds only need the slim one"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -346,6 +351,27 @@ jobs:
           path: |
             out-slim/game-slim.ipa
             out-slim/game-slim.ipa.sha256
+          retention-days: 7
+
+      - name: Split the full IPA for download
+        if: ${{ success() && inputs.full }}
+        run: |
+          # The full IPA (app + RomFS) is several GB: split it into parts the
+          # phone can reassemble byte-exactly (cat game.ipa.part-* > game.ipa).
+          mkdir -p "$GITHUB_WORKSPACE/out-full"
+          cp "$GITHUB_WORKSPACE/out/game.ipa" "$GITHUB_WORKSPACE/out-full/game.ipa"
+          cd "$GITHUB_WORKSPACE/out-full"
+          shasum -a 256 game.ipa > game.ipa.sha256
+          split -b 450m game.ipa game.ipa.part-
+          rm -f game.ipa
+          ls -lh
+
+      - name: Upload full IPA parts
+        if: ${{ success() && inputs.full }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nxnative-ipa-full
+          path: out-full/*
           retention-days: 7
 
       - name: Upload build log on failure
