@@ -125,8 +125,14 @@ HLE_FORCE("_ZN2nn2oe18GetPerformanceModeEv", "performance mode query; same as th
 static unsigned char g_cpu_oc;
 HLE_FORCE("_ZN2nn2oe21IsCpuOverclockEnabledEv", "CPU overclock state (through apm): what SetCpuOverclockEnabled set, off at start", unsigned, h_oe_CpuOc, void) { return g_cpu_oc; }
 HLE_FORCE("_ZN2nn2oe22SetCpuOverclockEnabledEb", "CPU overclock switch (through apm); the host does not scale clocks", void, h_oe_SetCpuOc, unsigned on) { g_cpu_oc = on & 0xff; }
-HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resolution: 1920x1080 docked, 1280x720 handheld", void, h_oe_DefRes, int *w, int *h) {
-    int con = opmode() == 1; if (w) *w = con ? 1920 : 1280; if (h) *h = con ? 1080 : 720;
+HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resolution: 1920x1080 docked, 1280x720 handheld (profile display_wide + fullscreen: 2344x1080)", void, h_oe_DefRes, int *w, int *h) {
+    int con = opmode() == 1; int x = con ? 1920 : 1280, y = con ? 1080 : 720;
+    // Profile display_wide (Hades II): with the fullscreen setting on, report the docked height at the phone's
+    // 19.5:9 aspect (2344 = 1080 x 19.5/9, to a multiple of 8) instead of 1920x1080, so the game renders the
+    // wide picture itself; from 1920x1080 the present can only stretch it (front_ios.m / nvn_mtl.m DM_FULLSCREEN)
+    if (DM_GAME_DISPLAY_WIDE && con) { const char *fs = getenv("DM_FULLSCREEN"); if (fs && atoi(fs)) x = 2344; }
+    if (w) *w = x; if (h) *h = y;
+    static int once; if (!once++) LOG("default display resolution: %dx%d", x, y);
 }
 HLE_FORCE("_ZN2nn2oe38GetDefaultDisplayResolutionChangeEventEPNS_2os11SystemEventE", "default display resolution change event: bound, never signaled (the operation mode notification carries the change)",
           void, h_oe_DefResEv, void *ev) { hle_bind_system_event(ev, 0); }
