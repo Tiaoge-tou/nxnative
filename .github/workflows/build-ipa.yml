@@ -34,10 +34,15 @@ on:
         required: false
         default: ""
       skin:
-        description: "Silksong skin + full screen (DM_PAD_SKIN + DM_FULLSCREEN env switches)"
+        description: "Silksong skin (DM_PAD_SKIN env switch; the aspect ratio is a launcher setting)"
         type: boolean
         required: false
         default: true
+      hades:
+        description: "Hades layout: Liquid Glass gamepad (DM_PAD_HADES env switch; the aspect ratio is a launcher setting)"
+        type: boolean
+        required: false
+        default: false
       source:
         description: "Where the game files come from: drive = the zip at NSP_ZIP_URL; quark = pull the .nsp/.nsz files straight from your Quark drive (needs the QUARK_COOKIE secret)"
         type: choice
@@ -319,9 +324,14 @@ jobs:
           # Skin build: bake the env switches into the bundle's dm/env.txt (main.m
           # applies them at boot; Documents/env.txt can still override on device).
           if [ "${{ inputs.skin }}" = "true" ]; then
-            printf 'DM_PAD_SKIN=1\nDM_FULLSCREEN=1\n' > "$RUNNER_TEMP/dm-env.txt"
+            printf 'DM_PAD_SKIN=1\n' > "$RUNNER_TEMP/dm-env.txt"
             ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
-            echo "Skin build: DM_PAD_SKIN=1 DM_FULLSCREEN=1"
+            echo "Skin build: DM_PAD_SKIN=1"
+          fi
+          if [ "${{ inputs.hades }}" = "true" ]; then
+            printf 'DM_PAD_HADES=1\n' > "$RUNNER_TEMP/dm-env.txt"
+            ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
+            echo "Hades build: DM_PAD_HADES=1"
           fi
           python3 scripts/build_ipa_from_nsp.py "${ARGS[@]}" 2>&1 | tee build.log
           # Guard: an internal tool failure must not pass silently (empty out/).
