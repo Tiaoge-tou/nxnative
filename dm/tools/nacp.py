@@ -7,8 +7,8 @@ import re, struct, sys, zlib
 from pathlib import Path
 
 # The NACP's languages in its own order (the bit order of SupportedLanguageFlag and the order of the title entries): the language code nn::oe::GetDesiredLanguage returns for each, and its name
-LANGUAGES = [('en-US', 'American English'), ('en-GB', 'British English'), ('ja', 'Japanese'), ('fr', 'French'), ('de', 'German'), ('es-419', 'Latin American Spanish'), ('es', 'Spanish'), ('it', 'Italian'),
-             ('nl', 'Dutch'), ('fr-CA', 'Canadian French'), ('pt', 'Portuguese'), ('ru', 'Russian'), ('ko', 'Korean'), ('zh-Hant', 'Traditional Chinese'), ('zh-Hans', 'Simplified Chinese'), ('pt-BR', 'Brazilian Portuguese')]
+LANGUAGES = [('en-US', '美式英语'), ('en-GB', '英式英语'), ('ja', '日语'), ('fr', '法语'), ('de', '德语'), ('es-419', '拉丁美洲西班牙语'), ('es', '西班牙语'), ('it', '意大利语'),
+             ('nl', '荷兰语'), ('fr-CA', '加拿大法语'), ('pt', '葡萄牙语'), ('ru', '俄语'), ('ko', '韩语'), ('zh-Hant', '繁体中文'), ('zh-Hans', '简体中文'), ('pt-BR', '巴西葡萄牙语')]
 
 
 def name(path):
