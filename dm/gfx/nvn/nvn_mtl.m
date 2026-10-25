@@ -1644,6 +1644,11 @@ static NSMutableArray *g_up_texs;   // Target textures in the batch: before the 
 static id<MTLBuffer> g_up_block;
 static size_t g_up_block_off, g_up_block_size;
 static NSMutableArray *g_up_keep;
+// Limit overflow staging per batch. The three upload slots bound in-flight
+// batches; up_begin publishes queued commits before waiting for a slot. A single
+// texture larger than the budget gets its own block (uploads are not tiled here).
+static size_t g_up_staging_bytes;
+#define UP_BATCH_BYTES (128u * 1024u * 1024u)
 
 
 // The upload command buffer was discarded by the system (dropped along during GPU error recovery; the first frame on entering Travincal drops one every run): the objects of this batch of textures are built and the timestamps updated, but the content was never written in,
@@ -1669,6 +1674,12 @@ static void up_flush(void) {
     if (b) { m4_end(b); g_up_ce = nil; }
     id<MTL4CommandBuffer> cb = g_up_cb;
     unsigned slot = (g_up_seq - 1) % 3;
+    // Only this upload batch uses its overflow staging. Retire it on upload
+    // completion, even when the main rendering submission is still being built.
+    NSMutableArray *staging = g_up_keep;
+    if (g_up_block && g_up_block != g_up_slot_blk[slot]) [staging addObject:g_up_block];
+    g_up_keep = nil; g_up_block = nil;
+    g_up_block_off = g_up_block_size = g_up_staging_bytes = 0;
     NSMutableArray *dsts = [NSMutableArray arrayWithCapacity:(NSUInteger)g_nup_blits]; for (int i = 0; i < g_nup_blits; i++) if (g_up_blits[i].dst) [dsts addObject:g_up_blits[i].dst];
     static int lost_at = -2; static uint64_t batch_n; if (lost_at == -2) { const char *e = getenv("DM_TEST_UP_LOST"); lost_at = e ? atoi(e) : -1; } int fake_lost = dsts.count && lost_at > 0 && (int)++batch_n == lost_at;
     MTL4CommitOptions *o = [MTL4CommitOptions new];
@@ -1682,6 +1693,11 @@ static void up_flush(void) {
         }
         double d = f.GPUEndTime - f.GPUStartTime;
         if (d > 0) atomic_fetch_add(&g_upload_gpu_ns, (uint64_t)(d * 1e9));
+        @autoreleasepool {
+            for (id<MTLResource> obj in staging) res_remove(obj);
+            [staging removeAllObjects];
+            res_commit();
+        }
         atomic_store(&g_up_alloc_busy[slot], 0);
         atomic_fetch_sub(&g_up_pending, 1);
         up_wake();
@@ -1692,9 +1708,7 @@ static void up_flush(void) {
     // Outside a submission nothing else hands the encode thread its current block until the next submission, so a batch flushed on the spot stayed a record and every wait for it
     // (nvnQueueFinish on any thread, up_begin on another) waited for that submission: hand it over now (from PR #141, which found the nvnQueueFinish half)
     if (!g_cb) rec_publish();
-    g_up_cb = nil; if (g_up_block) { if (g_up_block != g_up_slot_blk[slot]) defer_obj_release(g_up_block); g_up_block = nil; } g_up_block_off = g_up_block_size = 0;   // the slot's own block stays (UP_SLOT_BLOCK)
-    for (id obj in g_up_keep) defer_obj_release(obj);
-    [g_up_keep removeAllObjects];
+    g_up_cb = nil;
     up_diag();
     g_nup_blits = 0;
     [g_up_texs removeAllObjects];
@@ -1723,7 +1737,9 @@ static void up_begin(void) {
 // Diagnostic readout (low frequency; printed only when the block switch count changed and ≥ 1 second since the last line, at most 200 lines per game): how many times an upload batch ran out of staging block and switched blocks midway; GPU allocated, residency set object count, deferred-release queue length.
 // If the old block is not retired on a switch it stays in the residency set and can never be freed, and "GPU allocated" climbs one block at a time with the switch count
 static uint64_t g_up_blocks_new, g_up_swaps, g_up_swap_bytes; static NSHashTable *g_up_old;   // g_up_old: old blocks switched out (weak references); the diagnostic line counts how many are still alive
-static void up_diag(void) {
+static void up_diag(void) { @autoreleasepool {
+    // Weak-table enumeration autoreleases the buffers it finds. Do not keep
+    // completed batches alive until the whole rendering submission ends.
     // Print a line when the block switch count changes; then one more line 5 seconds later (that batch's commit is long done and deferred retirement drained, so "GPU allocated" is the settled number)
     static uint64_t said_swaps = ~0ull, last_ns; static int lines, follow; uint64_t now = clock_gettime_nsec_np(CLOCK_MONOTONIC);
     int chg = g_up_swaps != said_swaps, fol = follow && now - last_ns >= 5000000000ull; if ((!chg && !fol) || lines >= 200) return;
@@ -1733,25 +1749,35 @@ static void up_diag(void) {
     pthread_mutex_lock(&g_deferred_mu); unsigned long ndef = (unsigned long)g_deferred.count; pthread_mutex_unlock(&g_deferred_mu);
     MLOG("upload staging blocks%s: %llu created in total, swapped within a batch %llu times (%llu MB of old blocks swapped out); swapped-out blocks still alive now %lu, %llu MB, still in the residency set %lu; GPU allocated %llu MB, residency set %lu objects, deferred-release queue %lu", fol && !chg ? " (settled)" : "",
          (unsigned long long)g_up_blocks_new, (unsigned long long)g_up_swaps, (unsigned long long)(g_up_swap_bytes >> 20), alive, (unsigned long long)(abytes >> 20), inres, (unsigned long long)(g_dev.currentAllocatedSize >> 20), nres, ndef);
-}
+} }
 static id<MTLBuffer> up_alloc(size_t n, size_t *off) {
     size_t need = (n + 255u) & ~((size_t)255u);
+    size_t extra = MAX(need, UP_BLOCK_SIZE);
+    // This call starts one texture's upload: all prior deswizzles and copies are
+    // complete records, so the batch can be split without ending the render pass.
+    if (g_up_staging_bytes && (!g_up_block || need > g_up_block_size - g_up_block_off)
+        && extra > UP_BATCH_BYTES - MIN(g_up_staging_bytes, UP_BATCH_BYTES)) {
+        up_flush();
+        up_begin();
+    }
     if (!g_up_block && need <= UP_BLOCK_SIZE) {   // first allocation of the batch: the slot's own block, grown to the next power of two that holds it (a movie frame re-uploaded every frame, 8 MB in Link's Awakening)
         __strong id<MTLBuffer> *sb = &g_up_slot_blk[g_up_cur_slot];
         size_t want = UP_SLOT_BLOCK; while (want < need) want <<= 1;
         if (*sb && (*sb).length < want) { defer_obj_release(*sb); *sb = nil; }   // the slot's previous batch has finished (up_begin waited for it)
         if (!*sb) { *sb = [g_dev newBufferWithLength:want options:MTLResourceStorageModePrivate]; if (!*sb) MDIE("failed to create the swizzled-upload staging block %#zx", want); res_add(*sb); g_up_blocks_new++; }
         g_up_block = *sb; g_up_block_size = (*sb).length; g_up_block_off = 0;
+        g_up_staging_bytes += (*sb).length;
     }
     if (!g_up_block || g_up_block_off + need > g_up_block_size) {
         // Block switch: the old block is still referenced by copy / decompress commands already recorded in this batch and cannot be freed on the spot; hand it to g_up_keep, to be retired later with the other staging after the flush commits (removed from the residency set on retire).
         // Previously g_up_block was simply replaced with the new block here: nobody retired the old block, yet it stayed in the residency set, so each extra block switch in an upload batch leaked one block (usually 32 MB) of GPU memory.
         // The old block and the "current block" retired at flush are two objects, so nothing is retired twice
-        g_up_blocks_new++; if (g_up_block) { g_up_swaps++; g_up_swap_bytes += g_up_block_size; if (!g_up_old) g_up_old = [NSHashTable weakObjectsHashTable]; [g_up_old addObject:g_up_block]; static int leak = -1; if (leak < 0) leak = getenv("DM_TEST_UP_LEAK") != NULL;   // test switch DM_TEST_UP_LEAK=1: do not retire the old block, as before the fix (for comparison, to measure the leak)
+        g_up_blocks_new++; if (g_up_block) { g_up_swaps++; g_up_swap_bytes += g_up_block_size; @autoreleasepool { if (!g_up_old) g_up_old = [NSHashTable weakObjectsHashTable]; [g_up_old addObject:g_up_block]; } static int leak = -1; if (leak < 0) leak = getenv("DM_TEST_UP_LEAK") != NULL;   // test switch DM_TEST_UP_LEAK=1: do not retire the old block, as before the fix (for comparison, to measure the leak)
             if (!leak && g_up_block != g_up_slot_blk[g_up_cur_slot]) { if (!g_up_keep) g_up_keep = [NSMutableArray array]; [g_up_keep addObject:g_up_block]; } }   // the slot's block is not retired: it stays for the slot's later batches
         g_up_block_size = n > UP_BLOCK_SIZE ? need : UP_BLOCK_SIZE;
         g_up_block = [g_dev newBufferWithLength:g_up_block_size options:MTLResourceStorageModePrivate];
         if (!g_up_block) MDIE("failed to create the swizzled-upload staging block %#zx", g_up_block_size);
+        g_up_staging_bytes += g_up_block_size;
         res_add(g_up_block);
         g_up_block_off = 0;
     }
@@ -5469,8 +5495,8 @@ static int state_op(uint32_t op, const void *a) {
         }
         case OP_BIND_VATTR: { const p_bind_vattr *b = a; if (S.nattr != b->n || memcmp(S.attr, b->st, 4 * b->n)) { memcpy(S.attr, b->st, 4 * b->n); S.nattr = b->n; g_pso_dirty = 1; } break; }
         case OP_BIND_VSTREAM: { const p_bind_vstream *b = a; if (S.nstream != b->n || memcmp(S.stream, b->st, 8 * b->n)) { memcpy(S.stream, b->st, 8 * b->n); S.nstream = b->n; g_pso_dirty = 1; } break; }
-        case OP_BIND_VBUF: { const p_bind_vbuf *b = a; memcpy(&S.vbuf[b->first], b->r, sizeof *b->r * b->n); break; }
-        case OP_BIND_UBO: { const p_bind_buf *b = a; if (b->stage < 6 && b->index < 16 && memcmp(&S.ubo[b->stage][b->index], b, sizeof *b)) { S.ubo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
+        case OP_BIND_VBUF: case OP_BIND_VBUF1: { p_bind_vbuf tmp; const p_bind_vbuf *b = vbuf_rec(op, a, &tmp); memcpy(&S.vbuf[b->first], b->r, sizeof *b->r * b->n); break; }
+        case OP_BIND_UBO: case OP_BIND_UBO_SMALL: { p_bind_buf tmp; const p_bind_buf *b = bind_buf_rec(op, a, &tmp); if (b->stage < 6 && b->index < 16 && memcmp(&S.ubo[b->stage][b->index], b, sizeof *b)) { S.ubo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
         case OP_BIND_SSBO: { const p_bind_buf *b = a; if (b->stage < 6 && b->index < 16 && memcmp(&S.ssbo[b->stage][b->index], b, sizeof *b)) { S.ssbo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
         case OP_BIND_TEX: case OP_BIND_TEX1: { p_bind_handles t1; const p_bind_handles *b = bind_rec(op, a, &t1);
             if (b->n < 0 || b->n > 32) {   // the recorder never writes more than 32 (bind_handles): the record was overwritten after it was recorded
@@ -7188,8 +7214,8 @@ static void lc_take(NvProg *pr) {
 static int lc_keeps(uint32_t op) {
     switch (op) {
         case OP_SET_RT: case OP_CLEAR_COLOR: case OP_CLEAR_DS: case OP_DRAW: case OP_DRAW_IDX: case OP_BEGIN: case OP_JUMP: case OP_CALL:
-        case OP_SCISSOR: case OP_BIND_PROGRAM: case OP_BIND_STATE: case OP_BIND_VATTR: case OP_BIND_VSTREAM: case OP_BIND_VBUF:
-        case OP_BIND_UBO: case OP_BIND_SSBO: case OP_BIND_TEX: case OP_BIND_TEX1: case OP_BIND_SAMP: case OP_BIND_IMG: case OP_STENCIL:
+        case OP_SCISSOR: case OP_BIND_PROGRAM: case OP_BIND_STATE: case OP_BIND_VATTR: case OP_BIND_VSTREAM: case OP_BIND_VBUF: case OP_BIND_VBUF1:
+        case OP_BIND_UBO: case OP_BIND_UBO_SMALL: case OP_BIND_SSBO: case OP_BIND_TEX: case OP_BIND_TEX1: case OP_BIND_SAMP: case OP_BIND_IMG: case OP_STENCIL:
         case OP_POLY_OFFSET: case OP_VIEWPORTS: case OP_DEPTH_RANGE: case OP_DEPTH_CLAMP: case OP_VP_SWIZZLE: case OP_BLEND_COLOR: case OP_COPY_STRIDE:
         case OP_TF_BIND: case OP_TF_STATE: case OP_RAST_DISCARD: case OP_PRIM_RESTART: case OP_BARRIER: case OP_SET_TEX_POOL: case OP_SET_SAMP_POOL: case OP_RENDER_COND:
         case OP_UPDATE_UB: case OP_COPY_B2B: case OP_CLEAR_BUF: return 1;
@@ -8213,8 +8239,8 @@ void mtl_exec(const uint8_t *p) {
             case OP_DRAW: { if (g_rc_skip) break; p_draw t; g_exec_cur = p; g_exec_next = p + h.size; draw(draw_rec(a, h.size, &t), NULL); g_exec_next = NULL; break; }   // Lookahead start point
             case OP_DRAW_IDX: { if (g_rc_skip) break; p_draw_idx t; g_exec_cur = p; g_exec_next = p + h.size; draw(NULL, draw_idx_rec(a, h.size, &t)); g_exec_next = NULL; break; }
             // Do not mark dirty if the state did not change (the game often re-sends the same program / state block / vertex format before each draw; the dirty flag only decides whether to re-fetch the pipeline / depth-stencil object, and equal values mean the same object)
-            case OP_SCISSOR: case OP_BIND_PROGRAM: case OP_BIND_STATE: case OP_BIND_VATTR: case OP_BIND_VSTREAM: case OP_BIND_VBUF:
-            case OP_BIND_UBO: case OP_BIND_SSBO: case OP_BIND_TEX: case OP_BIND_TEX1: case OP_BIND_SAMP: case OP_BIND_IMG: case OP_STENCIL:
+            case OP_SCISSOR: case OP_BIND_PROGRAM: case OP_BIND_STATE: case OP_BIND_VATTR: case OP_BIND_VSTREAM: case OP_BIND_VBUF: case OP_BIND_VBUF1:
+            case OP_BIND_UBO: case OP_BIND_UBO_SMALL: case OP_BIND_SSBO: case OP_BIND_TEX: case OP_BIND_TEX1: case OP_BIND_SAMP: case OP_BIND_IMG: case OP_STENCIL:
             case OP_POLY_OFFSET: case OP_VIEWPORTS: case OP_DEPTH_RANGE: case OP_DEPTH_CLAMP: case OP_VP_SWIZZLE: case OP_BLEND_COLOR: case OP_COPY_STRIDE:
                 state_op(h.op, a); break;
             case OP_TF_BIND: { const p_tf_bind *b = a; PD("Y tf bind %d addr=%#llx size=%llu", b->index, (unsigned long long)b->addr, (unsigned long long)b->size); state_op(h.op, a); break; }

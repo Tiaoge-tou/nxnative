@@ -108,6 +108,13 @@ t_view_swizzle: t_view_swizzle.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_view_swizzle.m $(MTL_T_SRC) $(FW)
 t_view_levels: t_view_levels.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_view_levels.m $(MTL_T_SRC) $(FW)
+t_upload_budget: t_upload_budget.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_upload_budget.m $(MTL_T_SRC) $(FW)
+check_t_upload_budget: t_upload_budget
+	MTL_DEBUG_LAYER=1 ./t_upload_budget
+	DM_NVN_ENC_THREAD=1 MTL_DEBUG_LAYER=1 ./t_upload_budget
+run: check_t_upload_budget
+.PHONY: check_t_upload_budget
 t_linear_readback: t_linear_readback.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_linear_readback.m ../../host/crash.c ../../host/hle_bigstack.c t_host_stubs.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 .PHONY: check_t_linear_readback
