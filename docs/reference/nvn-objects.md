@@ -81,6 +81,13 @@ The game may also write into an NVN object directly, without an NVN call, throug
 - **Found on:** [Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md): it now stays at 1.2 to 1.4 GB.
 - **Note:** the `memory up to frame` line also reports `serial objects` (host objects by serial), `freed but alive` (finalized pool buffers still alive) and `shared textures` (sharing table size and evictions); growth in GPU memory with those counts flat points to an allocation outside them.
 
+### Finalized pool buffers kept by a guest thread's autorelease pool
+
+- **Symptom:** the memory line's `freed but alive` count only grows, while no host table holds those buffers; "GPU allocated" is far above resident memory (Ghost Trick: Phantom Detective, 125 to 146 buffers and 6.6 to 8.7 GB of GPU allocations against 2.2 GB resident).
+- **Cause:** `mtl_pool_del` runs on the guest thread that finalizes the pool, whose implicit autorelease pool never drains, and adding the buffer to the weak table `g_dead_pools` (the table behind `freed but alive`) left it autoreleased there: every finalized pool's zero-copy buffer stayed alive for good, wrapping freed guest memory. A temporary census of every host table that can hold a texture over a pool buffer (by serial, finalized serials, the sharing table, texture ID views, view caches, the deferred queue, the residency set) found no holder at all. `containsObject:` and `removeObject:` on a weak `NSHashTable` do the same (a standalone test: the object outlived its last strong reference until its thread ended), and `res_add` / `res_remove` call them on guest threads too.
+- **Fix:** `mtl_pool_del`, `res_add_at` and `res_remove` (`nvn_mtl.m`) each have their own `@autoreleasepool`, as `defer_drain` and the memory line's count already did ([Deferred-release drain without an autorelease pool](memory.md#deferred-release-drain-without-an-autorelease-pool)).
+- **Found on:** [Ghost Trick: Phantom Detective](../../dm/games/010029B018432000/README.md): 0 buffers freed but alive with the fix; GPU allocated 1.7 GB instead of 8.3 GB 300 frames into the boot and 2.9 GB instead of 9.9 to 11.7 GB in Chapter 1, resident memory, frame times and pictures unchanged (zero-copy buffers add no memory of their own). [Pokémon Sword](../../dm/games/0100ABF008968000/README.md): 8 to 0 at the title after 90 s. Earlier Mac logs show the count in most games, growing with play: Animal Crossing: New Horizons 3,113 after 27,900 frames, Pokémon Sword 2,050, Super Smash Bros. Ultimate 1,279, Pokémon Legends: Z-A 932 (small pools there: 100 to 300 MB).
+
 ### Memory-pool tracking table grows in blocks
 
 - **Cause:** the memory-pool tracking table had a fixed 4,096 slots; a pool past the end would have its textures re-uploaded at every use.

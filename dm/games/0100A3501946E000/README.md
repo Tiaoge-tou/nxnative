@@ -2,7 +2,7 @@
 
 Update 1.1.1 (v131072) over the base game, SDK 12.3.2 (its own `sdk` build). Square Enix / Acquire, Unreal Engine 4.27 (`++UE4+Release-4.27`): everything in one pak with the shaders inline in the cooked packages, NVN, PhysX, CRIWARE (ADX2 sound through a 6-channel AudioOut, USM movies). Modules `main`, `subsdk0` (the movie module) and `sdk`. 60 fps (30 on the Switch) by the host's writes of Unreal's frame limits.
 
-Status: brought up on the Mac: the boot, the initial settings, the title, a new game, the traveler selection (the stick's quill cursor and L / R), Hikari's opening into his first battle (the battle tutorials, a won battle and the scene after it) and Castti's opening (the flashback, the ship, free play on the deck: talking, the Path Action tutorial), at 60 fps (frame time p50 16.7 ms, p95 about 17 ms) with CRIWARE sound; about 2.8 GB resident with 1.4–1.9 GB of Metal allocations in the battle. Plays on the iPhone (IPA 5.9 GB, user, 2026-10-25; that IPA was packed before the geometry and allocator changes below).
+Status: brought up on the Mac: the boot, the initial settings, the title, a new game, the traveler selection (the stick's quill cursor and L / R), Hikari's opening into his first battle (the battle tutorials, a won battle and the scene after it) and Castti's opening (the flashback, the ship, free play on the deck: talking, the Path Action tutorial), at 60 fps (frame time p50 16.7 ms, p95 about 17 ms) with CRIWARE sound; about 2.8 GB resident with 1.4–1.9 GB of Metal allocations in the battle. Plays on the iPhone (IPA 5.9 GB, user, 2026-10-25), also with the geometry split and the Unreal-heap thread stacks below (16f4889).
 
 ## What it needs
 
@@ -63,4 +63,3 @@ General changes first needed here; each applies to every game:
 ## Open
 
 - **A rare crash at the title** on a task graph thread (`main+0x1d8054`, 2 of 87 Mac boots). The game's CRI cue sheet loader runs one task per cue sheet (`main+0x1e356c`, each under its own manager's mutex at manager+0xe0; the GameThread takes it too) and copied record 2 of a cue sheet's 73 (manager+0x70, 0x70 bytes each, copy assignment `main+0x1d7ddc`) while the record's TArray at +0x60 held count 1 and no data, the state of a TArray between `CopyToEmpty`'s count and its allocation; both crashes stopped at the same record. Probes showed two such tasks at once on two task graph threads, each with its own manager, and no thread holding another's lock; eight boots with `MallocScribble=1` did not crash, which argues against reading freed memory. Which thread writes the record is not found yet.
-- The iPhone with the geometry split (`geo_split`) and the three-dispatch index compaction: not tested yet.
