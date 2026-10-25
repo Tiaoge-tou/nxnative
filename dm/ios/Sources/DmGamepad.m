@@ -404,8 +404,8 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (void)pushGame {
     CGRect b = self.bounds; CGFloat w = b.size.width, h = b.size.height;
     if (w <= 0 || h <= 0) return;
-    const char *fs = getenv("DM_FULLSCREEN");   // with the full-screen picture (front_ios.m) the touch maps to the whole screen
-    if (!(fs && atoi(fs))) { if (w / h > 16.0 / 9.0) w = h * 16.0 / 9.0; else h = w * 9.0 / 16.0; }
+    const char *fs = getenv("DM_FULLSCREEN");   // adaptive full-screen is the default, so the touch maps to the whole screen; only an explicit 0 (an env file) fits it to the centred 16:9 picture
+    if (fs && !atoi(fs)) { if (w / h > 16.0 / 9.0) w = h * 16.0 / 9.0; else h = w * 9.0 / 16.0; }
     CGFloat x0 = (b.size.width - w) / 2, y0 = (b.size.height - h) / 2;
     dm_touch t[16]; int n = 0;
     for (int i = 0; i < 16; i++) if (_game[i]) {
