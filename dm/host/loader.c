@@ -227,6 +227,14 @@ void dm_fps_state_apply(void) {
     const char *rs = getenv("DM_RENDER_SCALE"); float sc = 1.0f;
     if (rs) { char *end; sc = strtof(rs, &end); if (end == rs || *end || !(sc >= 0.5f && sc <= 1.0f)) { LOG("[RED] DM_RENDER_SCALE=%s: must be 0.5 to 1.0; keeping the game's size", rs); sc = 1.0f; } else LOG("%s: 3D views rendered at %.2f of the game's size (DM_RENDER_SCALE)", g_fps_mod, sc); }
     memcpy(dm_fps_state + 0x10, &sc, sizeof sc);
+    // Render size (state +0x38, a packed u64 width | height << 32): the size the build's stub at its baked size constant renders at
+    // (Hades II's render pair), in place of a width baked when the IPA was made, so one build fits every screen.
+    // The front end measures the screen and sets DM_RENDER_WIDTH (front_ios.m); the height is the docked 1080 those sizes are designed
+    // around. Without the variable the cell takes 2344, the width the wide builds baked until now, so behaviour is unchanged
+    const char *rw = getenv("DM_RENDER_WIDTH"); long w = rw ? strtol(rw, NULL, 10) : 0;
+    if (rw && (w < 320 || w > 16384 || w % 8)) { LOG("[RED] DM_RENDER_WIDTH=%s: a multiple of 8 between 320 and 16384 expected; using 2344", rw); w = 0; }
+    uint64_t rpair = (uint64_t)(uint32_t)(w ? w : 2344) | 1080ULL << 32; memcpy(dm_fps_state + 0x38, &rpair, sizeof rpair);
+    if (rw) LOG("%s: render size %ldx1080 (DM_RENDER_WIDTH)", g_fps_mod, w ? w : 2344);
     char cap[32]; snprintf(cap, sizeof cap, ", capped at %d fps", t);
     LOG("%s: frame step %s%s (%s)", g_fps_mod, !t ? "as the game sets it" : "in whole vsyncs decided by the host", t ? cap : "", e ? "DM_FPS_TARGET" : "game profile fps_target");
 }
