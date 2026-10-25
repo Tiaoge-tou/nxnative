@@ -140,7 +140,9 @@ static CALayer *imgLayer(CALayer *parent, const char *name) {
 // top right, the face keys in a quarter-circle fan around a larger Y, four separate D-pad circles along the bottom, and a
 // floating left stick. The keys are clear dark discs (a translucent black fill and a thin light rim, no material
 // blur): a view per key, with its label and a press wash as plain layers above it. Centres are fractions of the
-// whole screen, radii of its width.
+// whole screen, radii of its width — except the fan keys' y, which is an offset from Y's centre in width fractions
+// (hadesCenter), so the quarter circle keeps its shape on a taller screen (an iPad's); on the phone the layout was
+// measured on, the centres come out as before.
 static BOOL padHades(void) { const char *e = getenv("DM_PAD_HADES"); return e && atoi(e); }
 enum { H_TOP, H_FACE, H_DPAD };   // a D-pad entry carries a direction in dir (0 left, 1 up, 2 down, 3 right) and no label
 static const struct { int bit; int kind; int dir; const char *label; CGFloat x, y, r; } k_hades[] = {
@@ -149,17 +151,26 @@ static const struct { int bit; int kind; int dir; const char *label; CGFloat x, 
     {B_L,     H_TOP,  0, "L",  0.817, 0.086, 0.020},
     {B_ZL,    H_TOP,  0, "ZL", 0.880, 0.086, 0.020},
     {B_ZR,    H_TOP,  0, "ZR", 0.943, 0.086, 0.020},
-    {B_R,     H_FACE, 0, "R",  0.903, 0.400, 0.031},
-    {B_A,     H_FACE, 0, "A",  0.831, 0.442, 0.031},
-    {B_X,     H_FACE, 0, "X",  0.778, 0.558, 0.031},
-    {B_B,     H_FACE, 0, "B",  0.758, 0.715, 0.031},
-    {B_Y,     H_FACE, 0, "Y",  0.903, 0.715, 0.038},
+    {B_R,     H_FACE, 0, "R",  0.903, -0.1451, 0.031},   // fan keys: y = offset from Y's centre, in width fractions
+    {B_A,     H_FACE, 0, "A",  0.831, -0.1257, 0.031},
+    {B_X,     H_FACE, 0, "X",  0.778, -0.0723, 0.031},
+    {B_B,     H_FACE, 0, "B",  0.758,  0.0,    0.031},
+    {B_Y,     H_FACE, 0, "Y",  0.903,  0.715,  0.038},
     {B_LEFT,  H_DPAD, 0, NULL, 0.645, 0.896, 0.019},
     {B_UP,    H_DPAD, 1, NULL, 0.701, 0.896, 0.019},
     {B_DOWN,  H_DPAD, 2, NULL, 0.753, 0.896, 0.019},
     {B_RIGHT, H_DPAD, 3, NULL, 0.807, 0.896, 0.019},
 };
 #define HADES_N (int)(sizeof k_hades / sizeof k_hades[0])
+static CGPoint hadesCenter(int i, CGRect b) {   // the centre of Hades key i, in points
+    CGFloat y = k_hades[i].y;
+    if (k_hades[i].kind == H_FACE && k_hades[i].bit != B_Y) {   // a fan key: its y is an offset from Y's centre in width fractions
+        static int yi = -1;
+        if (yi < 0) for (int j = 0; j < HADES_N; j++) if (k_hades[j].bit == B_Y) yi = j;
+        y = k_hades[yi].y + y * b.size.width / b.size.height;
+    }
+    return CGPointMake(k_hades[i].x * b.size.width, y * b.size.height);
+}
 static UIView *clearDisc(UIView *parent, CGFloat tint) {
     // A plain translucent disc: a black fill at the given alpha and a thin light rim, nothing else.
     // The keys first used the system Liquid Glass material here (UIGlassEffect, regular style): over a
@@ -345,7 +356,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (int)hadesBtnAt:(CGPoint)p {   // Hades mode: the glass key under the point, or -1
     CGRect b = self.bounds;
     for (int i = 0; i < HADES_N; i++) {
-        CGPoint c = CGPointMake(k_hades[i].x * b.size.width, k_hades[i].y * b.size.height);
+        CGPoint c = hadesCenter(i, b);
         if (dist(p, c) <= k_hades[i].r * b.size.width * 1.4) return i; }
     return -1;
 }
@@ -572,7 +583,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         CGRect b = self.bounds;
         _glassBox.frame = b;
         for (int i = 0; i < HADES_N; i++) { CGFloat r = k_hades[i].r * b.size.width;
-            CGPoint c = CGPointMake(k_hades[i].x * b.size.width, k_hades[i].y * b.size.height);
+            CGPoint c = hadesCenter(i, b);
             _hGlass[i].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); _hGlass[i].layer.cornerRadius = r;
             setPath(_hWash[i], circlePath(c, r));
             if (_hLabel[i]) placeLabel(_hLabel[i], c, r * 1.02);
