@@ -50,6 +50,49 @@ static UILabel *front_ios_fps_label(void);
 @end
 static DmRootVC *g_root;
 static void launcher_done(void) { [g_root startGame]; }
+
+// The render size the guest renders at: the docked height 1080 at the screen's own aspect, so one build fills an iPhone and an iPad
+// alike instead of a width baked when the IPA was made. The host writes it into the frame step state page when the game starts
+// (DM_RENDER_WIDTH, loader.c dm_fps_state_apply), where the stubs at the game's baked size constants read it
+static int front_ios_render_width(void) {
+    CGSize n = UIScreen.mainScreen.nativeBounds.size;   // physical pixels, in portrait
+    CGFloat w = MAX(n.width, n.height), h = MIN(n.width, n.height);
+    if (h <= 0) return 2344;
+    int rw = (int)(1080.0 * w / h) & ~7;   // down to a multiple of 8, as every baked width was
+    return rw >= 320 ? rw : 2344;   // 2344: the width the wide builds baked (the iPhones' aspect at 1080), the fallback everywhere
+}
+
+// Hades II's HUD lays out against the size its script computes in RunLogic.lua (UpdateConfigOptionCache), which reads the engine's
+// config options X/Y -- 1920x1080 whatever the renderer does, so without this the HUD keeps the 1920 canvas at any render width (the
+// wide builds were played with the two lines below written by hand to the baked width; this writes the measured one instead). The line
+// is matched in the script's own form (a config read) and in the hand-written form (literals) alike, so the write is idempotent across
+// launches and a fresh datapack extract; exactly one match of each is required, any other shape leaves the file untouched. Only a
+// Documents RomFS can be written (the slim layout); a bundle RomFS keeps the script as shipped
+static void front_ios_hud_script_fix(int width) {
+    const char *romfs = getenv("DM_ROMFS");
+    if (!romfs) return;
+    NSString *path = [@(romfs) stringByAppendingPathComponent:@"Scripts/RunLogic.lua"];
+    if (![NSFileManager.defaultManager isWritableFileAtPath:path]) return;
+    NSString *txt = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    if (!txt) { LOG("[RED] front end: %s could not be read; HUD script left as is", path.UTF8String); return; }
+    NSMutableArray<NSString *> *lines = [[txt componentsSeparatedByString:@"\n"] mutableCopy];
+    for (NSString *s in @[@"Width", @"Height"]) {
+        NSString *pre = [NSString stringWithFormat:@"\tlocal actual%@ = ", s], *stock = [NSString stringWithFormat:@"GetConfigOptionValue({ Name = \"%@\" })", [s isEqual:@"Width"] ? @"X" : @"Y"];
+        int at = -1;
+        for (int i = 0; i < (int)lines.count; i++) {
+            NSString *ln = lines[i], *body = [ln hasSuffix:@"\r"] ? [ln substringToIndex:ln.length - 1] : ln;   // the script's lines end CRLF
+            if (![body hasPrefix:pre]) continue;
+            NSString *v = [body substringFromIndex:pre.length];
+            if ([v isEqualToString:stock] || (v.length && [v rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location == NSNotFound)) { if (at >= 0) { at = -2; break; } at = i; }
+        }
+        if (at < 0) { LOG("[RED] front end: RunLogic.lua: the actual%@ line is not in a known form; HUD script left as is", s.UTF8String); return; }
+        lines[at] = [NSString stringWithFormat:@"%@%d%@", pre, [s isEqual:@"Width"] ? width : 1080, [lines[at] hasSuffix:@"\r"] ? @"\r" : @""];
+    }
+    NSString *out = [lines componentsJoinedByString:@"\n"];
+    if ([out isEqualToString:txt] || [out writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil])
+        LOG("front end: HUD script at the render size %dx1080 (%s)", width, path.UTF8String);
+    else LOG("[RED] front end: %s could not be written; HUD script left as is", path.UTF8String);
+}
 @implementation DmRootVC
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -80,6 +123,9 @@ static void launcher_done(void) { [g_root startGame]; }
     if (self.fps) [self.view addSubview:self.fps];
     [self.view setNeedsLayout]; [self.view layoutIfNeeded];
     UIApplication.sharedApplication.idleTimerDisabled = YES;
+    if (!getenv("DM_RENDER_WIDTH")) setenv("DM_RENDER_WIDTH", [NSString stringWithFormat:@"%d", front_ios_render_width()].UTF8String, 1);   // the render size follows this screen (an env file's value is a diagnostic override and is kept); before the host starts, whose game-start write reads it
+    int rw = atoi(getenv("DM_RENDER_WIDTH")); if (rw < 320 || rw > 16384 || rw % 8) rw = 2344;   // the host's own validation (loader.c), so the script and the renderer cannot disagree
+    front_ios_hud_script_fix(rw);   // Hades II's HUD script gets the same width (a no-op for other games: no such file)
     front_ios_boot();
 }
 - (void)viewDidLayoutSubviews {
