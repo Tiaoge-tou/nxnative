@@ -131,7 +131,7 @@ private struct LauncherView: View {
                     }
                     Text((info("CFBundleDisplayName") as? String) ?? "Game")
                         .font(.title.weight(.bold)).multilineTextAlignment(.center)
-                    Text("Version \((info("CFBundleShortVersionString") as? String) ?? "")")
+                    Text("版本 \((info("CFBundleShortVersionString") as? String) ?? "")")
                         .font(.callout).foregroundStyle(.secondary)
                     playButton
                 }
@@ -144,7 +144,7 @@ private struct LauncherView: View {
                         }
                         Section {
                             HStack {
-                                Text("Memory available")
+                                Text("可用内存")
                                 Spacer()
                                 Text(ByteCountFormatter.string(fromByteCount: Int64(memory), countStyle: .memory)).monospacedDigit().foregroundStyle(.secondary)
                             }
@@ -168,7 +168,7 @@ private struct LauncherView: View {
     }
 
     @ViewBuilder var playButton: some View {
-        let button = Button(action: play) { Text("Play").font(.title3.weight(.semibold)).frame(maxWidth: 220) }.controlSize(.large)
+        let button = Button(action: play) { Text("开始游戏").font(.title3.weight(.semibold)).frame(maxWidth: 220) }.controlSize(.large)
         if #available(iOS 26.0, *) { button.buttonStyle(.glassProminent) } else { button.buttonStyle(.borderedProminent) }
     }
 
