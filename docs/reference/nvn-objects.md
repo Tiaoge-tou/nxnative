@@ -232,6 +232,7 @@ Games read this count as a position in their own command memory and size their h
 - **Cause:** the decoder's NV12 output is copied by the game into textures in a CPU-visible pool and published with `nvnMemoryPoolFlushMappedRange`, which the host did not take as an upload.
 - **Fix:** the profile key `tex_flush_upload`. Buffer textures stay out of that path: they are views onto the pool buffer, and an upload would have sent them past Metal's 2D size limit.
 - **Found on:** [Hyrule Warriors: Age of Calamity](../../dm/games/01002B00111A2000/README.md): a 1280×720 R8 and a 640×360 RG8 texture; the buffer texture kept out is a 1,048,576-texel R32F one.
+- **Also found on:** [NieR:Automata The End of YoRHa Edition](../../dm/games/010056B015FE8000/README.md): the title background; the game note records the controlled comparison.
 
 ### CPU writes with no flush, caught by page protection (`tex_dirty_upload`)
 
