@@ -213,6 +213,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Reader:** `shader_split.py` (`ue_legacy_jobs`, `ue_inline_shaders`) decodes every file of the newest copy of each path with the game's own LZ5 and takes each zlib stream that inflates whole from exactly the length in front of it and starts with `LSLG` (every such stream in the files looked at). Records stored uncompressed are taken too, but none were seen.
 - **Found on:** [DRAGON QUEST XI S](../../dm/games/01006C300E9F0000/README.md): 38,892 unique shaders (4,654 vertex, 33,981 pixel, 234 compute, 23 geometry) from 1,740 files; vertex and pixel shaders are paired as single-stage programs, as for Octopath Traveler 0.
 
+### Unreal Engine 4.27 shaders inline in cooked packages (LZ4)
+
+- **Symptom:** `the RomFS has Unreal paks, but none … holds a shader code archive`, then `the shader split found no shaders in main or the RomFS`.
+- **How it is stored:** a version 11 pak (Zlib blocks, index not encrypted) with no `.ushaderbytecode`: the project turned `bShareMaterialShaderCode` off, so each material keeps its shaders in its own `.uexp` and the engine's global shaders are in `Engine/GlobalShaderCache-SF_GLSL_SWITCH.bin`, as in [Unreal Engine 4.18](#unreal-engine-418-shaders-inline-in-cooked-packages). Unreal 4.27 serializes each one as an entry of `FShaderMapResourceCode`: the code (`i32` length, then an LZ4 block, the engine's shader compression since 4.26), the raw size (`i32`) and the frequency (`u8`).
+- **Reader:** `uepak.py` `inline_shaders` tells such a pak from one with archives by its directory index (cooked packages and no `.ushaderbytecode`; an encrypted index is taken for one with archives), and `shader_split.py` `ue_legacy_jobs` reads it file by file, Zlib and LZ4 blocks decoded in Python (`Pak.read`), so no host runs. `ue_inline_shaders` finds each LZ4 block by its first literals, the record's `LSLG`, with the token and literal length bytes in front of it, and takes it when it decodes to exactly the raw size after the block.
+- **Found on:** [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md): 13,980 unique shaders (1,910 vertex, 11,346 pixel, 694 compute, 30 geometry) from the 3.3 GB pak in 13 s.
+
 ## Control sections and code
 
 ### Code area and control section layout
@@ -377,6 +384,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Note:** Big Brain Academy's 12 geometry shaders (`_BezelSystemResources/line/shader/line.bfsha`) do not build (`unknown main0_out`) and their draws are skipped (`[RED] primitive type 11 not implemented`). They take a line strip with adjacency (primitive type 11) and emit up to 12 vertices per segment as triangle strips: thick lines with joins and caps (28 emit sites). From the main menu on, every frame draws one such line (width 10 in its uniform block) into the top-left 512x512 of the frame and copies that region into a texture, so the menu's chart loses its outlines. Not done.
 - **Note:** the vendored Ryujinx translator has its geometry-to-compute transforms (`VertexToCompute`, `GeometryToCompute`), which the chain does not use yet.
 
+### Geometry draws above the capture scratch bound
+
+- **Symptom:** `[RED] geometry draw needs 261 MiB of scratch, above the 256 MiB bound` (or `exceeds the capture or invocation bound`); the draw is skipped.
+- **Cause:** the geometry path captures the vertex shader's outputs for every vertex between the draw's lowest and highest index, for every instance, and the geometry kernel's outputs take room per primitive (`nvn_geometry.inc` `geo_draw`). Unreal's one-pass point light shadow draws a whole level mesh through its geometry shader.
+- **Fix:** such a draw is drawn in runs in the hardware's order (`geo_split`): one instance at a time, then runs of at most 4,096 primitives of a list topology whose index range fits 64 MB of capture. The index list is read once and the runs skip the GPU wait the outer draw took (a first version halved the draw recursively, each part reading the indices again and waiting: that frame took 805 ms). The index compaction after the geometry kernel was one thread walking every group; it is a count, an offset scan and a write dispatch now (`nvn_geometry.h`, `t_geometry`). Scratch arenas above 32 MB are kept while such draws go on and released after 600 idle submissions (`nvn_mtl.m` `arena_begin`), and `arena_new` takes the smallest free arena that fits.
+- **Found on:** [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md): 129,032 triangles of one mesh (vertex `9214254d203a4e45`, geometry `cb17a9453d4789d0`, both from the default material) at the start of the first battle and in the scene after it; with the one-thread compaction each such frame took about 300 ms, now only the first is long (395 ms on the Mac, with two new pipelines and the scratch allocation).
+- **Note:** strips, fans and primitive restart are not split. The primitive numbers restart at 0 in each run; this geometry shader reads only its index map by them, but one that read its primitive ID would see other numbers than on the Switch.
+
 ### Tessellation stages are not drawn
 
 - **Symptom:** `primitive type 14 not implemented`; patch draws skipped.
@@ -505,6 +520,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** [DRAGON QUEST VII Reimagined](../../dm/games/0100A9D01C446000/README.md): the per-pixel volumetric lightmap read brick (0, 0, 0) of the brick atlas for almost every cell. Unreal merges each streamed level's lightmap into one atlas on the GPU: brick copies (`0a7ff4171bd1a82a`), then a patch of the shared 16³ `RGBA8_UINT` indirection texture (`7b958a7b21e72801`) whose bounds come from `GetDimensions` on the very `RWTexture3D` it writes. Only cell (0, 0, 0) was written, every other cell kept size 0, and the shader fell back to the atlas origin: the first daytime level's bricks, baked about 2¹⁵ brighter (the same bricks in gameplay hold 0.5–1.4). [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md) has four such size queries (`cp_t_tcb_48` / `_4A`).
 - **Check:** how it was found: the raw scene colour (`texraw`) put the characters at 1,000–2,000 and the walls at 0.05; a debug build of one character shader that wrote its terms in alternating 8-pixel columns isolated the volumetric lightmap ambient term; dumps of the atlas (`texlist` / `texraw`), of the uploaded level bricks (the 3D upload dump) and of the indirection texture, with the cell computed from the primitive's origin and View `VolumetricLightmapWorldToUVScale / Add` (View 220 / 221), gave the rest.
 
+### More than 64 bindings in one shader
+
+- **Symptom:** `[RED] shader … reflection conversion failed: 66 bindings, over the limit 64`, then `failed to load`, and the draws with it are dropped (a black map).
+- **Cause:** the reflection is converted into fixed arrays of `NVN_REFL_MAXB` bindings (`nvn_refl.h`), which was 64. NVN gives a stage 32 textures and 32 samplers beside its uniform and storage buffers and images, so a shader can have more.
+- **Fix:** `NVN_REFL_MAXB` is 96; the argument buffer entries keep their own limit (`NVN_REFL_MAXARG`, 192).
+- **Found on:** [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md): the 3D world map of the traveler selection (`UiMM_WorldMap3D`, pixel shader `f7c8373b7323687d`: 30 textures, 30 samplers, 3 uniform buffers and the c1 / support / driver segments).
+
 ### Image atomics
 
 - **Symptom:** the replay put a texture resource ID where the shader wanted an address; with the old 64 KB dummy buffer, pointers in the game's objects and in the host's program objects got their upper 4 bytes replaced and the game or the replay crashed, or `kIOGPUCommandBufferCallbackErrorPageFault`, after which macOS ignores the process's command buffers (GitHub issue #101).
@@ -555,6 +577,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Cause:** Metal builds such a pipeline only with an input primitive class, and the translator writes a point size in every vertex shader, which needs the point class: no class fits both.
 - **Fix:** `vs_layer` drops the point size from vertex shaders that write the layer, and the host gives their pipelines the triangle class once Metal names the reason (`layer_out` in `pso_get_` and in the background prewarm). Their passes are layered ([Layered passes for vertex shaders that write the layer](rendering.md#layered-passes-for-vertex-shaders-that-write-the-layer)).
 - **Found on:** [Pokémon Legends: Z-A](../../dm/games/0100F43008C44000/README.md): two full-screen vertex shaders (`57246f9a04af8529`, `b29f08619f379a83`: one triangle per instance, layer = instance + offset, 20 pixel shaders read the layer).
+
+### The precompile look-ahead restores the scissor
+
+- **Symptom:** the picture bright green and white from some scene on, in runs with pipelines compiled on demand (prewarm lists off or short) and in none with `DM_NVN_PREDICT=0`.
+- **Cause:** after a pipeline miss the replay looks ahead through the rest of the submission, replaying state only, to compile the next pipelines in the background (`pso_predict_rest`). It restored `S`, but `state_op` also sets the scissor, which lives in `R`: the replay went on with the last scissor of the submission until its next `OP_SCISSOR`, so the draws in between were clipped to another pass's rectangle.
+- **Fix:** the scissor is saved and restored with `S`; the fusion probe (`fz_probe_cov2`) already restored all of `R`. Every game.
+- **Found on:** [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md): from Castti's opening flashback and the battlefield of Hikari's opening on.
+- **Check:** found by bisecting with four runs started at once on copies of one save: `DM_NVN_PREDICT=0` fixed it, a look-ahead that compiled nothing did not, and of its parts only the state ops brought it back; four runs green before the fix, four right after it.
 
 ### A cold Metal cache looks like a long load
 
