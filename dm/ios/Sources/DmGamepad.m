@@ -204,7 +204,7 @@ static CAShapeLayer *shape(CALayer *parent) {
 }
 static CATextLayer *label(CALayer *parent, NSString *s) {
     CATextLayer *t = [CATextLayer layer];
-    t.string = s; t.alignmentMode = kCAAlignmentCenter; t.foregroundColor = k_text.CGColor; t.contentsScale = UIScreen.mainScreen.scale;
+    t.string = s; t.alignmentMode = kCAAlignmentCenter; t.foregroundColor = k_text.CGColor; t.strokeWidth = -4.0; t.strokeColor = k_text.CGColor; t.contentsScale = UIScreen.mainScreen.scale;   // a negative stroke width fills and strokes: bolder glyphs
     [parent addSublayer:t]; return t;
 }
 static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   // keys shown only in the 3D layout
@@ -222,7 +222,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
         dispatch_once(&once, ^{
             // each colour carries its own low opacity instead of lowering the whole view's alpha (that would add an off-screen pass for the full-screen layer)
             k_idle = [UIColor colorWithWhite:1 alpha:0.14]; k_on = [UIColor colorWithWhite:1 alpha:0.45]; k_line = [UIColor colorWithWhite:1 alpha:0.38];
-            k_ringFill = [UIColor colorWithWhite:1 alpha:0.06]; k_text = [UIColor colorWithWhite:1 alpha:0.6]; k_textOn = [UIColor colorWithWhite:0 alpha:0.7];
+            k_ringFill = [UIColor colorWithWhite:1 alpha:0.06]; k_text = [UIColor colorWithWhite:1 alpha:0.75]; k_textOn = [UIColor colorWithWhite:0 alpha:0.7];
         });
         _controls = [CALayer layer]; [self.layer addSublayer:_controls];
         _ring = shape(_controls); _ring.fillColor = k_ringFill.CGColor;
@@ -495,13 +495,15 @@ static CGPathRef triPath(CGPoint c, CGFloat s, int dir) {   // a D-pad triangle:
         case 2:  v[0] = CGPointMake(c.x, c.y + s); v[1] = CGPointMake(c.x - s * k, c.y - s); v[2] = CGPointMake(c.x + s * k, c.y - s); break;
         default: v[0] = CGPointMake(c.x + s, c.y); v[1] = CGPointMake(c.x - s, c.y - s * k); v[2] = CGPointMake(c.x - s, c.y + s * k); break;
     }
+    CGPoint sh = dir == 0 ? CGPointMake(-s / 3, 0) : dir == 1 ? CGPointMake(0, -s / 3) : dir == 2 ? CGPointMake(0, s / 3) : CGPointMake(s / 3, 0);   // the centroid sits s/3 toward the base; shift toward the tip so it lands on c
+    for (int i = 0; i < 3; i++) { v[i].x += sh.x; v[i].y += sh.y; }
     CGMutablePathRef p = CGPathCreateMutable();
     CGPathMoveToPoint(p, NULL, (v[2].x + v[0].x) / 2, (v[2].y + v[0].y) / 2);
     for (int i = 0; i < 3; i++) CGPathAddArcToPoint(p, NULL, v[i].x, v[i].y, v[(i + 1) % 3].x, v[(i + 1) % 3].y, s * 0.15);   // corners slightly rounded
     CGPathCloseSubpath(p); return p;
 }
 static CGPathRef symPath(CGPoint c, CGFloat r, BOOL plus) {   // the - / + keys as bars centred on c: a text glyph's ink is not centred in its line box and rides high
-    CGFloat hl = r * 0.45, ht = r * 0.06;
+    CGFloat hl = r * 0.50, ht = r * 0.085;
     CGMutablePathRef p = CGPathCreateMutable();
     CGPathAddRoundedRect(p, NULL, CGRectMake(c.x - hl, c.y - ht, 2 * hl, 2 * ht), ht, ht);
     if (plus) CGPathAddRoundedRect(p, NULL, CGRectMake(c.x - ht, c.y - hl, 2 * ht, 2 * hl), ht, ht);
@@ -555,9 +557,9 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             CGPoint c = CGPointMake(k_hades[i].x * b.size.width, k_hades[i].y * b.size.height);
             _hGlass[i].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); _hGlass[i].layer.cornerRadius = r;
             setPath(_hWash[i], circlePath(c, r));
-            if (_hLabel[i]) placeLabel(_hLabel[i], c, r * 0.92);
+            if (_hLabel[i]) placeLabel(_hLabel[i], c, r * 1.02);
             else if (_hSym[i]) setPath(_hSym[i], symPath(c, r, k_hades[i].bit == B_PLUS));
-            else setPath(_hTri[k_hades[i].dir], triPath(c, r * 0.38, k_hades[i].dir)); }
+            else setPath(_hTri[k_hades[i].dir], triPath(c, r * 0.44, k_hades[i].dir)); }
         [CATransaction commit]; [self refresh]; return;
     }
     for (int b = B_A; b <= B_Y; b++) { CGPoint c = [self facePos:b]; setPath(_key[b], circlePath(c, self.faceR)); placeLabel(_label[b], c, 20 * u); }
@@ -588,8 +590,8 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     uint64_t all = _faceBits | _dpadBits | _btnBits;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     for (int b = 0; b < B_N; b++) { BOOL on = (all >> b) & 1;
-        _key[b].fillColor = (on ? k_on : k_idle).CGColor; _label[b].foregroundColor = (on ? k_textOn : k_text).CGColor; }
-    _swap.fillColor = (_swapHeld ? k_on : k_idle).CGColor; _swapLabel.foregroundColor = (_swapHeld ? k_textOn : k_text).CGColor;
+        _key[b].fillColor = (on ? k_on : k_idle).CGColor; _label[b].foregroundColor = (on ? k_textOn : k_text).CGColor; _label[b].strokeColor = (on ? k_textOn : k_text).CGColor; }
+    _swap.fillColor = (_swapHeld ? k_on : k_idle).CGColor; _swapLabel.foregroundColor = (_swapHeld ? k_textOn : k_text).CGColor; _swapLabel.strokeColor = (_swapHeld ? k_textOn : k_text).CGColor;
     CGPoint h = self.stickHome, o = [self knobOffset:0];
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
     if (_skin) {   // pressed keys dip; the eye key dims while the skill keys are hidden; the medallion knob follows the touch, kept inside the disc
@@ -607,7 +609,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         for (int i = 0; i < HADES_N; i++) { BOOL on = (_btnBits >> k_hades[i].bit) & 1;
             _hWash[i].opacity = on ? 0.28 : 0;
             _hGlass[i].transform = on ? CGAffineTransformMakeScale(0.93, 0.93) : CGAffineTransformIdentity;
-            if (_hLabel[i]) _hLabel[i].foregroundColor = (on ? k_textOn : k_text).CGColor;
+            if (_hLabel[i]) { _hLabel[i].foregroundColor = (on ? k_textOn : k_text).CGColor; _hLabel[i].strokeColor = (on ? k_textOn : k_text).CGColor; }
             if (k_hades[i].kind == H_DPAD) _hTri[k_hades[i].dir].fillColor = (on ? k_textOn : k_text).CGColor;
             if (_hSym[i]) _hSym[i].fillColor = (on ? k_textOn : k_text).CGColor; }
         CGPoint c = [self stickCentre:0]; CGFloat R = [self stickR:0];
