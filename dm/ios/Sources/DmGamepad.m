@@ -204,7 +204,7 @@ static CAShapeLayer *shape(CALayer *parent) {
 }
 static CATextLayer *label(CALayer *parent, NSString *s) {
     CATextLayer *t = [CATextLayer layer];
-    t.string = s; t.alignmentMode = kCAAlignmentCenter; t.foregroundColor = k_text.CGColor; t.strokeWidth = -4.0; t.strokeColor = k_text.CGColor; t.contentsScale = UIScreen.mainScreen.scale;   // a negative stroke width fills and strokes: bolder glyphs
+    t.string = s; t.alignmentMode = kCAAlignmentCenter; t.foregroundColor = k_text.CGColor; t.contentsScale = UIScreen.mainScreen.scale;
     [parent addSublayer:t]; return t;
 }
 static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   // keys shown only in the 3D layout
@@ -530,11 +530,15 @@ static CGPathRef armPath(CGPoint c, CGFloat R, CGFloat w, CGFloat in, CGFloat an
 }
 static void setPath(CAShapeLayer *l, CGPathRef p) { l.path = p; l.shadowPath = p; CGPathRelease(p); }
 static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
-    CTFontRef f = CTFontCreateUIFontForLanguage(kCTFontUIFontEmphasizedSystem, fs, NULL);
+    CTFontRef base = CTFontCreateUIFontForLanguage(kCTFontUIFontEmphasizedSystem, fs, NULL);
+    CTFontDescriptorRef bd = CTFontCopyFontDescriptor(base);
+    NSDictionary *traits = @{ (id)kCTFontTraitsAttribute: @{ (id)kCTFontWeightTrait: @0.56 } };   // heavy, one step past the emphasized (bold) face
+    CTFontDescriptorRef d = CTFontDescriptorCreateCopyWithAttributes(bd, (CFDictionaryRef)traits);
+    CTFontRef f = CTFontCreateWithFontDescriptor(d, fs, NULL);
     t.font = f; t.fontSize = fs;
     CGFloat h = CTFontGetAscent(f) + CTFontGetDescent(f) + CTFontGetLeading(f), w = fs * 3;
     t.frame = CGRectMake(c.x - w / 2, c.y - h / 2, w, h);
-    CFRelease(f);
+    CFRelease(base); CFRelease(bd); CFRelease(d); CFRelease(f);
 }
 
 - (void)layoutSubviews {
@@ -590,8 +594,8 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     uint64_t all = _faceBits | _dpadBits | _btnBits;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     for (int b = 0; b < B_N; b++) { BOOL on = (all >> b) & 1;
-        _key[b].fillColor = (on ? k_on : k_idle).CGColor; _label[b].foregroundColor = (on ? k_textOn : k_text).CGColor; _label[b].strokeColor = (on ? k_textOn : k_text).CGColor; }
-    _swap.fillColor = (_swapHeld ? k_on : k_idle).CGColor; _swapLabel.foregroundColor = (_swapHeld ? k_textOn : k_text).CGColor; _swapLabel.strokeColor = (_swapHeld ? k_textOn : k_text).CGColor;
+        _key[b].fillColor = (on ? k_on : k_idle).CGColor; _label[b].foregroundColor = (on ? k_textOn : k_text).CGColor; }
+    _swap.fillColor = (_swapHeld ? k_on : k_idle).CGColor; _swapLabel.foregroundColor = (_swapHeld ? k_textOn : k_text).CGColor;
     CGPoint h = self.stickHome, o = [self knobOffset:0];
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
     if (_skin) {   // pressed keys dip; the eye key dims while the skill keys are hidden; the medallion knob follows the touch, kept inside the disc
@@ -609,7 +613,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         for (int i = 0; i < HADES_N; i++) { BOOL on = (_btnBits >> k_hades[i].bit) & 1;
             _hWash[i].opacity = on ? 0.28 : 0;
             _hGlass[i].transform = on ? CGAffineTransformMakeScale(0.93, 0.93) : CGAffineTransformIdentity;
-            if (_hLabel[i]) { _hLabel[i].foregroundColor = (on ? k_textOn : k_text).CGColor; _hLabel[i].strokeColor = (on ? k_textOn : k_text).CGColor; }
+            if (_hLabel[i]) _hLabel[i].foregroundColor = (on ? k_textOn : k_text).CGColor;
             if (k_hades[i].kind == H_DPAD) _hTri[k_hades[i].dir].fillColor = (on ? k_textOn : k_text).CGColor;
             if (_hSym[i]) _hSym[i].fillColor = (on ? k_textOn : k_text).CGColor; }
         CGPoint c = [self stickCentre:0]; CGFloat R = [self stickR:0];
