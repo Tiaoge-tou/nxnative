@@ -116,9 +116,23 @@ static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_sk
     {"pause",    B_PLUS,  SK_ALWAYS, 0.893, 0.080, 0.023},
 };
 #define SKIN_N (int)(sizeof k_skin / sizeof k_skin[0])
+static UIImage *skinImage(const char *name) {   // a padskin image, loaded once and cached (nil when the file is absent)
+    static NSMutableDictionary *cache;
+    if (!cache) cache = [[NSMutableDictionary alloc] init];
+    NSString *key = [NSString stringWithUTF8String:name];
+    UIImage *im = cache[key];
+    if (!im) {
+        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"dm/padskin/%s.png", name]];
+        im = [UIImage imageWithContentsOfFile:p];
+        if (im) cache[key] = im;
+    }
+    return im;
+}
+static UIImage *skinPressedImage(int i) {   // the pressed-state art (<art>_p) for skin key i, or nil when the skin ships none
+    char pn[64]; snprintf(pn, sizeof pn, "%s_p", k_skin[i].art); return skinImage(pn);
+}
 static CALayer *imgLayer(CALayer *parent, const char *name) {
-    NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"dm/padskin/%s.png", name]];
-    CALayer *l = [CALayer layer]; l.contents = (id)[UIImage imageWithContentsOfFile:p].CGImage; [parent addSublayer:l]; return l;
+    CALayer *l = [CALayer layer]; l.contents = (id)skinImage(name).CGImage; [parent addSublayer:l]; return l;
 }
 
 // ---- Hades layout (DM_PAD_HADES=1 in an env file) ----
@@ -598,11 +612,15 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     _swap.fillColor = (_swapHeld ? k_on : k_idle).CGColor; _swapLabel.foregroundColor = (_swapHeld ? k_textOn : k_text).CGColor;
     CGPoint h = self.stickHome, o = [self knobOffset:0];
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
-    if (_skin) {   // pressed keys dip; the eye key dims while the skill keys are hidden; the medallion knob follows the touch, kept inside the disc
+    if (_skin) {   // pressed keys swap to their _p art and dip; the eye key shows its _p art while the skill keys are hidden (and dims instead when the skin ships no eye _p art); the medallion knob follows the touch, kept inside the disc
         for (int i = 0; i < SKIN_N; i++) {
-            if (k_skin[i].grp == SK_TOGGLE) { _skinBtn[i].opacity = _skillOff ? 0.45 : 1.0; _skinBtn[i].transform = CATransform3DIdentity; continue; }
+            if (k_skin[i].grp == SK_TOGGLE) { UIImage *p = _skillOff ? skinPressedImage(i) : nil;
+                _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
+                _skinBtn[i].opacity = p ? 1.0 : (_skillOff ? 0.45 : 1.0); _skinBtn[i].transform = CATransform3DIdentity; continue; }
             _skinBtn[i].hidden = _skillOff && k_skin[i].grp == SK_SKILL;
             BOOL on = (_btnBits >> k_skin[i].bit) & 1;
+            UIImage *p = on ? skinPressedImage(i) : nil;
+            _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
             _skinBtn[i].opacity = 1.0;
             _skinBtn[i].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
         CGFloat ol = hypot(o.x, o.y), maxO = 0.30 * [self stickR:0];
