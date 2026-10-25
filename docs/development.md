@@ -14,6 +14,41 @@ The README covers packing and playing. This page is for working on nxnative itse
 | iOS app | One unsigned IPA for iPhone and iPad. The rewritten code is embedded in the executable; the shader libraries, the RomFS and the game icon are inside the app. A settings screen comes before the game (`Launcher.swift`, drawn from `dm/launcher.json`, which `dm/games/settings.py` writes from `dm/games/settings.tsv`); the host's loading starts at app launch meanwhile, and the frame rate and render scale go into the frame step state when the game starts (`loader.c` `dm_fps_state_apply`) |
 | Known gaps | Conditional render is always drawn; `MultiDraw*IndirectCount` waits on the CPU for the GPU-written count; geometry shaders do not translate. TBDR optimizations are off by default (they don't understand bindless textures yet). No amiibo. The bundled prewarm lists are empty. On the Mac, Mario's menu and dialogue text render blank (fine on the iPhone) |
 
+## Guest memory SVCs
+
+`dm/host/hle_svc.c` serializes heap resizing, physical map/unmap, stack
+map/unmap and memory queries with one memory-state lock. The alias bitmap is
+the source of committed/free runs for `QueryMemory` and of committed-byte
+accounting. With `mem_map_limit`, heap growth and physical maps check the same
+application-pool budget; overlapping maps charge only newly committed pages.
+Unexpected host protection failures abort before publishing state, including
+the `SetHeapSize` fail-fast check from PR #127.
+
+`MapMemory` borrows opened heap memory, committed alias memory or writable
+static-module data until an exact unmap copies it back. Another borrow,
+decommit, heap shrink or permission/attribute request cannot invalidate that
+source. Queries report its original state with borrowed attribute bit 0 and
+no user permissions. The implementation still copies bytes: source permissions
+are logical, and native host pages cannot isolate adjacent 4 KiB slices.
+Dynamic NRO backing is rejected because reload can restore it outside this
+ownership lifetime. Host-created guest threads allocate their stack backing
+through SDK malloc and free it after SDK thread destruction/copyback. Physical
+recommit may overlap a borrowed source: SDK allocators extend committed windows
+this way, and existing committed bytes are preserved.
+
+A host-page exposure bitmap preserves lazy zero-fill on first commitment.
+Later commits clear only newly committed logical slices, preserving live
+neighbors on a 16 KiB host page. GPU dirty tracking is notified when a mapping
+opens a host page and before stack copyback. The SDK retains address-region
+reservation ownership and its existing build patches.
+
+`make -C dm/host/tests GAME=<id> run` includes the production-dispatcher memory
+tests, real GPU dirty-tracker integration and heap-probe log compatibility.
+The focused targets are `heap_size`, `memory`, `memory-dirty`, `memory-profile`
+and `memory-tsan`; `memory` includes undefined-behavior and address sanitizers.
+Use `PYTHON=<venv>/bin/python` when the NSP tools' Python dependencies are in a
+virtual environment; the heap-probe check imports the production profile reader.
+
 ## The packing script in detail
 
 `scripts/build_ipa_from_nsp.py` (`-h` lists every option):
@@ -203,6 +238,19 @@ The lines name shaders by content key and hold no compiled code and nothing pers
 Record on the game version you ship. At launch the log names each list it read and its line count (`pipeline prewarm list …: N lines`), or says that `pso_user.tsv` does not exist yet.
 
 During rendering, a pipeline miss compiles and caches the demanded pipeline before scanning subsequent draws for speculative work. The scan admits at most two new jobs, with at most two speculative compilations outstanding; completed predictions remain available by exact key. This limit does not apply to the startup warmer. `t_pso_pending` checks scheduling and ownership with a gated compiler; it does not establish that the two-job budget is optimal on every device or remove the cost of compiling an unseen pipeline.
+### Pipeline bases and the pipeline archive
+
+Concurrent requests for the same base share its in-progress build and result; unrelated bases can compile in parallel. Rasterizing pipelines without a fragment function use the `MTLDevice` path so depth-only draws keep their depth writes: Metal 4 requires a fragment function when rasterization is enabled. Transform-feedback pipelines, whose rasterization is disabled, can still use Metal 4.
+
+Render pipelines are built through Metal 4's `MTL4Compiler` (`pso_build` in `dm/gfx/nvn/nvn_mtl.m`). `pso_desc` still describes each pipeline; from it the host builds a *base* whose colour attachments (format, blending, write mask) are left unspecialized, once per base, and makes every pipeline from its base by specialization, which takes a few microseconds instead of the 3–5 ms of a pipeline build. Metal 4 pipelines name no depth or stencil format, so one base serves every depth/stencil attachment. Breath of the Wild's 4,829 recorded pipeline keys came from 1,818 bases; 2,845 of the keys differed only in the blend factors of targets whose blending was off, which the key no longer holds (`pso_key_norm`).
+
+The bases are kept in a per-game pipeline archive in `pso_archive/` beside `pso_user.tsv`. Each file holds what one flush captured (`NNNNN.mtl4a`). A flush runs after the prewarm and 10 s after a burst of new bases. At start the host opens every file, and a base found in one is taken from it directly, in about 0.06 ms where building it takes 10–80 ms. Only bases no file holds are compiled, so each file holds new bases only. The serializer must capture binaries only: with descriptor capture as well, it writes no archive and reports no error. A flush and a compile must not overlap (a compile that finished during a flush crashed in Metal), so compiles hold a read lock and a flush the write lock (`g_arch_rw`).
+
+Every start adds a file or more: Breath of the Wild wrote 5–7 per start, and each file a base is not in costs a lookup about 0.06 ms. With more than 8 files (`PSO_ARCH_COMPACT`) the archive is compacted: the bases the prewarm takes from the old files are taken again through the compiler, with those files as its lookup archives, which captures them; the flush after the prewarm writes them into one file, and the old files are removed (`arch_compact_finish`). Bases the prewarm did not take (no `pso_user.tsv` line names them) go with the old files and are built again when drawn. The log says `pipeline archive compacted: N files gave M bases …`.
+
+The log shows `pipeline archive …: N files, … MB, opened in … ms` at start, `pipeline archive: N new pipeline bases written to …` after each flush, and after the prewarm a line counting the bases compiled, taken from the archive and reused. `DM_PSO_ARCHIVE=off` turns the archive off; `DM_PSO_ARCHIVE=<folder>` puts it elsewhere. `DM_PSO_MTL4=0` builds every pipeline through the `MTLDevice` as before, with no bases and no archive. The Metal 4 path is on by default on the Mac only. On iOS it stays off unless `DM_PSO_MTL4=1`: the archive's memory is not measured against an iPhone's limit yet, and an archive cannot be made offline for an iPhone, because `metal-tt` rejects the pipeline script the Metal 4 serializer writes. iOS is a later step. Pipelines whose functions have no Metal 4 descriptor (the diagnostic `DM_NVN_HILITE` and `DM_NVN_MAGSCAN` overrides) always take the `MTLDevice` path.
+
+During compaction, timed flushes defer while prewarm runs. Once it finishes, one archive-queue task flushes the recaptured bases and removes the old files. The pending count and serializer capture are protected by the same compile/flush lock, so a flush consumes the count for the bases it writes.
 
 ## Power
 

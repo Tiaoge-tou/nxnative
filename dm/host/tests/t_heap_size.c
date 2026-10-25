@@ -30,6 +30,7 @@ void guest_clock_read_wait(void) {}
 uint64_t guest_ns(void) { return 0; }
 uint64_t dm_entropy64(void) { return 0; }
 int thr_limit_used(void) { return 0; }
+void dm_guest_write_prepare(void *addr, size_t size) { (void)addr; (void)size; }
 
 static size_t page, old_size, requested;
 static int calls, injected_error, last_prot;
@@ -97,11 +98,10 @@ static void used_memory(size_t heap_size) {
     assert(r[0] == 0 && r[1] == heap_size + DM_GAME_MEM_USED);
 }
 int main(void) {
+    mem_init();
     page = (size_t)getpagesize(); g_heap_cap = 4 * page;
     assert(g_heap_cap < APP_POOL);
-    g_heap = mmap(NULL, g_heap_cap, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-    assert(g_heap != MAP_FAILED);
-    g_as = g_heap;   // Skip the multi-GB profile reservation; use only these synthetic pages.
+    // The reservation stays lazy; only four host pages of its heap are used.
     success(2 * page); used_memory(2 * page);   // initial growth
     success(3 * page); used_memory(3 * page);   // further growth
     success(page); used_memory(page);         // shrink
@@ -114,7 +114,8 @@ int main(void) {
     success(0); used_memory(0);
     success(0);                              // unchanged empty heap
     success(page); success(0);               // regrowth after release
-    assert(munmap(g_heap, g_heap_cap) == 0);
+    free(g_alias_bits); free(g_alias_exposed);
+    assert(munmap(g_as, RESERVE) == 0);
     puts("SetHeapSize production dispatcher: growth, shrink, unchanged, zero, failure state and fail-fast passed");
     return 0;
 }
