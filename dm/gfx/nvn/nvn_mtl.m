@@ -55,6 +55,7 @@ static uint64_t c2_handle(int stage, unsigned b);   // the handle c2 holds at by
 #include <unistd.h>
 #include <stdatomic.h>
 #include <errno.h>
+#include "nvn_imga_layout.h"
 #include <execinfo.h>
 #include <os/lock.h>
 // Function parameters in this file are never retained again in the callee (the caller / global tables already hold them, and lifetime is guaranteed by defer_obj_release): saves a retain / release pair per call on the hot path
@@ -1985,7 +1986,7 @@ static id<MTLTexture> tex_linear(const tex_t *t) {
     if (t->d.target != NVN_TEXTURE_TARGET_2D || t->d.levels > 1 || t->d.samples > 1) return nil;
     uint32_t pf = 0; uint8_t swz[4]; int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
     if (!nvn_fmt_to_mtl(t->d.format, &pf, swz) || !pf || !bpb || bw != 1 || bh != 1) return nil;
-    size_t row = t->d.stride ? t->d.stride : (size_t)t->d.width * bpb;
+    size_t row = t->L.layer_size / (t->d.height ? t->d.height : 1);   // same explicit or aligned stride as GetStorageSize
     void *mb; uint64_t mo;
     if (!mtl_addr((uint64_t)t->mem, (uint64_t)row * (t->d.height ? t->d.height : 1), &mb, &mo)) { RED_ONCE(64, "linear texture storage is not in a memory pool (%ux%u format %#x)", t->d.width, t->d.height, t->d.format); return nil; }
     id<MTLBuffer> b = (__bridge id<MTLBuffer>)mb;
@@ -4849,23 +4850,46 @@ static id<MTLSamplerState> dummy_samp(void) {
 static uint64_t dummy_samp_rid(void) { static uint64_t rid; if (!rid) rid = dummy_samp().gpuResourceID._impl; return rid; }
 static id<MTLBuffer> dummy_buf(void) { static id<MTLBuffer> b; if (!b) { b = [g_dev newBufferWithLength:64 << 10 options:MTLResourceStorageModeShared]; res_add(b); } return b; }
 static uint64_t dummy_buf_gpu(void) { static uint64_t gpu; if (!gpu) gpu = dummy_buf().gpuAddress; return gpu; }
-// Image atomics that are not followed into the image's storage (a block-linear image, or storage in no memory pool) go to a scratch buffer at least as large as the image. SPIRV-Cross indexes
-// them by the image bound in the same slot (spvImage2DAtomicCoord: x + y × its width), so in the 64 KB dummy buffer they ran up to the image's size past its end, into whatever GPU memory followed:
+// Image atomics on block-linear images retain discard scratch at least as large as the matched IMG extent; linear images require proven direct backing below. SPIRV-Cross indexes
+// the IMGA pointer using that image's dimensions (including the array layer), so a full image paired with a 64 KB dummy can run past its end into whatever GPU memory followed:
 // Pokémon Legends: Z-A's atomic max into an r32ui 2D array (texture ID 302, fragment shader 2bd5037003980716) wrote into zero-copy pools over the game's heap, which broke pointers in the game's
 // objects and in the host's program objects, and into unmapped addresses, a GPU page fault (GitHub issue #101). The results are discarded as before; the buffer only grows
 static __strong id<MTLBuffer> g_atom_scratch;
-static id<MTLBuffer> atom_scratch(const tex_t *t) {
+static id<MTLBuffer> atom_scratch(const tex_t *t, uint64_t image_bytes) {
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
-    uint64_t layers = t->d.target == 8 ? 6 : t->d.depth > 1 ? t->d.depth : 1;   // 3D, 2D array and cube array: depth (a cube array's counts layer-faces, tex_desc)
-    uint64_t need = (uint64_t)MAX(t->d.width, 1u) * MAX(t->d.height, 1u) * layers * (uint64_t)MAX(bpb, 4);
+    uint64_t layers = t->d.target == 8 ? 6 : t->d.depth > 1 ? t->d.depth : 1;
+    uint64_t need, len;
+    if (bpb != 4 || bw != 1 || bh != 1 ||
+        !nvn_imga_bytes(MAX(t->d.width, 1u), MAX(t->d.height, 1u), layers, &need)) return nil;
     if (need < t->L.size) need = t->L.size;
+    if (need < image_bytes) return nil;   // Never invent a larger image/storage contract.
     if (g_atom_scratch.length >= need) return g_atom_scratch;
-    uint64_t len = (need + (1u << 20) - 1) & ~(uint64_t)((1u << 20) - 1);
+    if (!nvn_imga_scratch_length(need, &len)) return nil;
     id<MTLBuffer> b = [g_dev newBufferWithLength:len options:MTLResourceStorageModePrivate];
-    if (!b) { static int once; if (!once++) MLOG("[RED] image atomics: cannot create a %llu MB scratch buffer, they go to the 64 KB dummy buffer", (unsigned long long)(len >> 20)); return nil; }
+    if (!b) return nil;   // Caller rejects the binding: a full image must never keep a short dummy pointer.
     res_add(b); if (g_atom_scratch) defer_obj_release(g_atom_scratch); g_atom_scratch = b;
     MLOG("image atomics that are not followed: scratch buffer of %llu MB (texture %ux%u, %llu layers)", (unsigned long long)(len >> 20), t->d.width, t->d.height, (unsigned long long)layers);
     return b;
+}
+// Resolve IMG once for both image and atomic pointer. Caller holds g_rmu.
+static id<MTLTexture> img_binding(int tid, const nvn_rbind *b, uint64_t *rid, int *real) {
+    void *tv = NULL; *rid = tid ? tex_fast_rid(tid, &tv) : 0;
+    id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
+    int swz_only = t && !(t.usage & MTLTextureUsageShaderWrite) && (t.parentTexture.usage & MTLTextureUsageShaderWrite);
+    if (t && !(t.usage & MTLTextureUsageShaderWrite) && !swz_only) { RED_ONCE(32, "texture bound to an image slot lacks the shader-write usage (texture ID %d)", tid); t = nil; }
+    if (t && (swz_only || (b->dpf != NVN_DPF_FLOAT && mtl_pf_dpf(t.pixelFormat) != b->dpf))) {
+        uint64_t r2 = 0; id<MTLTexture> v = img_fit(tid, t, b->dpf, &r2);
+        if (v) { t = v; *rid = r2; } else if (swz_only) t = nil;
+    }
+    *real = t != nil;
+    if (!t) { t = dummy_img(b->dtt, b->dpf); *rid = g_dummy_img_rid[b->dtt & 7][b->dpf & 3]; }
+    return t;
+}
+static int imga_extent(id<MTLTexture> t, const nvn_rbind *b, uint64_t *bytes) {
+    if (!t || t.textureType != (MTLTextureType)b->dtt || t.sampleCount > 1) return 0;
+    if (t.textureType != MTLTextureTypeTextureBuffer && t.textureType != MTLTextureType2D && t.textureType != MTLTextureType2DArray) return 0;
+    return nvn_imga_bytes(t.width, t.textureType == MTLTextureTypeTextureBuffer ? 1 : t.height,
+                          t.textureType == MTLTextureType2DArray ? t.arrayLength : 1, bytes);
 }
 // Snapshot substitution for same-pass feedback sampling (registered by fb_prepare, used by encode_args; see the notes before draw)
 static uint64_t g_draw_seq, g_fb_seq, g_fb_count; static int g_fb_n, g_fb_rebind;
@@ -4939,6 +4963,21 @@ static int encode_args_(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, i
     int bl = passdump() && (bl_all || g_kd_force || bl_pass[nvn_stage] != g_stat_pass);
     if (bl) { bl_pass[nvn_stage] = g_stat_pass; PD("K %llu st%d key=%s nb=%d", g_stat_pass, nvn_stage, sh->key[0] ? sh->key : sh->builtin ? sh->builtin : "?", sh->rf.nb); }
     pthread_mutex_lock(&g_rmu);   // The texture / sampler registration tables may be being grown or rewritten by the game thread
+    __unsafe_unretained id<MTLTexture> atomic_img[32] = {nil};
+    uint64_t atomic_rid[32] = {0}; int atomic_real[32] = {0};
+    const nvn_rbind *atomic_desc[32] = {0};
+    for (int i = 0; i < sh->rf.nb; i++) if (sh->rf.b[i].kind == NVN_RB_IMGA) {
+        unsigned r = sh->rf.b[i].reg; const nvn_rbind *ib = NULL;
+        for (int j = 0; j < sh->rf.nb; j++) if (sh->rf.b[j].kind == NVN_RB_IMG && sh->rf.b[j].reg == r) {
+            if (ib) MDIE("[RED] image atomics: ambiguous IMG partner (shader %s stage %d slot %u)", sh->key, nvn_stage, r);
+            ib = &sh->rf.b[j];
+        }
+        if (r >= 32 || !ib) MDIE("[RED] image atomics: missing IMG partner (shader %s stage %d slot %u)", sh->key, nvn_stage, r);
+        if (!atomic_desc[r]) {
+            int tid = (int)(S.img[nvn_stage][r] & 0xfffff); atomic_desc[r] = ib;
+            atomic_img[r] = img_binding(tid, ib, &atomic_rid[r], &atomic_real[r]);
+        }
+    }
     for (int i = 0; i < sh->rf.nb; i++) {
         const nvn_rbind *b = &sh->rf.b[i];
         int reg = b->reg, aid = b->aid;
@@ -5014,28 +5053,51 @@ static int encode_args_(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, i
             USE(t, MTLResourceUsageRead);
         } else if (b->kind == NVN_RB_IMG) {   // Writable texture: NVN image slot r (BindImages) ↔ D3D u_r
             int tid = reg < 32 ? (int)(S.img[nvn_stage][reg] & 0xfffff) : 0;
-            void *tv = NULL; uint64_t trid = tid ? tex_fast_rid(tid, &tv) : 0; __unsafe_unretained id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
-            if (passdump()) PD("W %llu st%d reg%d tid=%d %s ser=%llu", g_stat_pass, nvn_stage, reg, tid, t ? "real" : "dummy", t && tid < g_ntreg ? g_treg[tid].t.serial : 0ull);
-            int swz_only = t && !(t.usage & MTLTextureUsageShaderWrite) && (t.parentTexture.usage & MTLTextureUsageShaderWrite);   // a swizzled view of an image texture (img_fit)
-            if (t && !(t.usage & MTLTextureUsageShaderWrite) && !swz_only) { RED_ONCE(32, "texture bound to an image slot lacks the shader-write usage (texture ID %d)", tid); t = nil; }
-            if (t && (swz_only || (b->dpf != NVN_DPF_FLOAT && mtl_pf_dpf(t.pixelFormat) != b->dpf))) { uint64_t r2 = 0; id<MTLTexture> v = img_fit(tid, t, b->dpf, &r2); if (v) { t = v; trid = r2; } else if (swz_only) t = nil; }   // see img_fit
-            if (!t) { t = dummy_img(b->dtt, b->dpf); trid = g_dummy_img_rid[b->dtt & 7][b->dpf & 3]; }   // Unbound: D3D semantics discard the write - write into a dedicated dummy texture so the set that reads 0 is not polluted
+            uint64_t trid; int real;
+            id<MTLTexture> t = reg < 32 && atomic_desc[reg] ? atomic_img[reg] : img_binding(tid, b, &trid, &real);
+            if (reg < 32 && atomic_desc[reg]) { trid = atomic_rid[reg]; real = atomic_real[reg]; }
+            if (passdump()) PD("W %llu st%d reg%d tid=%d %s ser=%llu", g_stat_pass, nvn_stage, reg, tid, real ? "real" : "dummy", real && tid < g_ntreg ? g_treg[tid].t.serial : 0ull);
             slots[aid] = trid;
             USE(t, MTLResourceUsageRead | MTLResourceUsageWrite);
-        } else if (b->kind == NVN_RB_IMGA) {   // image atomics: the storage of the image in slot r. A buffer texture is a view of its memory pool (tex_mtl), so the texture reads and the atomics see the same words
-            int tid = reg < 32 ? (int)(S.img[nvn_stage][reg] & 0xfffff) : 0;
+        } else if (b->kind == NVN_RB_IMGA) {
+            int tid = (int)(S.img[nvn_stage][reg] & 0xfffff);
             const tex_t *tt = tid && tid < g_ntreg && g_treg[tid].ok ? &g_treg[tid].t : NULL;
-            void *mb; uint64_t mo, gpu;
-            // A block-linear image is a deswizzled Metal copy whose pool memory has another layout (and is re-uploaded from): its atomics go to a scratch buffer instead (logged, atom_scratch)
-            int linear = tt && (tt->d.target == 10 || (tt->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)));
-            if (tt && !linear) RED_ONCE(93, "image atomics on a block-linear texture (texture ID %d target %d): not followed, the atomics go to a scratch buffer", tid, (int)tt->d.target);
-            id<MTLBuffer> sb = nil;
-            if (linear && tt->mem && mtl_gpu_addr((uint64_t)tt->mem, tt->L.size ? tt->L.size : 4, &mb, &mo, &gpu)) {
-                slots[aid] = gpu; USE((__bridge id<MTLBuffer>)mb, MTLResourceUsageRead | MTLResourceUsageWrite);
+            id<MTLTexture> image = atomic_img[reg]; uint64_t need;
+            if (!imga_extent(image, atomic_desc[reg], &need))
+                MDIE("[RED] image atomics: unsupported or overflowing IMG extent (shader %s stage %d slot %d texture %d)", sh->key, nvn_stage, reg, tid);
+            if (tt && (!atomic_real[reg] || (image.pixelFormat != MTLPixelFormatR32Uint && image.pixelFormat != MTLPixelFormatR32Sint)))
+                MDIE("[RED] image atomics: real image is not a resolved R32 integer IMG (shader %s stage %d slot %d texture %d)", sh->key, nvn_stage, reg, tid);
+            int linear = tt && (tt->d.target == NVN_TEXTURE_TARGET_BUFFER || (tt->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)));
+            id<MTLBuffer> storage = nil; uint64_t gpu = 0;
+            if (linear) {
+                void *mb = NULL; uint64_t mo = 0;
+                int found = tt->mem && mtl_gpu_addr((uint64_t)tt->mem, need, &mb, &mo, &gpu);
+                storage = (__bridge id<MTLBuffer>)mb;
+                int bw, bh, bpb = nvn_fmt_bpb(tt->d.format, &bw, &bh);
+                // Only actual base buffer textures / packed base 2D images have a proven pointer layout.
+                nvn_imga_direct_layout d = { .width = image.width, .height = image.height, .layers = image.arrayLength,
+                    .row_bytes = image.buffer ? image.bufferBytesPerRow : 0, .buffer_length = storage.length,
+                    .texture_offset = image.buffer ? image.bufferOffset : 0, .pointer_offset = mo, .guest_bytes = tt->L.size,
+                    .word_bytes = bw == 1 && bh == 1 ? (unsigned)bpb : 0, .buffer_texture = image.textureType == MTLTextureTypeTextureBuffer,
+                    .base_view = !image.parentTexture && image.mipmapLevelCount == 1 && tt->d.levels <= 1 && tt->d.samples <= 1 &&
+                        image.width == tt->d.width && (image.textureType == MTLTextureTypeTextureBuffer ? tt->d.target == NVN_TEXTURE_TARGET_BUFFER :
+                        image.textureType == MTLTextureType2D && tt->d.target == NVN_TEXTURE_TARGET_2D && image.height == tt->d.height),
+                    .same_buffer = found && image.buffer == storage };
+                if (!gpu || !nvn_imga_direct_ok(&d))
+                    MDIE("[RED] image atomics: unsupported direct IMG/IMGA layout or capacity (shader %s stage %d slot %d texture %d)", sh->key, nvn_stage, reg, tid);
                 static int nlog; if (nlog < 8 && !(sh->logged & 2)) { sh->logged |= 2; nlog++; MLOG("shader %s (stage %d): image atomics on image slot %d, texture ID %d (target %d, %llu bytes)", sh->key, nvn_stage, reg, tid, (int)tt->d.target, (unsigned long long)tt->L.size); }
-            } else if (tt && (sb = atom_scratch(tt))) { slots[aid] = sb.gpuAddress; USE(sb, MTLResourceUsageRead | MTLResourceUsageWrite); }
-            else { slots[aid] = dummy_buf_gpu(); USE(dummy_buf(), MTLResourceUsageRead | MTLResourceUsageWrite); }   // unbound: the image slot has the dummy image, so the writes stay in the 64 KB dummy buffer
-            if (bl) PD("B %llu st%d imga reg%d tid=%d %s", g_stat_pass, nvn_stage, reg, tid, tt && tt->mem ? "real" : "dummy");
+            } else if (tt) {
+                RED_ONCE(93, "image atomics on a block-linear texture (texture ID %d target %d): not followed, the atomics go to a scratch buffer", tid, (int)tt->d.target);
+                storage = atom_scratch(tt, need); gpu = storage.gpuAddress;
+                if (!storage || !gpu || !nvn_imga_capacity(need, storage.length, 0))
+                    MDIE("[RED] image atomics: scratch allocation or capacity failed; refusing short dummy (shader %s stage %d slot %d texture %d need %llu)", sh->key, nvn_stage, reg, tid, (unsigned long long)need);
+            } else {
+                storage = dummy_buf(); gpu = storage.gpuAddress;
+                if (atomic_real[reg] || !storage || !gpu || !nvn_imga_capacity(need, storage.length, 0))
+                    MDIE("[RED] image atomics: unmatched unbound IMG/IMGA pair (shader %s stage %d slot %d)", sh->key, nvn_stage, reg);
+            }
+            slots[aid] = gpu; USE(storage, MTLResourceUsageRead | MTLResourceUsageWrite);
+            if (bl) PD("B %llu st%d imga reg%d tid=%d %s", g_stat_pass, nvn_stage, reg, tid, linear ? "direct" : tt ? "scratch" : "dummy");
         } else if (b->kind == NVN_RB_TBUF) {   // Typed buffer: the buffer texture (target BUFFER) in texture slot r
             int tid = (int)(tex_slot_h(S.tex[nvn_stage], S.img[nvn_stage], reg) & 0xfffff);
             void *tv = NULL; uint64_t trid = tid ? tex_fast_rid(tid, &tv) : 0; __unsafe_unretained id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
@@ -7788,7 +7850,8 @@ static unsigned mtl_pf_chmask(MTLPixelFormat pf) {
 }
 // GPU: clear a texture region with the given value (previously mislisted as a no-op, called 5 times at initialization; the initial value of a Metal private texture is undefined, and the game relies on the cleared initial value).
 // Whole level and whole face, all four channels written -> open one clear-only render pass per layer / depth slice (the hardware converts the clear value by the texture format, including integer and depth);
-// view with changed format: clear on a view of that format; partial region, partial channels, compressed / packaged textures (no render target usage): report a failure, to be implemented
+// View with changed format: clear on that view. Partial colour regions / channel masks use a triangle and preserve everything else.
+static void clear_tex_tri(id<MTLTexture> t, unsigned lv, unsigned l0, const p_clear_tex *c);
 static void clear_tex(const p_clear_tex *c) {
     if (c->tex) zskip_del(c->tex->serial);
     id<MTLTexture> t = tex_mtl(c->tex);
@@ -7798,8 +7861,8 @@ static void clear_tex(const p_clear_tex *c) {
     unsigned lv = c->has_view && c->view.set_levels ? c->view.base_level : 0, l0 = c->has_view && c->view.set_layers ? c->view.min_layer : 0;
     NSUInteger w = MAX(t.width >> lv, 1u), h = MAX(t.height >> lv, 1u);
     int is3d = t.textureType == MTLTextureType3D, nz = c->r.depth ? c->r.depth : 1;
-    if (!(t.usage & MTLTextureUsageRenderTarget) && !mtl_fmt_block(t.pixelFormat) && t.sampleCount == 1 && !c->r.xoffset && !c->r.yoffset && (NSUInteger)c->r.width == w && (NSUInteger)c->r.height == h && (c->mask & mtl_pf_chmask(t.pixelFormat)) == mtl_pf_chmask(t.pixelFormat))
-        t = tex_upgrade(c->tex, t, MTLTextureUsageRenderTarget, t.pixelFormat);   // a whole-level clear of a texture made without render-target use (packaged): give it that use
+    if (!(t.usage & MTLTextureUsageRenderTarget) && !mtl_fmt_block(t.pixelFormat) && t.sampleCount == 1)
+        t = tex_upgrade(c->tex, t, MTLTextureUsageRenderTarget, t.pixelFormat);   // a clear of a texture made without render-target use (packaged): give it that use
     if (c->has_view && c->view.set_format) {   // View with changed format: the clear value is interpreted in the view format (all 5 of the game's calls are the ui version with an integer view), and the clear is done on a view of the same format
         uint32_t vpf = 0; uint8_t swz[4];
         if (!nvn_fmt_to_mtl(c->view.format, &vpf, swz) || !vpf) { RED_ONCE(42, "texture clear view format %#x has no equivalent", c->view.format); return; }
@@ -7814,6 +7877,7 @@ static void clear_tex(const p_clear_tex *c) {
     int depth = pf == MTLPixelFormatDepth32Float || pf == MTLPixelFormatDepth16Unorm || pf == MTLPixelFormatDepth32Float_Stencil8, stencil = pf == MTLPixelFormatStencil8 || pf == MTLPixelFormatDepth32Float_Stencil8;
     if (c->r.xoffset || c->r.yoffset || (NSUInteger)c->r.width != w || (NSUInteger)c->r.height != h || (c->mask & mtl_pf_chmask(pf)) != mtl_pf_chmask(pf)
         || !(t.usage & MTLTextureUsageRenderTarget)) {
+        if (!depth && !stencil && (t.usage & MTLTextureUsageRenderTarget)) { clear_tex_tri(t, lv, l0, c); return; }
         RED_ONCE(44, "texture clear case not implemented: region %d,%d %dx%d (level size %lux%lu) mask %#x render-target capable %d (format %#x flags %#x)", c->r.xoffset, c->r.yoffset, c->r.width, c->r.height,
                  (unsigned long)w, (unsigned long)h, c->mask, !!(t.usage & MTLTextureUsageRenderTarget), c->tex->d.format, c->tex->d.flags);
         return;
@@ -7940,7 +8004,7 @@ static int clr_scissor(MTLScissorRect *sc) {   // the clear's scissor in the ope
     if (x1 <= x0 || y1 <= y0) return 0;
     *sc = (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)}; return 1;
 }
-static void clr_tri(id<MTL4RenderCommandEncoder> en, id<MTLRenderPipelineState> ps, id<MTLDepthStencilState> ds, MTLScissorRect sc, const uint32_t val[4], float z, uint32_t sref) {
+static void clr_tri(id<MTL4RenderCommandEncoder> en, id<MTLRenderPipelineState> ps, id<MTLDepthStencilState> ds, MTLScissorRect sc, const uint32_t val[4], float z, uint32_t sref, NSUInteger tw, NSUInteger th) {
     static id<MTL4ArgumentTable> vt, ft;
     if (!ft) { NSError *e = nil; MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 1;
         vt = rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]); ft = vt ? rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]) : nil;
@@ -7950,10 +8014,38 @@ static void clr_tri(id<MTL4RenderCommandEncoder> en, id<MTLRenderPipelineState> 
     [en setArgumentTable:vt atStages:MTLRenderStageVertex]; [en setArgumentTable:ft atStages:MTLRenderStageFragment];
     enc_r_pso(en, ps); g_enc_pso = nil; enc_r_dss(en, ds); g_enc_dss = nil;   // the next draw sets its own again
     if (g_enc_vis) { enc_r_visibility(en, MTLVisibilityResultModeDisabled, 0); g_enc_vis = 0; }   // not counted by an occlusion query; the next counted draw turns counting back on
-    enc_r_viewport(en, (MTLViewport){0, 0, (double)g_pass.tw, (double)g_pass.th, 0, 1}); enc_r_scissor(en, sc);
+    enc_r_viewport(en, (MTLViewport){0, 0, (double)tw, (double)th, 0, 1}); enc_r_scissor(en, sc);
     enc_r_cull(en, MTLCullModeNone); enc_r_fill(en, MTLTriangleFillModeFill); enc_r_depth_bias(en, 0, 0, 0); enc_r_depth_clip(en, YES); enc_r_stencil_ref(en, sref, sref); g_ed.ok = 0;
     enc_r_draw(en, MTLPrimitiveTypeTriangle, 0, 3);
     [en setArgumentTable:g_vt atStages:MTLRenderStageVertex]; [en setArgumentTable:g_ft atStages:MTLRenderStageFragment];
+}
+static void clear_tex_tri(id<MTLTexture> t, unsigned lv, unsigned l0, const p_clear_tex *c) {
+    int mask = c->mask & mtl_pf_chmask(t.pixelFormat); if (!mask) return;
+    NSUInteger w = MAX(t.width >> lv, 1u), h = MAX(t.height >> lv, 1u);
+    long x0 = MAX(c->r.xoffset, 0), y0 = MAX(c->r.yoffset, 0);
+    long x1 = MIN((long)c->r.xoffset + c->r.width, (long)w), y1 = MIN((long)c->r.yoffset + c->r.height, (long)h);
+    if (x1 <= x0 || y1 <= y0) return;
+    int kind = pf_int_kind(t.pixelFormat);
+    clr_key k = {0}; k.kind = kind; k.mask = mask; k.cfmt[0] = t.pixelFormat; k.samples = t.sampleCount;
+    id<MTLRenderPipelineState> ps = clr_pso(&k); id<MTLDepthStencilState> ds = clr_dss(0, 0); if (!ps || !ds) return;
+    uint32_t v[4];
+    for (int i = 0; i < 4; i++) {
+        if (c->is_uint && kind) { v[i] = c->c.u[i]; continue; }
+        float f = c->is_uint ? (float)c->c.u[i] : c->c.f[i]; int32_t si;
+        if (kind == 1) v[i] = f > 0 ? (f < 4294967040.f ? (uint32_t)f : 0xffffffffu) : 0;
+        else if (kind == 2) { si = !(f == f) ? 0 : f >= 2147483520.f ? INT32_MAX : f <= -2147483648.f ? INT32_MIN : (int32_t)f; memcpy(&v[i], &si, 4); }
+        else memcpy(&v[i], &f, 4);
+    }
+    rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
+    for (int z = 0, nz = c->r.depth ? c->r.depth : 1; z < nz; z++) {
+        MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
+        rp.colorAttachments[0].texture = t; rp.colorAttachments[0].level = lv;
+        if (t.textureType == MTLTextureType3D) rp.colorAttachments[0].depthPlane = c->r.zoffset + z;
+        else rp.colorAttachments[0].slice = l0 + c->r.zoffset + z;
+        rp.colorAttachments[0].loadAction = MTLLoadActionLoad; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+        ser_gate(); id<MTL4RenderCommandEncoder> en = enc_r_begin(rp);
+        clr_tri(en, ps, ds, (MTLScissorRect){x0,y0,x1-x0,y1-y0}, v, 0, 0, w, h); enc_r_end(en);
+    }
 }
 static void clr_note(int slot, int depth, int stencil) {   // as udc_note_draw for a draw: the attachment was written (zero-source skip, unwritten-attachment store)
     if (slot >= 0 && R.rt.color[slot]) { zskip_del(R.rt.color[slot]->serial); g_zskip_cand_ok[slot] = 0; }
@@ -7982,7 +8074,7 @@ static void clear_color_tri(const p_clear_color *c) {
         if (kind == 1) v[i] = f > 0 ? (f < 4294967040.f ? (uint32_t)f : 0xffffffffu) : 0;
         else if (kind == 2) { si = !(f == f) ? 0 : f >= 2147483520.f ? INT32_MAX : f <= -2147483648.f ? INT32_MIN : (int32_t)f; memcpy(&v[i], &si, 4); }
         else memcpy(&v[i], &f, 4); }
-    clr_tri(en, ps, ds, sc, v, 0, 0); clr_note(at, 0, 0);
+    clr_tri(en, ps, ds, sc, v, 0, 0, g_pass.tw, g_pass.th); clr_note(at, 0, 0);
     if (!g_clr_tri[0]++) MLOG("mid-pass / partial-mask / partial-scissor color clear: drawn as a full-pass triangle (first case pass %llu slot %d mask %#x scissor %lu,%lu %lux%lu)", g_stat_pass, at, mask,
                               (unsigned long)sc.x, (unsigned long)sc.y, (unsigned long)sc.width, (unsigned long)sc.height);
     PD("c %llu color clear drawn as a triangle slot%d ser=%llu mask=%#x scissor=%lu,%lu,%lu,%lu color=%g,%g,%g,%g", g_stat_pass, at, (unsigned long long)R.rt.color[at]->serial, mask,
@@ -8001,7 +8093,7 @@ static void clear_ds_tri(const p_clear_ds *c) {
     id<MTLRenderPipelineState> ps = clr_pso(&k); id<MTLDepthStencilState> ds = clr_dss(dw, sm); if (!ps || !ds) return;
     float z = c->depth > 0 ? (c->depth < 1 ? c->depth : 1) : 0;   // as clearDepth: within [0, 1] (NaN → 0)
     const uint32_t v[4] = {0};
-    clr_tri(en, ps, ds, sc, v, z, (uint32_t)c->stencil & 0xff); clr_note(-1, dw, sm != 0);
+    clr_tri(en, ps, ds, sc, v, z, (uint32_t)c->stencil & 0xff, g_pass.tw, g_pass.th); clr_note(-1, dw, sm != 0);
     if (!g_clr_tri[1]++) MLOG("mid-pass scissored depth-stencil clear: drawn as a full-pass triangle (first case pass %llu depth %d stencil mask %#x scissor %lu,%lu %lux%lu)", g_stat_pass, dw, sm,
                               (unsigned long)sc.x, (unsigned long)sc.y, (unsigned long)sc.width, (unsigned long)sc.height);
     PD("c %llu depth-stencil clear drawn as a triangle ser=%llu depth=%g(%d) stencil=%d mask=%#x scissor=%lu,%lu,%lu,%lu", g_stat_pass, R.rt.depth ? (unsigned long long)R.rt.depth->serial : 0ull, z, dw, c->stencil, sm,
