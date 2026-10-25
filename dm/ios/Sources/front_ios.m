@@ -85,10 +85,12 @@ static void launcher_done(void) { [g_root startGame]; }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGRect b = self.view.bounds; if (!self.game) return;
-    CGFloat w = b.size.width, h = b.size.height;   // Fit 16:9 into the whole screen; DM_FULLSCREEN=1 (an env file) fills the screen instead: the compositor stretches the picture, or the game renders wider — the game decides
-    const char *fs = getenv("DM_FULLSCREEN");
-    if (!(fs && atoi(fs))) { if (w / h > 16.0 / 9.0) w = h * 16.0 / 9.0; else h = w * 9.0 / 16.0; }
-    self.game.frame = CGRectMake(floor((b.size.width - w) / 2), floor((b.size.height - h) / 2), w, h);
+    // The game view always takes the whole screen. The compositor (nvn_mtl's present) fits the game's
+    // actual picture inside it keeping the picture's own aspect ratio, or fills the screen under
+    // DM_FULLSCREEN. Fitting the view itself to a fixed 16:9 here shrank the picture twice for games
+    // that render wider than 16:9: once by the narrower view, then again by the compositor fitting
+    // their wider picture into that view (black bars on all four sides, height included).
+    self.game.frame = b;
     if (self.fps) {   // the top row's free stretch: right of DmGamepad.m's L3 key (102 + 17 of its units from the safe edge), level with − / + (22 units down); u is its unit
         CGRect s = UIEdgeInsetsInsetRect(b, self.view.safeAreaInsets); CGFloat u = MIN(b.size.height / 430.0, 1.3);
         self.fps.frame = CGRectMake(floor(CGRectGetMinX(s) + 130 * u), floor(CGRectGetMinY(s) + 22 * u - 11), 64, 22);
