@@ -878,7 +878,8 @@ for off, oid, ow, why in obs:
 # nvn_fstep.h): the step is the number of vsyncs the host keeps the frame on screen (1 = 60 fps, 2 = 30 when 60 does not hold), plus one while the game is behind real time after
 # a late frame, so motion is even and game time = real time. The steps stay values the games' own logic uses (1 to 3). Age of Calamity's updates are not held by the presents:
 # its stubs run them at the cap, and the host only paces its presents (its patches.py).
-# State page = the page after the key page (zero in the file, read-write in both loaders): +0 float target fps written by the loader (fps_target, DM_FPS_TARGET; 0 = every stub
+# State page = the page after the key page (zero in the file, read-write in both loaders; a FAR main's page is not in the file at all: it is appended to the
+# image, IMAGE_SIZE growing by it, and the loaders supply it like the key page — see the FRAME_STEP branch below): +0 float target fps written by the loader (fps_target, DM_FPS_TARGET; 0 = every stub
 # runs the original instructions), +4 TOTK movie flag, +8 double lead (TOTK), +0x10 float render scale (TOTK, BotW), +0x18 double game seconds (TOTK),
 # +0x20 u32 step in vsyncs (host; 0 = not decided yet), +0x24 u32 a step the game fixes itself (BotW's VFR override; 0 = none), +0x28 u32 AoC's vsyncs per update, marked by
 # its first stub (0 = off), +0x30 u64 vsyncs stepped (the stubs; logged by the host to check the game's speed), +0x38 u64 render size
@@ -890,7 +891,17 @@ FS_STATE_OFF = 0
 RENDER_SCALE = 0   # 1 = the build has a render-scale stub (state +0x10): the fixups table says so (RENDER_SCALE), and the iOS launcher offers the setting (dm/games/settings.tsv)
 if BUILD_ID in FRAME_STEP and NAME == 'main':
     FS_STATE_OFF = KEY_PAGE_OFF + 0x4000
-    assert not FAR and FS_STATE_OFF % 0x1000 == 0 and FS_STATE_OFF + 0x40 <= PATCH_OFF and not any(IMG[FS_STATE_OFF:]), 'frame step state page'
+    if FAR:
+        # Patch area before the base: the page cannot be appended to the output file (the file ends at FILE_IMAGE_LEN and both loaders
+        # supply everything past it), so it is one more zero page at the end of the image instead: IMAGE_SIZE grows by it here, and the
+        # loaders reserve IMAGE_SIZE and leave the page read-write, exactly as they already do for the key page beside it (loader.c
+        # install_fps_state accepts it: the page starts where the key page ends and its first 0x40 bytes lie inside the image).
+        # The emitted file, FILE_IMAGE_LEN and the patch area do not change, and neither does any module this branch does not take:
+        # a FAR main without a FRAME_STEP entry keeps its IMAGE_SIZE, and the NEAR branch below is the assertion as it was
+        IMAGE_SIZE = FS_STATE_OFF + 0x4000
+        assert FS_STATE_OFF % 0x4000 == 0 and FS_STATE_OFF + 0x40 <= IMAGE_SIZE, 'frame step state page'
+    else:
+        assert FS_STATE_OFF % 0x1000 == 0 and FS_STATE_OFF + 0x40 <= PATCH_OFF and not any(IMG[FS_STATE_OFF:]), 'frame step state page'
     def fs_site(off, orig):
         ob = bytes.fromhex(orig)
         assert IMG[off:off + len(ob)] == ob, f'frame step original bytes mismatch {off:#x}: {bytes(IMG[off:off + len(ob)]).hex()}'
