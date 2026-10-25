@@ -189,6 +189,7 @@ static __weak DmGamepad *g_view;
     UIView *_hGlass[HADES_N];          // one clear disc per Hades key
     CAShapeLayer *_hWash[HADES_N];                 // a white wash over a disc, lit while its key is pressed
     CATextLayer *_hLabel[HADES_N];                 // the Hades keys' labels (the D-pad keys carry a triangle layer instead)
+    CAShapeLayer *_hSym[HADES_N];                  // drawn bars for the - / + keys, centred exactly (text glyphs ride high)
     CAShapeLayer *_hTri[4];                        // the D-pad triangles, in k_hades dir order
     UIView *_hStick, *_hKnob;          // the floating stick's clear disc and its knob
     CGPoint _lCentre;                              // the floating left stick's centre: where its touch landed
@@ -254,7 +255,8 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             for (int i = 0; i < HADES_N; i++) {
                 _hWash[i] = shape(ov); _hWash[i].fillColor = UIColor.whiteColor.CGColor; _hWash[i].opacity = 0;
                 _hWash[i].strokeColor = nil; _hWash[i].shadowOpacity = 0;
-                if (k_hades[i].label) _hLabel[i] = label(ov, [NSString stringWithUTF8String:k_hades[i].label]);
+                if (k_hades[i].bit == B_MINUS || k_hades[i].bit == B_PLUS) { _hSym[i] = shape(ov); _hSym[i].fillColor = k_text.CGColor; _hSym[i].strokeColor = nil; _hSym[i].shadowOpacity = 0; }
+                else if (k_hades[i].label) _hLabel[i] = label(ov, [NSString stringWithUTF8String:k_hades[i].label]);
                 else { _hTri[k_hades[i].dir] = shape(ov); _hTri[k_hades[i].dir].fillColor = k_text.CGColor; _hTri[k_hades[i].dir].strokeColor = nil; _hTri[k_hades[i].dir].shadowOpacity = 0; }
             }
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
@@ -486,15 +488,24 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 static CGPathRef circlePath(CGPoint c, CGFloat r) { return CGPathCreateWithEllipseInRect(CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r), NULL); }
 static CGPathRef triPath(CGPoint c, CGFloat s, int dir) {   // a D-pad triangle: dir 0 left, 1 up, 2 down, 3 right
     CGPoint v[3];
+    const CGFloat k = 1.1547;   // 2/sqrt(3): base = the two equal sides (an equilateral triangle)
     switch (dir) {
-        case 0:  v[0] = CGPointMake(c.x - s, c.y); v[1] = CGPointMake(c.x + s, c.y - s * 0.8); v[2] = CGPointMake(c.x + s, c.y + s * 0.8); break;
-        case 1:  v[0] = CGPointMake(c.x, c.y - s); v[1] = CGPointMake(c.x - s * 0.8, c.y + s); v[2] = CGPointMake(c.x + s * 0.8, c.y + s); break;
-        case 2:  v[0] = CGPointMake(c.x, c.y + s); v[1] = CGPointMake(c.x - s * 0.8, c.y - s); v[2] = CGPointMake(c.x + s * 0.8, c.y - s); break;
-        default: v[0] = CGPointMake(c.x + s, c.y); v[1] = CGPointMake(c.x - s, c.y - s * 0.8); v[2] = CGPointMake(c.x - s, c.y + s * 0.8); break;
+        case 0:  v[0] = CGPointMake(c.x - s, c.y); v[1] = CGPointMake(c.x + s, c.y - s * k); v[2] = CGPointMake(c.x + s, c.y + s * k); break;
+        case 1:  v[0] = CGPointMake(c.x, c.y - s); v[1] = CGPointMake(c.x - s * k, c.y + s); v[2] = CGPointMake(c.x + s * k, c.y + s); break;
+        case 2:  v[0] = CGPointMake(c.x, c.y + s); v[1] = CGPointMake(c.x - s * k, c.y - s); v[2] = CGPointMake(c.x + s * k, c.y - s); break;
+        default: v[0] = CGPointMake(c.x + s, c.y); v[1] = CGPointMake(c.x - s, c.y - s * k); v[2] = CGPointMake(c.x - s, c.y + s * k); break;
     }
     CGMutablePathRef p = CGPathCreateMutable();
-    CGPathMoveToPoint(p, NULL, v[0].x, v[0].y); CGPathAddLineToPoint(p, NULL, v[1].x, v[1].y); CGPathAddLineToPoint(p, NULL, v[2].x, v[2].y);
+    CGPathMoveToPoint(p, NULL, (v[2].x + v[0].x) / 2, (v[2].y + v[0].y) / 2);
+    for (int i = 0; i < 3; i++) CGPathAddArcToPoint(p, NULL, v[i].x, v[i].y, v[(i + 1) % 3].x, v[(i + 1) % 3].y, s * 0.15);   // corners slightly rounded
     CGPathCloseSubpath(p); return p;
+}
+static CGPathRef symPath(CGPoint c, CGFloat r, BOOL plus) {   // the - / + keys as bars centred on c: a text glyph's ink is not centred in its line box and rides high
+    CGFloat hl = r * 0.45, ht = r * 0.06;
+    CGMutablePathRef p = CGPathCreateMutable();
+    CGPathAddRoundedRect(p, NULL, CGRectMake(c.x - hl, c.y - ht, 2 * hl, 2 * ht), ht, ht);
+    if (plus) CGPathAddRoundedRect(p, NULL, CGRectMake(c.x - ht, c.y - hl, 2 * ht, 2 * hl), ht, ht);
+    return p;
 }
 static CGPathRef dropPath(CGPoint c, CGFloat r, CGFloat tipAngle, CGFloat round) {   // teardrop: circle + two tangents meeting at the tip, tip slightly rounded
     CGFloat d = r * K_DROP_TIP, th = acos(r / d);
@@ -545,6 +556,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             _hGlass[i].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); _hGlass[i].layer.cornerRadius = r;
             setPath(_hWash[i], circlePath(c, r));
             if (_hLabel[i]) placeLabel(_hLabel[i], c, r * 0.92);
+            else if (_hSym[i]) setPath(_hSym[i], symPath(c, r, k_hades[i].bit == B_PLUS));
             else setPath(_hTri[k_hades[i].dir], triPath(c, r * 0.38, k_hades[i].dir)); }
         [CATransaction commit]; [self refresh]; return;
     }
@@ -596,7 +608,8 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             _hWash[i].opacity = on ? 0.28 : 0;
             _hGlass[i].transform = on ? CGAffineTransformMakeScale(0.93, 0.93) : CGAffineTransformIdentity;
             if (_hLabel[i]) _hLabel[i].foregroundColor = (on ? k_textOn : k_text).CGColor;
-            if (k_hades[i].kind == H_DPAD) _hTri[k_hades[i].dir].fillColor = (on ? k_textOn : k_text).CGColor; }
+            if (k_hades[i].kind == H_DPAD) _hTri[k_hades[i].dir].fillColor = (on ? k_textOn : k_text).CGColor;
+            if (_hSym[i]) _hSym[i].fillColor = (on ? k_textOn : k_text).CGColor; }
         CGPoint c = [self stickCentre:0]; CGFloat R = [self stickR:0];
         CGPoint so = [self knobOffset:0]; CGFloat ol = hypot(so.x, so.y), maxO = R * 0.56;
         if (ol > maxO) { so.x *= maxO / ol; so.y *= maxO / ol; }
