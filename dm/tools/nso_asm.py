@@ -10,6 +10,7 @@ def LDP_POST(t, t2, n, off): return 0xA8C00000 | (((off // 8) & 0x7F) << 15) | (
 def STUR(t, n, off): return 0xF8000000 | ((off & 0x1FF) << 12) | (n << 5) | t   # stur xt,[xn,#off] (off may be negative)
 def LDUR(t, n, off): return 0xF8400000 | ((off & 0x1FF) << 12) | (n << 5) | t   # ldur xt,[xn,#off]
 def LDRX(t, n, imm12=0): return 0xF9400000 | (imm12 << 10) | (n << 5) | t
+def LDRW(t, n, imm12=0): return 0xB9400000 | (imm12 << 10) | (n << 5) | t   # the 32-bit load, its imm12 counting words as LDRX's counts doublewords
 def STRX(t, n, imm12=0): return 0xF9000000 | (imm12 << 10) | (n << 5) | t
 def MRS_TPIDRRO(t): return 0xD53BD060 | t
 def ADRP(dd, pc, target):
