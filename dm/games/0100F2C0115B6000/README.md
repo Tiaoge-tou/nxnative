@@ -59,6 +59,7 @@ Game-specific findings. The general host changes they led to are listed under [F
 
 - Most RomFS files are zstd with dictionaries (`*.zs`); the dictionaries are `Pack/ZsDic.pack.zs`, which is also the profile's `romfs_marker`.
 - Shaders: `Shader/*.bfsha.zs` (BNSH; `material.bfsha` holds most) and the layout shaders in `Shader/ApplicationPackage.Nin_NX_NVN.release.sarc.zs`.
+- **Resolved in the host: duplicate pipeline keys from unused colour state.** MacNativeGames commit `f3e2f66`, reported in [PR #196](https://github.com/seedds/nxnative/pull/196), found 8,479 of 24,146 recorded render pipelines (35%) differed only in unused state. The general normalization and prewarm deduplication are ported; this is the source project's measurement, with no new gameplay or prewarm-count measurement on this game here.
 
 ## Mac routes
 
@@ -70,7 +71,10 @@ Game-specific findings. The general host changes they led to are listed under [F
 
 General host changes first needed here; each applies to every game:
 
+- **Resolved in the host: dirty-page writes missed during upload**, with both unprotect paths covered by regression tests; the glyph-cache symptom remains unconfirmed here: [Dirty-page writes missed during upload](../../../docs/reference/nvn-objects.md#dirty-page-writes-missed-during-upload).
+- **Pipeline keys omit absent-target blend and mask state**, and old prewarm rows are normalized and deduplicated: [Pipeline keys omit unused colour state](../../../docs/reference/shaders.md#pipeline-keys-omit-unused-colour-state).
 - **Bounded upload staging and retirement on upload completion:** [Upload staging grows within one rendering submission](../../../docs/reference/memory.md#upload-staging-grows-within-one-rendering-submission).
+- **Resolved: registry lock priority inversion** (`g_rmu`): [Registry lock priority inheritance](../../../docs/reference/frame-rate.md#registry-lock-priority-inheritance). Ported from MacNativeGames; checked here through the Metal registry view tests, without a new gameplay contention measurement.
 - **Conditional rendering** evaluated at replay (`OP_RENDER_COND`, profile key `render_cond`) and **CPU-written textures with no flush** (`tex_dirty_upload`, `ft_add`): [Conditional rendering evaluated at replay](../../../docs/reference/rendering.md#conditional-rendering-evaluated-at-replay), [CPU writes with no flush, caught by page protection](../../../docs/reference/nvn-objects.md#cpu-writes-with-no-flush-caught-by-page-protection-tex_dirty_upload).
 - **Mid-pass, partial-mask and partial-scissor clears** drawn as a triangle (`clear_color_tri` / `clear_ds_tri`), **8-bit indices widened on the GPU** when written in the same submission (`wide_run`), **`ReadTexels` from guest memory on any thread** with `nvn_ft_poll` marking textures written after first use, **attachment-less passes** (`bare_dims`): same section.
 - **Rewriter:** out-of-line atomic retry blocks (`retry_block` / `site_retry_window`, 8 sites) and jump tables relative to an `adr` (`jump_adr_offsets`, `main+0x393bb0`): [Out-of-line retry blocks of atomic updates](../../../docs/reference/rewriter.md#out-of-line-retry-blocks-of-atomic-updates), [Offset tables relative to an adr](../../../docs/reference/rewriter.md#offset-tables-relative-to-an-adr).

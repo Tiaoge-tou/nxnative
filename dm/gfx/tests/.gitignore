@@ -20,6 +20,8 @@ t_fuse_check
 t_fuse_check.dSYM/
 t_present_crop
 t_present_crop.dSYM/
+t_present_rescue
+t_present_rescue.dSYM/
 t_reorder_chain
 t_reorder_chain.dSYM/
 t_mip_extent
@@ -84,3 +86,5 @@ t_stencil_view
 t_stencil_view.dSYM/
 t_pso_archive
 t_pso_archive.dSYM/
+t_pso_warm
+t_pso_warm.dSYM/
