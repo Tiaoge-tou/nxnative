@@ -8197,8 +8197,8 @@ static id<MTLTexture> present_raw_src(id<MTLTexture> src) {
     if (!v) { RED_ONCE(69, "present: cannot create a non-sRGB view of the sRGB swapchain texture (format %lu); presenting the decoded values", (unsigned long)src.pixelFormat); return src; }
     return v;
 }
-static int present_fullscreen(void) {   // DM_FULLSCREEN (an env file; front_ios.m stretches the game view on the same switch): fill the whole target instead of keeping the game picture's aspect ratio
-    static int fs = -1; if (fs < 0) { const char *e = getenv("DM_FULLSCREEN"); fs = e && atoi(e) ? 1 : 0; } return fs;
+static int present_fullscreen(void) {   // fill the whole target instead of keeping the game picture's aspect ratio: the default (adaptive full-screen); only an env file's explicit DM_FULLSCREEN=0 asks for the native-aspect fit
+    static int fs = -1; if (fs < 0) { const char *e = getenv("DM_FULLSCREEN"); fs = !e || atoi(e) ? 1 : 0; } return fs;
 }
 static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4]) {
     NSUInteger cx = 0, cy = 0, cw = src.width, ch = src.height;
