@@ -111,6 +111,12 @@ void (*dm_res_report_cb(void))(uint32_t tick, const char *why);   // Get the reg
 void dm_guest_write_prepare(void *addr, size_t len);
 // Graphics lifecycle (hle_nvn.c): on=1 suspends (afterwards submit / present block, and in-flight GPU work is drained before returning), on=0 resumes; called by the iOS front end when entering and leaving the background
 void dm_gfx_suspend(int on);
+// Display rate (hle_nvn.c): the rate the iOS front end measured on the screen (its display link, front_ios.m) for a game whose
+// profile offers a rate above 60 (game.tsv display_hz); the present tick, the present display link and the vi vsync event follow
+// it while it is 120. dm_display_hz is 0 while the mode is not driven (the pacing is then the game's own, as before); the front
+// end hands 60 back to release it, when the screen cannot hold 120 Hz (a 60 Hz panel, Low Power Mode, heat)
+int dm_display_hz(void);
+void dm_display_set_hz(int hz);
 void dm_gfx_enter(void); void dm_gfx_leave(void);   // hle_nvn.c: the gate dm_gfx_suspend closes, for graphics layers other than NVN (dm/gfx/vk)
 void dm_gfx_shot_at(long k, const char *path);
 void dm_shot_written(const char *path, int ok);   // The graphics side finished writing a screenshot to disk (diag.c: DM_TICK_HOLD=E:SHOT unfreezes on this)
