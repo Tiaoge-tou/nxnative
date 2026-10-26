@@ -37,6 +37,17 @@
 # 1280x720 from the first apply on, which the present then stretched over the screen. The two
 # sites join the handheld lists below, so the current pair comes from the handheld cell like the
 # getter's entry default does.
+# Build #53's handheld test showed the ctor pair is not the last writer: a one-time display init
+# (guest 0x12651a0, run from the display module's init before frame 1) queries the platform's
+# reported native size, registers it as mode[0] and copies mode[0]'s pair into the same +0xb4/+0xb8
+# -- `ldr w10, [x9, #0x10]` at guest 0x12653a4 feeding the store to +0xb4, `ldr w9, [x9, #0x14]` at
+# 0x12653ac feeding +0xb8. A census of the singleton's writers finds exactly these two (the ctor,
+# then this copy); SetResolution's icall writes only the request record at +0x08, never the
+# current pair. In handheld nothing after the copy rewrites the pair, so the frame-1 crop used
+# the platform-reported 1280x720. The copy runs in docked too, where the game's later
+# SetResolution flow re-applies the docked size over it, as it did over the ctor's pair. The two
+# loads join the handheld lists below, so the copy lands the host's handheld size in the current
+# pair; the mode record itself keeps the reported size.
 from nso_asm import ADRP, B, LDRW
 
 CUTS = {
@@ -90,6 +101,7 @@ _WIDTH_SITES = [
 _WIDTH_SITES_HD = [
   (0x124e238, 23, '17a08052', 'size getter, handheld width (the entry default every handheld return flows through)'),
   (0xb21fb4, 8, '08a08052', 'display-state ctor, current width (the pair the apply step crops by)'),
+  (0x12653a4, 10, '2a1140b9', 'display init: current width copied from mode[0] (platform-reported native size)'),
 ]
 # The height paired with each width above: the same sites materialise it as `mov wN, #1080` (docked) and the getter's entry
 # default as `mov w22, #720` (handheld), each beside its width site. The stubs read the packed size's high word (+0x3c docked,
@@ -110,6 +122,7 @@ _HEIGHT_SITES = [
 _HEIGHT_SITES_HD = [
   (0x124e23c, 22, '165a8052', 'size getter, handheld height (the entry default beside the handheld width)'),
   (0xb21fd0, 8, '085a8052', 'display-state ctor, current height (the pair the apply step crops by)'),
+  (0x12653ac, 9, '291540b9', 'display init: current height copied from mode[0] (platform-reported native size)'),
 ]
 def render_width(ctx):
     here, emit, site, put, state = ctx.here, ctx.emit, ctx.site, ctx.put, ctx.state
