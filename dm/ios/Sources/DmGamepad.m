@@ -116,6 +116,13 @@ static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_sk
     {"pause",    B_PLUS,  SK_ALWAYS, 0.893, 0.080, 0.023},
 };
 #define SKIN_N (int)(sizeof k_skin / sizeof k_skin[0])
+#define SKIN_REF_HW 0.4615   // the screen the skin layout was measured on (19.5:9): its height as a fraction of its width
+static CGPoint skinCenter(int i, CGRect b) {   // the centre of skin key i, in points (the layout and the touch hit test share it)
+    CGFloat y = k_skin[i].y;
+    if (y > 0.2)   // an action key: the rows stack up from the bottom row (y 0.822) in width fractions, so the cluster keeps its phone shape on any screen; the top row stays a height fraction (it hugs the top edge)
+        y = 0.822 + (y - 0.822) * SKIN_REF_HW * b.size.width / b.size.height;
+    return CGPointMake(k_skin[i].x * b.size.width, y * b.size.height);
+}
 static UIImage *skinImage(const char *name) {   // a padskin image, loaded once and cached (nil when the file is absent)
     static NSMutableDictionary *cache;
     if (!cache) cache = [[NSMutableDictionary alloc] init];
@@ -383,7 +390,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (int)skinBtnAt:(CGPoint)p {   // skin mode: the image key under the point, or -1 (hidden skill keys take no touch)
     CGRect b = self.bounds;
     for (int i = 0; i < SKIN_N; i++) { if (_skillOff && k_skin[i].grp == SK_SKILL) continue;
-        CGPoint c = CGPointMake(k_skin[i].x * b.size.width, k_skin[i].y * b.size.height);
+        CGPoint c = skinCenter(i, b);
         if (dist(p, c) <= k_skin[i].r * b.size.width * 1.35) return i; }
     return -1;
 }
@@ -609,8 +616,8 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         CGRect b = self.bounds; CGFloat d = 0.148 * b.size.width; CGPoint hc = self.stickHome;
         _skinDisc.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d);
         CGFloat kd = d * 0.67; _skinKnob.bounds = CGRectMake(0, 0, kd, kd); _skinKnob.position = hc;
-        for (int i = 0; i < SKIN_N; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width;
-            _skinBtn[i].frame = CGRectMake(k_skin[i].x * b.size.width - dd / 2, k_skin[i].y * b.size.height - dd / 2, dd, dd); }
+        for (int i = 0; i < SKIN_N; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width; CGPoint c = skinCenter(i, b);
+            _skinBtn[i].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
         [CATransaction commit]; [self refresh]; return;
     }
     if (_hades) {   // the glass discs at fractions of the whole screen (k_hades); the stick disc is placed by refresh (it floats)
