@@ -1482,6 +1482,12 @@ static int mtl_wait_at(uint64_t fence, uint64_t timeout_ns, int site) {
         int ok = g_done >= fence;
         if (ws_on()) { ws_put(site, w0, 1); ws_wake(fence); }
         if (ok || timeout_ns < 1000000ull) return ok;
+        // The event and feedback waits share a finite budget; a timeout must not buy another full wait.
+        if (timeout_ns != UINT64_MAX) {
+            uint64_t used = ws_t0() - w0;
+            if (used >= timeout_ns) return 0;
+            timeout_ns -= used;
+        }
     }
     struct timespec dl; clock_gettime(CLOCK_REALTIME, &dl);
     uint64_t ns = (uint64_t)dl.tv_nsec + (timeout_ns > 3600000000000ull ? 3600000000000ull : timeout_ns);

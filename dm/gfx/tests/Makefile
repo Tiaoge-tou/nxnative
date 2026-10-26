@@ -79,6 +79,11 @@ t_perf_order: t_perf_order.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_perf_order.m $(MTL_T_SRC) $(FW)
 t_perf_order_tsan: t_perf_order.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -fsanitize=thread -o $@ t_perf_order.m $(MTL_T_SRC) $(FW)
+.PHONY: perf-order-cpu
+perf-order-cpu: t_perf_order
+	@for fast in 0 1; do for waits in 0 1; do \
+		DM_NVN_FAST_WAKE=$$fast DM_NVN_WAITS=$$waits ./t_perf_order --cpu || exit $$?; \
+	done; done
 .PHONY: perf-order-tsan
 perf-order-tsan: t_perf_order_tsan
 	./t_perf_order_tsan --cpu
