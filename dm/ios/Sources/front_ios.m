@@ -53,14 +53,18 @@ static void launcher_done(void) { [g_root startGame]; }
 
 // The render size the guest renders at: the docked height 1080 at the screen's own aspect, so one build fills an iPhone and an iPad
 // alike instead of a width baked when the IPA was made. The host writes it into the frame step state page when the game starts
-// (DM_RENDER_WIDTH, loader.c dm_fps_state_apply), where the stubs at the game's baked size constants read it
-static int front_ios_render_width(void) {
+// (DM_RENDER_WIDTH, loader.c dm_fps_state_apply), where the stubs at the game's baked size constants read it. The handheld
+// height 720 gets the same treatment beside it (DM_RENDER_WIDTH_HD, state +0x40 and the handheld host fill), for the builds
+// whose handheld sizes read them; the fallbacks are the widths the builds baked (2344 docked, 1280 handheld)
+static int front_ios_render_width_h(int height) {
     CGSize n = UIScreen.mainScreen.nativeBounds.size;   // physical pixels, in portrait
     CGFloat w = MAX(n.width, n.height), h = MIN(n.width, n.height);
-    if (h <= 0) return 2344;
-    int rw = (int)(1080.0 * w / h) & ~7;   // down to a multiple of 8, as every baked width was
-    return rw >= 320 ? rw : 2344;   // 2344: the width the wide builds baked (the iPhones' aspect at 1080), the fallback everywhere
+    int baked = height == 720 ? 1280 : 2344;
+    if (h <= 0) return baked;
+    int rw = (int)(height * w / h) & ~7;   // down to a multiple of 8, as every baked width was
+    return rw >= 320 ? rw : baked;
 }
+static int front_ios_render_width(void) { return front_ios_render_width_h(1080); }
 
 // Hades II's HUD lays out against the size its script computes in RunLogic.lua (UpdateConfigOptionCache), which reads the engine's
 // config options X/Y -- 1920x1080 whatever the renderer does, so without this the HUD keeps the 1920 canvas at any render width (the
@@ -124,6 +128,7 @@ static void front_ios_hud_script_fix(int width) {
     [self.view setNeedsLayout]; [self.view layoutIfNeeded];
     UIApplication.sharedApplication.idleTimerDisabled = YES;
     if (!getenv("DM_RENDER_WIDTH")) setenv("DM_RENDER_WIDTH", [NSString stringWithFormat:@"%d", front_ios_render_width()].UTF8String, 1);   // the render size follows this screen (an env file's value is a diagnostic override and is kept); before the host starts, whose game-start write reads it
+    if (!getenv("DM_RENDER_WIDTH_HD")) setenv("DM_RENDER_WIDTH_HD", [NSString stringWithFormat:@"%d", front_ios_render_width_h(720)].UTF8String, 1);   // the same at the handheld height, for the builds whose handheld sizes read it
     int rw = atoi(getenv("DM_RENDER_WIDTH")); if (rw < 320 || rw > 16384 || rw % 8) rw = 2344;   // the host's own validation (loader.c), so the script and the renderer cannot disagree
     front_ios_hud_script_fix(rw);   // Hades II's HUD script gets the same width (a no-op for other games: no such file)
     front_ios_boot();
