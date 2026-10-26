@@ -9126,6 +9126,9 @@ static id<MTLTexture> present_raw_src(id<MTLTexture> src) {
     if (!v) { RED_ONCE(69, "present: cannot create a non-sRGB view of the sRGB swapchain texture (format %lu); presenting the decoded values", (unsigned long)src.pixelFormat); return src; }
     return v;
 }
+static int present_fullscreen(void) {   // fill the whole target instead of keeping the game picture's aspect ratio: the default (adaptive full-screen); only an env file's explicit DM_FULLSCREEN=0 asks for the native-aspect fit
+    static int fs = -1; if (fs < 0) { const char *e = getenv("DM_FULLSCREEN"); fs = !e || atoi(e) ? 1 : 0; } return fs;
+}
 // The rectangle of the canvas (dw x dh) the picture (cw x ch) is drawn into: the picture's aspect ratio kept and centred, black bars in the rest (no stretching when the screen's ratio
 // differs from the game's, e.g. iPhone about 19.5:9 against the game's 16:9); when the ratios differ by under 1 % (the remainder from a game width that is a multiple of 8 in the
 // full-screen setup, e.g. 1952x900 against 2868x1320 differs by 0.17 %) the whole canvas, leaving no border of a few pixels
@@ -9133,6 +9136,7 @@ static MTLViewport present_viewport(double cw, double ch, double dw, double dh) 
     double s = fmin(dw / cw, dh / ch);
     MTLViewport vp = {floor((dw - cw * s) / 2), floor((dh - ch * s) / 2), round(cw * s), round(ch * s), 0, 1};
     if (fabs((dw / dh) / (cw / ch) - 1) < 0.01) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
+    if (present_fullscreen()) vp = (MTLViewport){0, 0, dw, dh, 0, 1};   // DM_FULLSCREEN fills the whole target instead (the picture stretches), as front_ios.m's view frame already promises on that switch
     return vp;
 }
 // The valid source rectangle of a present (x, y, width, height; the crop of nvnWindowSetCrop, zero = the whole texture); 0 when it lies outside the texture
