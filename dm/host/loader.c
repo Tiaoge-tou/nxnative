@@ -181,6 +181,7 @@ static void force_check(void) {
     LOG("force: %u entries hit, %u not referenced by this game", g_nforce - unused, unused);
 }
 
+static module_t *g_fill_mod;   // the module whose fixups declare host-filled display-mode size words (HOST_FILL_D / HOST_FILL_H), filled in dm_fps_state_apply
 // Read the rewriter table header (segment boundaries, slot numbers); any row beyond the header means an old-format build output (code modified at load time), which is rejected
 static void read_layout(module_t *m, const char *dir) {
     char path[1024]; snprintf(path, sizeof path, "%s/%s.fixups.tsv", dir, m->name);
@@ -199,6 +200,8 @@ static void read_layout(module_t *m, const char *dir) {
         else if (!strcmp(key, "RO_OFF")) m->ro_off = v;
         else if (!strcmp(key, "DATA_OFF")) m->data_off = v;
         else if (!strcmp(key, "FPS_STATE_OFF")) m->fps_state_off = v;
+        else if (!strcmp(key, "HOST_FILL_D")) { m->fill_d_off = v; g_fill_mod = m; }
+        else if (!strcmp(key, "HOST_FILL_H")) { m->fill_h_off = v; g_fill_mod = m; }
         else if (!strcmp(key, "BUILD_ID")) sscanf(line, "# %*s %32s", m->build_id);
         else for (int k = 0; k < KEY_N; k++) {
             size_t n = strlen(kn[k]);
@@ -220,7 +223,7 @@ static void read_layout(module_t *m, const char *dir) {
 uint8_t *dm_fps_state;
 static const char *g_fps_mod;   // the module holding the state page (for the log)
 static void install_fps_state(module_t *m) {
-    if (m->fps_state_off + 0x40 > m->size || m->fps_state_off < m->key_page_off + m->key_page_size) die("%s: frame step state page out of range", m->name);
+    if (m->fps_state_off + 0x48 > m->size || m->fps_state_off < m->key_page_off + m->key_page_size) die("%s: frame step state page out of range", m->name);
     dm_fps_state = m->base + m->fps_state_off; g_fps_mod = m->name;
 }
 // The settings in the state page, written when the game starts (main.c, after host loading): on iOS the loading runs at app launch, before the launcher has set DM_FPS_TARGET and
@@ -243,6 +246,24 @@ void dm_fps_state_apply(void) {
     if (rw && (w < 320 || w > 16384 || w % 8)) { LOG("[RED] DM_RENDER_WIDTH=%s: a multiple of 8 between 320 and 16384 expected; using 2344", rw); w = 0; }
     uint64_t rpair = (uint64_t)(uint32_t)(w ? w : 2344) | 1080ULL << 32; memcpy(dm_fps_state + 0x38, &rpair, sizeof rpair);
     if (rw) LOG("%s: render size %ldx1080 (DM_RENDER_WIDTH)", g_fps_mod, w ? w : 2344);
+    // Render size at the handheld height (state +0x40, a packed u64 width | 720 << 32): the same routing for a build whose
+    // handheld sizes read a state cell too (Silksong's size getter default). The front end sets DM_RENDER_WIDTH_HD beside
+    // DM_RENDER_WIDTH; without it the cell takes 1280, the handheld width every build baked until now
+    const char *rh = getenv("DM_RENDER_WIDTH_HD"); long hw = rh ? strtol(rh, NULL, 10) : 0;
+    if (rh && (hw < 320 || hw > 16384 || hw % 8)) { LOG("[RED] DM_RENDER_WIDTH_HD=%s: a multiple of 8 between 320 and 16384 expected; using 1280", rh); hw = 0; }
+    uint64_t hpair = (uint64_t)(uint32_t)(hw ? hw : 1280) | 720ULL << 32; memcpy(dm_fps_state + 0x40, &hpair, sizeof hpair);
+    if (rh) LOG("%s: render size %ldx720 (DM_RENDER_WIDTH_HD)", g_fps_mod, hw ? hw : 1280);
+    // Host-filled display-mode size words (fixups HOST_FILL_D / HOST_FILL_H, the module is the state page's own): a guest whose
+    // mode sizes live in a data template rather than in code (Silksong's screen-state ctor template: handheld width at +0,
+    // docked at +8) takes its reported display size -- and with it the present crop -- from that template, so a width baked
+    // there outlives every stub at the code sites and disagrees with the textures on any screen but the one it was baked for.
+    // The loader writes the screen's own widths over the baked ones here, before the guest starts and copies the template
+    if (g_fill_mod) {
+        module_t *m = g_fill_mod;
+        if (m->fill_d_off) { if (m->fill_d_off + 4 > m->size) die("%s: HOST_FILL_D out of range", m->name); uint32_t v32 = (uint32_t)(w ? w : 2344); memcpy(m->base + m->fill_d_off, &v32, sizeof v32); }
+        if (m->fill_h_off) { if (m->fill_h_off + 4 > m->size) die("%s: HOST_FILL_H out of range", m->name); uint32_t v32 = (uint32_t)(hw ? hw : 1280); memcpy(m->base + m->fill_h_off, &v32, sizeof v32); }
+        if (m->fill_d_off || m->fill_h_off) LOG("%s: display-mode sizes filled from the host (docked %ld, handheld %ld)", m->name, w ? w : 2344, hw ? hw : 1280);
+    }
     char cap[32]; snprintf(cap, sizeof cap, ", capped at %d fps", t);
     LOG("%s: frame step %s%s (%s)", g_fps_mod, !t ? "as the game sets it" : "in whole vsyncs decided by the host", t ? cap : "", e ? "DM_FPS_TARGET" : "game profile fps_target");
 }
