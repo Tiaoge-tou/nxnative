@@ -144,7 +144,7 @@ HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resol
     if (!con) { const char *rh = getenv("DM_RENDER_WIDTH_HD"); long hw = rh ? strtol(rh, NULL, 10) : 0;
         if (hw >= 320 && hw <= 16384 && !(hw % 8)) x = (int)hw; }
     if (w) *w = x; if (h) *h = y;
-    static int once; if (!once++) LOG("default display resolution: %dx%d", x, y);
+    static int ncalls; if (ncalls < 16) LOG("default display resolution: %dx%d (call %d)", x, y, ncalls); ncalls++;   // diagnostic: every early answer, not just the first
 }
 HLE_FORCE("_ZN2nn2oe38GetDefaultDisplayResolutionChangeEventEPNS_2os11SystemEventE", "default display resolution change event: bound, never signaled (the operation mode notification carries the change)",
           void, h_oe_DefResEv, void *ev) { hle_bind_system_event(ev, 0); }

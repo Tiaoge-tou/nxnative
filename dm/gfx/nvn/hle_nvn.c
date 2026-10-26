@@ -1251,7 +1251,7 @@ NVN(nvnWindowSetCrop, void, NVNwindow *w, int x, int y, int ww, int hh) {
         ww = (int)hw;
     }
     int v[4] = {x, y, ww, hh};
-    if (memcmp(o->crop, v, sizeof v)) LOG("[nvn] WindowCrop %d,%d %dx%d", x, y, ww, hh);
+    if (memcmp(o->crop, v, sizeof v)) LOG("[nvn] WindowCrop %d,%d %dx%d (guest caller %#llx)", x, y, ww, hh, (unsigned long long)__builtin_return_address(0));   // diagnostic: which guest call site set this crop
     memcpy(o->crop, v, sizeof v);
 }
 NVN(nvnWindowGetCrop, void, const NVNwindow *w, NVNrectangle *r) {   // Bayonetta 3 reads it back every few frames; before any SetCrop it is the whole first texture, as NVN starts it

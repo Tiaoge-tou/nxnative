@@ -8590,6 +8590,11 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
       { uint32_t sw; memcpy(&sw, S.vp_sw[0], 4);
         if (sw == 0x100) { v.originY += v.height; v.height = -v.height; }
         else if (sw) RED_ONCE(108, "viewport swizzle %d,%d,%d,%d not implemented (drawn unswizzled)", S.vp_sw[0][0], S.vp_sw[0][1] ^ 2, S.vp_sw[0][2] ^ 4, S.vp_sw[0][3] ^ 6); }
+      // Diagnostic (handheld picture extent): the first few distinct guest viewports, with the size of the target they draw into
+      { static float seen[8][4]; static NSUInteger seen_t[8][2]; static int nseen;
+        int found = 0; for (int i = 0; i < nseen; i++) if (seen[i][0] == S.vp[0][0] && seen[i][1] == S.vp[0][1] && seen[i][2] == S.vp[0][2] && seen[i][3] == S.vp[0][3] && seen_t[i][0] == tw && seen_t[i][1] == th) { found = 1; break; }
+        if (!found && nseen < 8) { int i = nseen++; seen[i][0] = S.vp[0][0]; seen[i][1] = S.vp[0][1]; seen[i][2] = S.vp[0][2]; seen[i][3] = S.vp[0][3]; seen_t[i][0] = tw; seen_t[i][1] = th;
+            MLOG("[diag] guest viewport %.0f,%.0f %.0fx%.0f on target %lux%lu (has_vp %d)", S.vp[0][0], S.vp[0][1], S.vp[0][2], S.vp[0][3], (unsigned long)tw, (unsigned long)th, S.has_vp); } }
       if (!(g_ed.ok & ED_VP) || memcmp(&g_ed.vp, &v, sizeof v)) { enc_r_viewport(en, v); g_ed.vp = v; g_ed.ok |= ED_VP; } }
     MTLScissorRect sc = {0, 0, tw, th};
     if (R.has_sc) {
@@ -10051,6 +10056,8 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
     double dw = dst.width, dh = dst.height;
     MTLViewport vp = present_viewport(r[2], r[3], dw, dh);
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
+    { static double last_vp[4]; if (memcmp(last_vp, &vp, sizeof last_vp)) { memcpy(last_vp, &vp, sizeof last_vp);   // diagnostic: the present's crop, drawable and viewport
+        MLOG("[diag] present crop %lu,%lu %lux%lu into target %.0fx%.0f, viewport %.0f,%.0f %.0fx%.0f (fullscreen %d)", r[0], r[1], r[2], r[3], dw, dh, vp.originX, vp.originY, vp.width, vp.height, present_fullscreen()); } }
     id<MTLTexture> tex = present_raw_src(src), up = fx ? fx_encode(fx, cb, tex, r, vp, dst.pixelFormat, fx == &g_fx_present) : nil;
     if (up) { tex = up; r[0] = r[1] = 0; r[2] = up.width; r[3] = up.height; }   // the scaled picture, the viewport's size: drawn 1:1
     MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
