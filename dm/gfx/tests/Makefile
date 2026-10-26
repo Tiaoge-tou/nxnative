@@ -59,6 +59,18 @@ t_timestamp: t_timestamp.c ../nvn/nvn_timestamp.h
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -o $@ $<
 t_fstep: t_fstep.c ../nvn/nvn_fstep.h
 	clang -O1 -Wall -o $@ t_fstep.c
+t_thermal: t_thermal.c $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_thermal.c $(MTL_T_SRC) ../nvn/nvn_mtl.m $(FW)
+t_thermal_tsan: t_thermal.c $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -fsanitize=thread -o $@ t_thermal.c $(MTL_T_SRC) ../nvn/nvn_mtl.m $(FW)
+.PHONY: check_t_thermal thermal-tsan
+check_t_thermal: t_thermal
+	./t_thermal
+	DM_THERMAL_CAP=0 ./t_thermal
+thermal-tsan: t_thermal_tsan
+	./t_thermal_tsan
+	DM_THERMAL_CAP=0 ./t_thermal_tsan
+run: check_t_thermal
 t_fuse_check: t_fuse_check.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_fuse_check.m $(MTL_T_SRC) $(FW)
 t_cube_placeholder: t_cube_placeholder.m $(MTL_T_DEP)

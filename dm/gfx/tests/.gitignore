@@ -12,6 +12,10 @@ t_pace
 t_timestamp
 t_timestamp.dSYM/
 t_fstep
+t_thermal
+t_thermal.dSYM/
+t_thermal_tsan
+t_thermal_tsan.dSYM/
 .precommit.err
 .precommit_snap/
 t_refl
