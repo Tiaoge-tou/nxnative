@@ -241,11 +241,15 @@ void dm_fps_state_apply(void) {
     // Render size (state +0x38, a packed u64 width | height << 32): the size the build's stub at its baked size constant renders at
     // (Hades II's render pair), in place of a width baked when the IPA was made, so one build fits every screen.
     // The front end measures the screen and sets DM_RENDER_WIDTH (front_ios.m); the height is the docked 1080 those sizes are designed
-    // around. Without the variable the cell takes 2344, the width the wide builds baked until now, so behaviour is unchanged
+    // around. Without the variable the cell takes 2344, the width the wide builds baked until now, so behaviour is unchanged.
+    // DM_RENDER_HEIGHT overrides the height word on its own (the launcher's lowered-resolution frame-rate tier, front_ios.m sets
+    // it beside the lowered width): the build's height stubs read the packed high word, as its width stubs read the low one
+    const char *rht = getenv("DM_RENDER_HEIGHT"); long ht = rht ? strtol(rht, NULL, 10) : 0;
+    if (rht && (ht < 240 || ht > 2160 || ht % 2)) { LOG("[RED] DM_RENDER_HEIGHT=%s: an even value between 240 and 2160 expected; using 1080", rht); ht = 0; }
     const char *rw = getenv("DM_RENDER_WIDTH"); long w = rw ? strtol(rw, NULL, 10) : 0;
     if (rw && (w < 320 || w > 16384 || w % 8)) { LOG("[RED] DM_RENDER_WIDTH=%s: a multiple of 8 between 320 and 16384 expected; using 2344", rw); w = 0; }
-    uint64_t rpair = (uint64_t)(uint32_t)(w ? w : 2344) | 1080ULL << 32; memcpy(dm_fps_state + 0x38, &rpair, sizeof rpair);
-    if (rw) LOG("%s: render size %ldx1080 (DM_RENDER_WIDTH)", g_fps_mod, w ? w : 2344);
+    uint64_t rpair = (uint64_t)(uint32_t)(w ? w : 2344) | (uint64_t)(uint32_t)(ht ? ht : 1080) << 32; memcpy(dm_fps_state + 0x38, &rpair, sizeof rpair);
+    if (rw || rht) LOG("%s: render size %ldx%ld (DM_RENDER_WIDTH / DM_RENDER_HEIGHT)", g_fps_mod, w ? w : 2344, ht ? ht : 1080);
     // Render size at the handheld height (state +0x40, a packed u64 width | 720 << 32): the same routing for a build whose
     // handheld sizes read a state cell too (Silksong's size getter default). The front end sets DM_RENDER_WIDTH_HD beside
     // DM_RENDER_WIDTH; without it the cell takes 1280, the handheld width every build baked until now
@@ -257,10 +261,14 @@ void dm_fps_state_apply(void) {
     // mode sizes live in a data template rather than in code (Silksong's screen-state ctor template: handheld width at +0,
     // docked at +8) takes its reported display size -- and with it the present crop -- from that template, so a width baked
     // there outlives every stub at the code sites and disagrees with the textures on any screen but the one it was baked for.
-    // The loader writes the screen's own widths over the baked ones here, before the guest starts and copies the template
+    // The loader writes the screen's own widths over the baked ones here, before the guest starts and copies the template.
+    // With a height override (DM_RENDER_HEIGHT) the template's docked height word follows too (the word after the docked
+    // width): the guest reads its display height from the same template, and a lowered width with the stock height would
+    // report a size nothing renders at. The handheld height stays 720, as the handheld pair does
     if (g_fill_mod) {
         module_t *m = g_fill_mod;
         if (m->fill_d_off) { if (m->fill_d_off + 4 > m->size) die("%s: HOST_FILL_D out of range", m->name); uint32_t v32 = (uint32_t)(w ? w : 2344); memcpy(m->base + m->fill_d_off, &v32, sizeof v32); }
+        if (m->fill_d_off && ht) { if (m->fill_d_off + 8 > m->size) die("%s: HOST_FILL_D height out of range", m->name); uint32_t v32 = (uint32_t)ht; memcpy(m->base + m->fill_d_off + 4, &v32, sizeof v32); }
         if (m->fill_h_off) { if (m->fill_h_off + 4 > m->size) die("%s: HOST_FILL_H out of range", m->name); uint32_t v32 = (uint32_t)(hw ? hw : 1280); memcpy(m->base + m->fill_h_off, &v32, sizeof v32); }
         if (m->fill_d_off || m->fill_h_off) LOG("%s: display-mode sizes filled from the host (docked %ld, handheld %ld)", m->name, w ? w : 2344, hw ? hw : 1280);
     }
