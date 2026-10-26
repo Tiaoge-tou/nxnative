@@ -1,5 +1,14 @@
 // Host front end (Mac: front_mac.m; iOS: dm/ios separately implements the same-named interface).
 #pragma once
+#include <stdlib.h>
+// Metal reads HUD switches when the first device is made. Called before host preload and again after the launcher applies its settings; explicit environment values win.
+static inline void front_hud_env(void) {
+    const char *e = getenv("DM_METAL_HUD");
+    if (!e || !atoi(e)) return;
+    setenv("MTL_HUD_ENABLED", "1", 0);
+    // Spatial scaling has no temporal exposure: showing that HUD metric makes the MetalFX rows flicker.
+    setenv("MTL_HUD_HIDE_METALFX_METRICS", "1", 0);
+}
 // Run the guest: with a window the guest runs on its own thread and the main thread belongs to the system UI; without a window it runs directly on the current thread.
 void front_run(void (*guest)(void));
 // The CAMetalLayer the graphics backend presents frames to (NULL when there is no window)

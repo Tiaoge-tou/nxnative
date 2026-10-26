@@ -77,6 +77,21 @@ Used at `DM_FPS_TARGET=0` and for the interval the framework keeps while the VFR
 - It finalizes its transient render targets before every submit and builds them again the next frame, which the storage-takeover rule guards with a 16-submission window (`alias_take_over`).
 - Windowed on the Mac with `present_now`'s residency commit: its title, 60 fps, no GPU error.
 
+### Upscaling (current)
+
+Handheld, the game draws 1280x720 into its 1920x1080 window textures and crops the window to it. Docked it scales its 900p scene to 1080p with one draw and draws the HUD on the 1080p target. The optional [MetalFX present](../../../docs/reference/rendering.md#the-present-upscales-through-metalfx) scales that presented picture in either mode; it cannot recover detail lost in the game's own upscale.
+
+Measurements reported in [PR #215](https://github.com/seedds/nxnative/pull/215), the present command buffer's GPU time:
+
+| Device and content → output | MetalFX | Standard |
+|---|---|---|
+| M2 Max, handheld 1280x720 → 2560x1440, full screen | 0.74–1.32 ms | 0.07–0.11 ms |
+| M2 Max, docked 1920x1080 → 2560x1440, full screen | 1.35 ms | 0.11 ms |
+| M2 Max, 1280x720 → 2868x1320, offscreen | 0.40–1.17 ms | 0.04–0.07 ms |
+| iPhone 17 Pro Max, docked 1920x1080 → 2346x1320 | p50 2.1–5.0 ms per 600 presents; p95 up to 6.1 ms | Not measured on that build |
+
+On the Mac, frame times stayed at 60 fps; crop comparisons showed sharper edges on Link, his shield and the map text, with unchanged colours. The iPhone ran at 60 fps with the launcher setting reaching the host; a cold docked run reached thermal state serious after 226 s, a warm start after 64 s. The matching iPhone Standard run and MetalFX's share of the thermal cost remain unmeasured. Standard stays the default. These gameplay measurements are the PR author's; this integration has not repeated a device gameplay run.
+
 ## Memory
 
 - **Resolved: the world-load crash (about 1 run in 3 on the Mac) came from the host's command record sizes.** About 3 s after Start, a task worker's `operator new` (`main+0x155a79c`) got null and the game wrote through it (`main+0x155a7a4`). Each model file gets a heap of its resource size table entry + 0x1008; the file goes in 4 KB aligned, and the model's setup (`main+0x155a2ac`) takes the rest as a frame heap (vtable `main+0x1d4f950`, head +0xe0, tail +0xe8). Part of the setup is GPU memory for the model's prerecorded commands, sized by recording each mesh's draw and each shape's state for each pass into a scratch command buffer and summing `nvnCommandBufferGetCommandMemoryUsed` (`main+0xf9aeb4`, `main+0xf9bb54`), so the host's record sizes count against the table. Draw records had grown to carry the indirect and multi-draw fields (0x38 → 0x50 per recorded draw on 2026-10-18 and 10-20), and every recording began with an 8-byte BEGIN record. `Obj_TreeConiferous`, `Obj_TreeBroadleaf_B` and `FldObj_HyliaBridge_A-02` then needed one 4 KB page more than their entries allow, which fit only when the file's alignment pad (0 to 0xff8) was small (about 15% of loads each failed; most models have about 0xd00 to spare). Plain draws now leave those fields out and recordings have no BEGIN (0x30 per recorded draw, `nvn_obj.h` `draw_rec`): all 510 models of the world load fit whatever the pad. To check a whole scene, probe where the setup heap is cut (`main+0x155a520` with `!x21`) and the end of the setup (`main+0x155a5f4` with `!x2`) with `DM_PROBE_HEAP=28,38,40,e0,f8 DM_PROBE_HEAPFRAME=1d4f950 DM_PROBE_HEAPWORDS=1`. A model fits any placement when entry + 0x1008 covers the resource heap's header and object (0x310), the file, the frame heap's block header and its peak use, plus 0xff8 of pad.
@@ -138,6 +153,7 @@ On this Mac the background prewarm also ends before the save loads, so the step 
 General host changes first needed here; each applies to every game:
 
 - **Resolved: the IPA omitted pulling libraries with `pso_mtl4 on`, and explicitly including them failed under macOS Bash 3.2.** See [Pulling vertex inputs](../../../docs/reference/rendering.md#pulling-vertex-inputs).
+- **Upscaling in the present** (`fx_encode`, `DM_PRESENT_UPSCALE`): [The present upscales through MetalFX](../../../docs/reference/rendering.md#the-present-upscales-through-metalfx).
 - **Pipeline keys omit disabled blend factors** (`pso_key_norm`): [Pipeline keys omit unused colour state](../../../docs/reference/shaders.md#pipeline-keys-omit-unused-colour-state).
 - **Resolved: GPU readback temporaries retained by a game thread's outer pool** (`mtl_read_texels`): [GPU readback without an autorelease pool](../../../docs/reference/memory.md#gpu-readback-without-an-autorelease-pool). Ported from MacNativeGames; checked here with a synthetic Metal readback lifetime test, without a new gameplay memory measurement.
 - **The host frame step in whole vsyncs** (`nvn_fstep.h`, `fstep_tick`, `FRAME_STEP` stubs, `fps_target`), explained in full under [Frame rate](#the-frame-step-current); its probes (`nvn_fstep_gpu_slowed`, `nvn_fstep_same`): [development.md, Power](../../../docs/development.md#power).
