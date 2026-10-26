@@ -56,6 +56,70 @@ void dm_pad_set_player(int p, uint64_t buttons, int32_t lx, int32_t ly, int32_t 
 }
 void dm_pad_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry) { dm_pad_set_player(0, buttons, lx, ly, rx, ry); }
 uint64_t dm_input_samples(void) { return (uint64_t)atomic_load(&g_sampling); }
+// ---- Pad mode from the game's own state (the touch gamepad hides in cutscenes and loads; DmGamepad.m polls dm_pad_mode) ----
+// The class objects of an IL2CPP game sit in slots in main's image, one per class the runtime has loaded: slot -> class object ->
+// (once its ready flag at +0xe4 is set) its static fields at +0xb8 -> the singleton instance at a per-class offset in the statics.
+// The layout below is per build, like every fixed guest offset in this host, and follows the offsets the touch port of this same
+// build uses (MZhao-ouo/Touchable, MIT): GameManager's instance at statics +0x8, its game state at +0x20 (7 = a cutscene; 2, 3 and
+// 6 = loading states), its input handler at +0xa8, whose skip mode at +0x84 is 0 or 1 while the cutscene can be skipped;
+// UIManager's instance at statics +0x10, its UI state at +0x64 (3 = a cutscene, 2 = loading). An instance counts only while the
+// native object behind it lives (the pointer at +0x10). Fail-safe throughout: a class not ready, a null link, or a state value
+// outside its range reads as mode 0 (play), so a layout that does not fit the build can never hide the pad
+typedef struct { const char *build; uint64_t game_class, ui_class; } pad_layout_t;
+static const pad_layout_t k_pad_layouts[] = {
+    { "fc9ea4ccc955d5799f37752b2d730b31", 0x7e14880, 0x7e195b8 },   // Hollow Knight: Silksong, the build in its game.tsv
+};
+static _Atomic int g_pad_mode;
+static const void *pad_static(const uint8_t *base, uint64_t slot, uint64_t inst_off) {
+    const void *klass = *(const void *const *)(base + slot);
+    if (!klass || ((uintptr_t)klass & 7)) return NULL;
+    if (!*(const int32_t *)((const uint8_t *)klass + 0xe4)) return NULL;   // the class is not initialised yet
+    const void *statics = *(const void *const *)((const uint8_t *)klass + 0xb8);
+    if (!statics) return NULL;
+    const void *inst = *(const void *const *)((const uint8_t *)statics + inst_off);
+    if (!inst || !*(const void *const *)((const uint8_t *)inst + 0x10)) return NULL;   // no live object behind it
+    return inst;
+}
+static void *pad_mode_main(void *arg) {
+    (void)arg;
+    const pad_layout_t *lay = NULL; const uint8_t *base = NULL;
+    for (int i = 0; i < 240 && !lay; i++) {   // main and its class pointers land as the guest starts: wait for the build's layout, up to about a minute
+        const char *b = dm_main_build();
+        for (unsigned k = 0; k < sizeof k_pad_layouts / sizeof *k_pad_layouts && !lay; k++) if (!strcmp(k_pad_layouts[k].build, b)) lay = &k_pad_layouts[k];
+        if (lay) for (int m = 0; m < g_nmod; m++) if (!strcmp(g_mod[m].name, "main")) base = g_mod[m].base;
+        if (!lay || !base) { struct timespec ts = { 0, 250000000 }; nanosleep(&ts, NULL); }
+    }
+    if (!lay || !base) { LOG("[pad] no game-state layout for this build; the pad stays as it is"); return NULL; }
+    LOG("[pad] watching the game state for cutscenes and loads (build %s)", lay->build);
+    int cur = -1;
+    for (;;) {
+        int mode = 0;
+        const void *gm = pad_static(base, lay->game_class, 0x8);
+        const void *um = pad_static(base, lay->ui_class, 0x10);
+        int gs = gm ? *(const int32_t *)((const uint8_t *)gm + 0x20) : -1;
+        int us = um ? *(const int32_t *)((const uint8_t *)um + 0x64) : -1;
+        if (gs >= 0 && gs <= 7 && us >= 0 && us <= 6) {   // a state outside its range means the layout does not fit: never hide
+            if (gs == 7 || us == 3) {
+                mode = 2;
+                const void *ih = gm ? *(const void *const *)((const uint8_t *)gm + 0xa8) : NULL;
+                if (ih && *(const void *const *)((const uint8_t *)ih + 0x10)) { int sm = *(const int32_t *)((const uint8_t *)ih + 0x84); if (sm == 0 || sm == 1) mode = 3; }
+            } else if (gs == 2 || gs == 3 || gs == 6 || us == 2) mode = 1;
+        }
+        if (mode != cur) { cur = mode; atomic_store(&g_pad_mode, mode); LOG("[pad] mode %d (%s)", mode, mode == 3 ? "cutscene, skippable" : mode == 2 ? "cutscene" : mode == 1 ? "loading" : "play"); }
+        struct timespec ts = { 0, 100000000 }; nanosleep(&ts, NULL);
+    }
+    return NULL;
+}
+static void pad_mode_start(void) {
+    const char *e = getenv("DM_PAD_SKIN");   // the reader exists for the pad skin only: without it no thread starts and the mode stays 0
+    if (!e || !atoi(e)) return;
+    pthread_t th; if (!pthread_create(&th, NULL, pad_mode_main, NULL)) pthread_detach(th);
+}
+int dm_pad_mode(void) {
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once(&once, pad_mode_start);
+    return atomic_load(&g_pad_mode);
+}
 // DM_KEYS scripted input (for tests): "seconds:key[+key][~hold seconds][*count/interval seconds],...", e.g. "8:A,12:A,15:Down~0.5,16:A+B,40:A*80/2" (A every 2 s from 40 s on, 80 times). Key names A B X Y LS RS L R ZL ZR (plus the sticks LLeft LUp LRight LDown and RLeft RUp RRight RDown) Plus Minus Left Up Right Down, left stick LLeft LUp LRight LDown,
 //   L<x>/<y> and R<x>/<y> = a stick tilted part way (each -1 to 1, y up: a cursor that a full tilt sweeps past its target), T<x>x<y> = a touch at normalized picture coordinates (origin top left) for the hold time, and Shake = the controller shaken for the hold time (at least one whole shake);
 //   held 0.15 s by default, at most 1024 steps (counted after repeats are expanded). Goes through player 1's controller path (dm_pad_set), ORed with keyboard / touch, neither overrides the other. Times are counted from host start.
