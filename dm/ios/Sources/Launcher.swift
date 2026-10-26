@@ -45,7 +45,7 @@ private struct SettingRow: View {
                     Picker(selection: m.binding(s)) {
                         ForEach(s.options ?? [], id: \.[0]) { Text($0[1]).tag($0[0]) }
                     } label: {
-                        Text(s.options?.first { $0[0] == (m.values[s.env] ?? s.def) }?[1] ?? "")
+                        EmptyView()   // the menu button shows the current value itself; a text label here is drawn beside it, doubling it
                     }
                     .pickerStyle(.menu)
                     .fixedSize()
