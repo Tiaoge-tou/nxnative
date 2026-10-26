@@ -66,6 +66,43 @@ static int front_ios_render_width_h(int height) {
 }
 static int front_ios_render_width(void) { return front_ios_render_width_h(1080); }
 
+// The launcher's frame-rate choice (SS_DISPLAY_HZ, settings.tsv; only a game whose profile offers it, game.tsv display_hz, shows
+// the choice): 60, 120, or 120 at a lowered render size. The choice is a request, not a fact: the display link below asks the
+// screen for 80-120 Hz and measures the rate the screen truly runs at, and only a rate that holds for 30 display frames is
+// handed to the host (dm_display_set_hz, hle_nvn.c), which moves the present tick, the present display link and the vi vsync
+// event to it; a screen that falls back to 60 Hz (a 60 Hz panel, Low Power Mode, heat) hands 60 back and releases the mode.
+// The lowered tier renders at 1916x882, the size the touch port of Silksong measured for 120 Hz on this class of screen: the
+// width goes through the state page's docked cell as any render width does, the height through DM_RENDER_HEIGHT (loader.c)
+static int front_ios_display_hz(void) { const char *e = getenv("SS_DISPLAY_HZ"); return e ? atoi(e) : 60; }
+static int front_ios_display_lowered(void) { const char *e = getenv("SS_DISPLAY_HZ"); return e && strchr(e, 'L') != NULL; }
+
+@interface DmRateLink : NSObject
+@property (nonatomic, strong) CADisplayLink *link;
+@property (nonatomic) int cur, ticks;
++ (void)startIfWanted;
+- (void)tick:(CADisplayLink *)link;
+@end
+static DmRateLink *g_rate_link;
+@implementation DmRateLink
++ (void)startIfWanted {
+    int want = front_ios_display_hz();
+    if (want <= 60 || g_rate_link) return;
+    g_rate_link = [DmRateLink new];
+    g_rate_link.link = [CADisplayLink displayLinkWithTarget:g_rate_link selector:@selector(tick:)];
+    g_rate_link.link.preferredFrameRateRange = CAFrameRateRangeMake(80, 120, 120);
+    [g_rate_link.link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    LOG("front end: display rate %d Hz requested; the rate the screen holds decides (SS_DISPLAY_HZ)", want);
+}
+- (void)tick:(CADisplayLink *)link {
+    double dt = link.targetTimestamp > link.timestamp ? link.targetTimestamp - link.timestamp : 0;
+    int hz = dt > 0 && dt < 1.0 / 90 ? 120 : 60;   // a frame interval under 1/90 s is a 120 Hz screen; anything else counts as 60
+    if (hz == self.cur) { self.ticks = 0; return; }
+    if (++self.ticks < 30) return;   // the rate must hold for 30 display frames before the host follows it, either way
+    self.cur = hz; self.ticks = 0;
+    dm_display_set_hz(hz);
+}
+@end
+
 // Hades II's HUD lays out against the size its script computes in RunLogic.lua (UpdateConfigOptionCache), which reads the engine's
 // config options X/Y -- 1920x1080 whatever the renderer does, so without this the HUD keeps the 1920 canvas at any render width (the
 // wide builds were played with the two lines below written by hand to the baked width; this writes the measured one instead). The line
@@ -127,11 +164,16 @@ static void front_ios_hud_script_fix(int width) {
     if (self.fps) [self.view addSubview:self.fps];
     [self.view setNeedsLayout]; [self.view layoutIfNeeded];
     UIApplication.sharedApplication.idleTimerDisabled = YES;
+    if (front_ios_display_lowered()) {   // the frame-rate choice's lowered tier, unless an env file sets the size itself
+        if (!getenv("DM_RENDER_WIDTH")) setenv("DM_RENDER_WIDTH", "1916", 1);
+        if (!getenv("DM_RENDER_HEIGHT")) setenv("DM_RENDER_HEIGHT", "882", 1);
+    }
     if (!getenv("DM_RENDER_WIDTH")) setenv("DM_RENDER_WIDTH", [NSString stringWithFormat:@"%d", front_ios_render_width()].UTF8String, 1);   // the render size follows this screen (an env file's value is a diagnostic override and is kept); before the host starts, whose game-start write reads it
     if (!getenv("DM_RENDER_WIDTH_HD")) setenv("DM_RENDER_WIDTH_HD", [NSString stringWithFormat:@"%d", front_ios_render_width_h(720)].UTF8String, 1);   // the same at the handheld height, for the builds whose handheld sizes read it
     int rw = atoi(getenv("DM_RENDER_WIDTH")); if (rw < 320 || rw > 16384 || rw % 8) rw = 2344;   // the host's own validation (loader.c), so the script and the renderer cannot disagree
     front_ios_hud_script_fix(rw);   // Hades II's HUD script gets the same width (a no-op for other games: no such file)
     front_ios_boot();
+    [DmRateLink startIfWanted];   // the frame-rate choice above 60 Hz: ask the screen for it and follow the rate it holds
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
