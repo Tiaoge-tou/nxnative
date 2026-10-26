@@ -144,6 +144,22 @@ static CALayer *imgLayer(CALayer *parent, const char *name) {
 // (hadesCenter), so the quarter circle keeps its shape on a taller screen (an iPad's); on the phone the layout was
 // measured on, the centres come out as before.
 static BOOL padHades(void) { const char *e = getenv("DM_PAD_HADES"); return e && atoi(e); }
+static BOOL hadesSkin(void) { const char *e = getenv("DM_HADES_SKIN"); return !e || atoi(e); }   // the launcher's button-skin toggle: on unless it says 0 (default on)
+static UIImage *hadesImage(const char *name) {   // a hadesskin image, loaded once and cached (nil when the file is absent)
+    static NSMutableDictionary *cache;
+    if (!cache) cache = [[NSMutableDictionary alloc] init];
+    NSString *key = [NSString stringWithUTF8String:name];
+    UIImage *im = cache[key];
+    if (!im) {
+        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"dm/hadesskin/%s.png", name]];
+        im = [UIImage imageWithContentsOfFile:p];
+        if (im) cache[key] = im;
+    }
+    return im;
+}
+static CALayer *hadesImgLayer(CALayer *parent, const char *name) {
+    CALayer *l = [CALayer layer]; l.contents = (id)hadesImage(name).CGImage; [parent addSublayer:l]; return l;
+}
 enum { H_TOP, H_FACE, H_DPAD };   // a D-pad entry carries a direction in dir (0 left, 1 up, 2 down, 3 right) and no label
 static const struct { int bit; int kind; int dir; const char *label; CGFloat x, y, r; } k_hades[] = {
     {B_MINUS, H_TOP,  0, "−", 0.691, 0.086, 0.020},
@@ -162,6 +178,8 @@ static const struct { int bit; int kind; int dir; const char *label; CGFloat x, 
     {B_RIGHT, H_DPAD, 3, NULL, 0.807, 0.896, 0.019},
 };
 #define HADES_N (int)(sizeof k_hades / sizeof k_hades[0])
+static const char *k_hadesArt[HADES_N] = {"minus", "plus", "l", "zl", "zr", "r", "a", "x", "b", "y", "left", "up", "down", "right"};   // dm/hadesskin art per k_hades key, same order
+#define HADES_ART_F 0.875   // the art's disc diameter as a fraction of its square canvas (448 of 512, keys and stick alike)
 static CGPoint hadesCenter(int i, CGRect b) {   // the centre of Hades key i, in points
     CGFloat y = k_hades[i].y;
     if (k_hades[i].kind == H_FACE && k_hades[i].bit != B_Y) {   // a fan key: its y is an offset from Y's centre in width fractions
@@ -217,6 +235,9 @@ static __weak DmGamepad *g_view;
     CAShapeLayer *_hSym[HADES_N];                  // drawn bars for the - / + keys, centred exactly (text glyphs ride high)
     CAShapeLayer *_hTri[4];                        // the D-pad triangles, in k_hades dir order
     UIView *_hStick, *_hKnob;          // the floating stick's clear disc and its knob
+    BOOL _hSkin;                                   // DM_HADES_SKIN: the image skin below replaces the glass controls
+    CALayer *_hArt[HADES_N];           // one skin image per Hades key (nil while the skin is off or the art is absent: glass shows)
+    CALayer *_hStickArt, *_hKnobArt;   // the skin's stick disc and knob: the pack's own art, nothing drawn behind either
     CGPoint _lCentre;                              // the floating left stick's centre: where its touch landed
 }
 
@@ -283,6 +304,19 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
                 if (k_hades[i].bit == B_MINUS || k_hades[i].bit == B_PLUS) { _hSym[i] = shape(ov); _hSym[i].fillColor = k_text.CGColor; _hSym[i].strokeColor = nil; _hSym[i].shadowOpacity = 0; }
                 else if (k_hades[i].label) _hLabel[i] = label(ov, [NSString stringWithUTF8String:k_hades[i].label]);
                 else { _hTri[k_hades[i].dir] = shape(ov); _hTri[k_hades[i].dir].fillColor = k_text.CGColor; _hTri[k_hades[i].dir].strokeColor = nil; _hTri[k_hades[i].dir].shadowOpacity = 0; }
+            }
+            _hSkin = hadesSkin();
+            if (_hSkin) {   // image skin over the glass: a key whose art is absent keeps its glass disc and label
+                CALayer *ab = [CALayer layer]; [_glassBox.layer addSublayer:ab];   // art above the washes and labels
+                for (int i = 0; i < HADES_N; i++) if (hadesImage(k_hadesArt[i])) {
+                    _hArt[i] = hadesImgLayer(ab, k_hadesArt[i]);
+                    _hGlass[i].hidden = YES; _hWash[i].hidden = YES;
+                    if (_hLabel[i]) _hLabel[i].hidden = YES;
+                    if (_hSym[i]) _hSym[i].hidden = YES;
+                    if (k_hades[i].kind == H_DPAD) _hTri[k_hades[i].dir].hidden = YES;
+                }
+                if (hadesImage("stick")) { _hStickArt = hadesImgLayer(ab, "stick"); _hStick.hidden = YES; }
+                if (hadesImage("knob")) { _hKnobArt = hadesImgLayer(ab, "knob"); _hKnob.hidden = YES; }
             }
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _swap.hidden = YES; _swapLabel.hidden = YES; _ring.hidden = YES; _knob.hidden = YES;
@@ -589,6 +623,9 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             if (_hLabel[i]) placeLabel(_hLabel[i], c, r * 1.02);
             else if (_hSym[i]) setPath(_hSym[i], symPath(c, r, k_hades[i].bit == B_PLUS));
             else setPath(_hTri[k_hades[i].dir], triPath(c, r * 0.44, k_hades[i].dir)); }
+        for (int i = 0; i < HADES_N; i++) if (_hArt[i]) { CGFloat r = k_hades[i].r * b.size.width;
+            CGPoint c = hadesCenter(i, b); CGFloat s = 2 * r / HADES_ART_F;
+            _hArt[i].frame = CGRectMake(c.x - s / 2, c.y - s / 2, s, s); }
         [CATransaction commit]; [self refresh]; return;
     }
     for (int b = B_A; b <= B_Y; b++) { CGPoint c = [self facePos:b]; setPath(_key[b], circlePath(c, self.faceR)); placeLabel(_label[b], c, 20 * u); }
@@ -640,6 +677,9 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     }
     if (_hades) {   // pressed keys: wash lit and a small dip; the stick's glass follows its touch (full opacity), at half opacity at rest
         for (int i = 0; i < HADES_N; i++) { BOOL on = (_btnBits >> k_hades[i].bit) & 1;
+            if (_hArt[i]) {   // skin key pressed: a small dip and a dim, no glow (the pack ships no pressed art)
+                _hArt[i].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity;
+                _hArt[i].opacity = on ? 0.6 : 1.0; continue; }
             _hWash[i].opacity = on ? 0.28 : 0;
             _hGlass[i].transform = on ? CGAffineTransformMakeScale(0.93, 0.93) : CGAffineTransformIdentity;
             if (_hLabel[i]) _hLabel[i].foregroundColor = (on ? k_textOn : k_text).CGColor;
@@ -654,6 +694,10 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             _hKnob.frame = CGRectMake(c.x + so.x - kr, c.y + so.y - kr, 2 * kr, 2 * kr); _hKnob.layer.cornerRadius = kr;
             _hStick.alpha = _hKnob.alpha = _stick[0] ? 1.0 : 0.5;
         }];
+        if (_hStickArt) { CGFloat S = 2 * R / HADES_ART_F;   // the pack's disc and knob at the glass disc's size, following its touch the same way
+            _hStickArt.frame = CGRectMake(c.x - S / 2, c.y - S / 2, S, S); _hStickArt.opacity = _stick[0] ? 1.0 : 0.5; }
+        if (_hKnobArt) { CGFloat S = 2 * R / HADES_ART_F;   // both canvases are the pack's own 512 squares, so one side serves both and the knob keeps its drawn size inside the disc
+            _hKnobArt.bounds = CGRectMake(0, 0, S, S); _hKnobArt.position = CGPointMake(c.x + so.x, c.y + so.y); _hKnobArt.opacity = _stick[0] ? 1.0 : 0.5; }
     }
     [CATransaction commit];
 }
