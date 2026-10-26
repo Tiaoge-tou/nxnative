@@ -37,12 +37,19 @@ private struct SettingRow: View {
         Group {
             switch s.kind {
             case "choice":
-                Picker(selection: m.binding(s)) {
-                    ForEach(s.options ?? [], id: \.[0]) { Text($0[1]).tag($0[0]) }
-                } label: {
+                // The label (with its note) takes the row's width and the value button stays at the trailing edge:
+                // as the Picker's own label the long note pushed the button onto its own line (the fork's Console mode note)
+                HStack {
                     settingLabel
+                    Spacer()
+                    Picker(selection: m.binding(s)) {
+                        ForEach(s.options ?? [], id: \.[0]) { Text($0[1]).tag($0[0]) }
+                    } label: {
+                        Text(s.options?.first { $0[0] == (m.values[s.env] ?? s.def) }?[1] ?? "")
+                    }
+                    .pickerStyle(.menu)
+                    .fixedSize()
                 }
-                .pickerStyle(.menu)
             case "range":
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
