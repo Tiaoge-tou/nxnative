@@ -635,6 +635,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** [Octopath Traveler 0](../../dm/games/01005270232F2000/README.md): 2,084 such shaders (Unreal's GPU particles); three ran in the first 100 seconds. [Pokémon Legends: Z-A](../../dm/games/0100F43008C44000/README.md): in the 64 KB dummy buffer used before, its atomic max into a 480x270 r32ui 2D array (fragment shader `2bd5037003980716`, the scene after the story opening's first cutscene) ran about 1.4 MB past its end, writing into zero-copy pools over the game's heap and into unmapped addresses (GitHub issue #101).
 - **Note:** Metal shader validation (`MTL_SHADER_VALIDATION=1`) stops out-of-bounds accesses, so under it the scene played.
 
+### Buffer image reflection keeps its texture type
+
+- **Symptom:** `image atomics: unsupported or overflowing IMG extent` at the first dispatch, despite a valid four-byte counter buffer.
+- **Cause:** `nvn_refl.m` classified `texture_buffer<uint>` as the default 2D texture. The atomic admission check correctly rejected the actual Metal buffer texture against that 2D descriptor.
+- **Fix:** the shared reflection type decoder recognizes `texture_buffer` as `MTLTextureTypeTextureBuffer`; the matched IMG and IMGA retain their buffer-image shape. `t_refl.m` checks the actual reflection converter with a paired buffer image and atomic pointer.
+- **Found on:** [SHIN MEGAMI TENSEI V: Vengeance](../../dm/games/010069C01AB82000/README.md), compute shader `2d2093c1f1d3a7e0`, image slot 2 (one R32Uint texel).
+
 ### Bounded MSL 2.3 atomic emulation
 
 - **Symptom:** Metal shader validation reports invalid image-atomic stores even with an image-sized scratch buffer; without validation, GPU page faults can freeze rendering.
@@ -644,10 +651,9 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 
 Sizing the backing buffer does not make an out-of-range image coordinate safe.
 The offline translator now preserves the Maxwell surface instruction's bounds
-mode and explicitly discarded result. Its Metal-only lowering accepts `IGN`
-reductions and non-CAS atomics writing `RZ`; returning, predicate-returning,
-`TRAP`, and unknown modes fail translation rather than acquiring invented
-out-of-bounds semantics. This path supports non-indexed 32-bit buffer, 2D and
+mode and whether the result is discarded. Its Metal-only lowering accepts `IGN`
+reductions and non-CAS atomics, including returned old-texel values. Predicate-returning,
+CAS, `TRAP`, and unknown modes fail translation. This path supports non-indexed 32-bit buffer, 2D and
 2D-array images. Other translator callers do not enable it. Source 1D and
 1D-array instructions retain the existing one-row normalization to 2D `(x, 0)`
 and 2D-array `(x, 0, layer)`; buffer coordinates stay scalar, and buffer MSL is
@@ -660,6 +666,19 @@ being removed by bindless elimination. These checks apply only to the Metal
 atomic path; other translator backends retain their existing behavior.
 Indexed, 3D, multisample and other unsupported effective image shapes fail
 closed on this opt-in path; this is not a native-image-atomic implementation.
+
+Returning `IGN` atomics join the valid operation's old-texel result with zero
+from the invalid-coordinate branch using an SPIR-V phi. The pointer and memory
+update exist only in the valid branch. This implements image-atomic bounds
+semantics ([ARB_shader_image_load_store, issue 30](https://registry.khronos.org/OpenGL/extensions/ARB/ARB_shader_image_load_store.txt)):
+invalid coordinates leave memory unchanged and return zero. Found on
+[SHIN MEGAMI TENSEI V: Vengeance](../../dm/games/010069C01AB82000/README.md), whose
+two buffer-image counter shaders were dispatched at boot but rejected because
+they consume their returned values. `test_image_atomic_bounds.py` keeps that
+value live through a second atomic, validates the SPIR-V dataflow and both Metal
+SDKs, and optionally executes the buffer fixtures on a Mac GPU
+(`DMSH_TEST_GPU=1`, `t_atomic_return.m`): valid coordinates return the old value,
+negative and edge coordinates return zero, and surrounding sentinels stay intact.
 
 The SPIR-V queries the bound image's dimensions and tests every original
 coordinate (including the layer) before forming the texel pointer or executing
@@ -726,6 +745,14 @@ shader on a GPU.
 - **Fix:** `arch_file_ok` checks the GPU Mach-O load commands and payload ranges, universal slice bounds and the serializer's bundled Metal library ranges before opening the archive. It does not validate the compiler's private payload. `pso_bundle_covers` requires at least one actual lookup and no misses. `pso_offline.py` hashes every consumed library's bytes into the cache key; when all eligible pairs need device specialization, it removes old archives and writes `rest_pairs.tsv` without invoking `metal-tt`.
 - **Found on:** [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md#found-on-this-game), during review of its offline archive path with synthetic libraries and pair lists; no new gameplay or iPhone run.
 - **Check:** `dm/tools/tests/test_pso_offline.py` changes vertex and fragment library bytes without changing entries or stamps, and exercises the all-constant plan. `t_pso_bundle` rejects bare headers, truncated archives, malformed load commands and out-of-range universal slices, accepts real offline and serialized archives, and rejects zero-probe coverage.
+
+### Metal's build folders left by pipeline archive flushes
+
+- **Symptom:** the user cache folder (`getconf DARWIN_USER_CACHE_DIR`, then `com.apple.gpuarchiver/`) fills with `gpuarchiver-*` folders of 0.3–5 MB each, one per pipeline archive flush, and they stay after the game exits: 456 folders, 2.5 GB, on one Mac after two days of NVN game runs. On iOS they stay in the app's own cache folder.
+- **Cause:** the Metal 4 serializer (`MTL4PipelineDataSetSerializer`) makes a build folder for the captures between two flushes: at the first compile it captures, or, for bases taken again from lookup archives (compaction), during the flush. No flush, release or exit removes the folder. Nothing reads it once its flush has written the archive file: a probe that removed each folder after its flush took every pipeline from the files again. The process keeps no file open in it, and on the Mac the folder is shared by all of the user's programs.
+- **Fix:** `nvn_mtl.m` (`ga_capture`, `ga_flushed`, `ga_exit`): the first capture after a flush lists the folder before and after its compile and takes the one folder that appeared as its own; the flush removes it once its file is written, together with the one folder the flush made when it held recaptures; exit removes the folder of captures no flush wrote. When more than one folder appeared in that window (another program's capture), none is removed. On iOS the start removes the folders earlier runs left. Folders left before this fix stay; they are safe to delete while no game or Metal tool runs.
+- **Found on:** reported by MacNativeGames (`1eff989`, `110e6c6`, Metal 3's `MTLBinaryArchive`, 25 GB overnight on Tears of the Kingdom); reproduced here with the Metal 4 serializer by a probe and on this repository's Mac, no single game identified.
+- **Check:** `t_pso_archive` checks that the first capture finds the folder and the flush removes it; a run of the test leaves no new folder (it left two before the fix, one from compaction and one from captures no flush wrote).
 
 ### Pipeline keys omit unused colour state
 
