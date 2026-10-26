@@ -1524,6 +1524,31 @@ static void sleep_until_ns(uint64_t dl) {   // absolute time on the monotonic cl
 static int g_hz = -1, g_display_mode;
 static _Atomic int g_game_itv = 1;   // when pacing by the game's interval, the interval the game currently sets (in game mode 2 = 30 fps; nvn_game_fps reports it to the graphics layer, which sets the display link from it)
 void nvn_present_config(int hz, int display_mode) { g_hz = hz; g_display_mode = display_mode; }
+// ---- Display rate (a rate above 60 for a game whose profile offers it, game.tsv display_hz; the launcher's frame-rate choice) ----
+// The game starts at the fixed 60 Hz above, as every game does. The iOS front end asks its display link for 80-120 Hz and
+// measures the rate the screen truly runs at (front_ios.m): a rate that holds for 30 display frames is handed here, and the
+// present tick, the present display link and the vi vsync event (hle_sdk16.c, which reads dm_display_hz every tick) follow it.
+// A screen that falls back to 60 Hz (a 60 Hz panel, Low Power Mode, heat) hands 60 back, which releases the mode: every part
+// returns to its own 60 Hz behaviour. Only a measured rate is ever applied, so a game is never paced faster than its screen.
+// An explicit DM_PRESENT_HZ keeps its word over the mode (a profiling switch), and the interval mode is untouched: the game's
+// present interval still divides the tick, so a game that asks for interval 2 runs at half the rate, as at 60 Hz
+static _Atomic int g_display_hz;   // 0 = not driven; 120 while the measured rate holds
+static int g_hz_env;               // DM_PRESENT_HZ set the tick in present_cfg: the display rate does not override it
+__attribute__((weak)) void mtl_present_link_120(int on) { (void)on; }   // nvn_mtl.m: the present display link in its 120 Hz mode while on
+int dm_display_hz(void) { return atomic_load(&g_display_hz); }
+static void nvn_present_hz(int hz) {   // the present tick at the measured rate; before the first present present_cfg applies the rate itself
+    if (g_hz_env || g_hz < 0 || g_hz == hz) return;
+    g_hz = hz;
+    LOG("[nvn] present tick %d Hz (the display rate the front end measured)", hz);
+}
+void dm_display_set_hz(int hz) {
+    if (hz != 60 && hz != 120) return;
+    int want = hz == 120 ? 120 : 0;   // a measured 60 releases the mode instead of driving it
+    if (atomic_exchange(&g_display_hz, want) == want) return;
+    nvn_present_hz(hz);
+    mtl_present_link_120(hz == 120);
+    LOG("[nvn] display rate %s (the front end measured the screen at %d Hz)", hz == 120 ? "120 Hz" : "released, back to 60 Hz", hz);
+}
 static _Atomic uint64_t g_itv2_since;   // start of the game's current run of intervals >= 2 (now_ns; 0 = it is 1 now)
 // The frame rate the game itself asks for: 30 in game mode when the present interval has been >= 2 for a full second (the display link follows at 30 Hz, mtl_fps_target), otherwise 60; back to 60 at once when the interval returns to 1. Intervals of 3 or more (20 fps or less) have no matching display-link mode and run at 30.
 // The one-second hold: Mario 1.2.1 picks the interval from the previous frame's time (main+0xcfd24), setting 2 for the frame after a slow one and then 1 again (123 times in two minutes on an iPhone). Following that frame by frame would flap the display-link mode;
@@ -1576,8 +1601,10 @@ static void present_cfg(const win_t *o) {
     if (g_hz >= 0) return;
     // The interval mode comes from the game profile (present_interval, default game): whether frames follow the present interval the game sets depends on whether the game's logic counts frames, which differs per game. Environment variables override it, and can override the fixed 60 Hz.
     int scr = mtl_display_hz();
-    const char *e = getenv("DM_PRESENT_HZ"); g_hz = e ? atoi(e) : 60;
+    const char *e = getenv("DM_PRESENT_HZ"); g_hz = e ? atoi(e) : 60; g_hz_env = e != NULL;
     if (!g_hz) LOG("[nvn] [WARNING] DM_PRESENT_HZ=0: frame rate uncapped, frame pacing unlike the device, UI logic may drift (for profiling only, not for verdicts / cross-checks)");
+    // A display rate the front end measured before the first present (dm_display_set_hz) applies from the start
+    if (!g_hz_env && g_hz > 0 && atomic_load(&g_display_hz) == 120) g_hz = 120;
     // Cut (intentional deviation from the original game's behavior): with DM_PRESENT_INTERVAL=display the present interval set by the game is not followed and one frame is presented per display-link tick,
     // with a fixed hard floor of 60 fps; the logic stays at 25 ticks, and the client's frame-counted UI logic is unaffected -
     // with the same save and the same input, the UI message streams of the two modes match message by message. Proof (before character select): r9 game / display 60 ×3 / display 120 ×2, 6 groups in total, uicmp consistent
