@@ -3,7 +3,7 @@
 # Unity's Switch player never asks the host for a display resolution (guest main imports no
 # nn::oe/vi resolution query at all), so the host-side display_wide switch cannot help here: the
 # size comes from the operation mode inside the guest. Two native player sites decide it:
-#   * the size getter (guest 0x124e224): docked -> 1920x1080 (handheld stays 1280x720). Its result
+#   * the size getter (guest 0x124e224): docked -> 1920x1080, handheld -> 1280x720. Its result
 #     feeds the engine's current-resolution record and nvnWindowSetCrop.
 #   * the swapchain creation (guest 0x128bd60): hard-codes 1920x1080 in three
 #     nvnTextureBuilderSetSize2D calls, one per swapchain texture.
@@ -17,25 +17,35 @@
 # frame step state page instead (FRAME_STEP below): at each site a stub loads the width the host
 # measured on the screen it runs on, so one build fills an iPhone and an iPad alike; without the
 # host variable the cell holds 2344, the width the wide builds baked until now.
-# The handheld/movie path (1280x720) is deliberately untouched everywhere below.
+# The handheld path is routed the same way, through the state page's second cell (+0x40, the width
+# at the handheld height 720): the getter's handheld sizes all flow through the `mov w23, #1280`
+# at its entry -- the default it stores before the mode checks and the fallback its docked checks
+# select against -- so that one site carries the handheld width everywhere the getter is used.
+# The mode sizes the guest reports (and crops by) come from the screen-state ctor template, data
+# rather than code; HOST_FILLS below has the loader write the same two widths over them.
 from nso_asm import ADRP, B, LDRW
 
 CUTS = {
   # Silksong main (build ID as dm/tools/patch_nso.py computes it; matches the main= value in
-  # game.tsv here because the base main is the shipped one -- no update replaces it)
-  'fc9ea4ccc955d5799f37752b2d730b31': [
-    # The one width that stays baked, on purpose: the display-mode max width in the screen-state
-    # ctor template (the ctor copies the rodata block at 0x6679240 into the state object
-    # +0xa4..+0xb3; the +0xac word is the clamp ceiling of the native SetResolution setter, so
-    # widened requests were still clamped to 1920). It is an upper bound, not a requested size:
-    # every runtime width the host can pick at the docked height (1080 x the screen's aspect,
-    # down to a multiple of 8) is at most 2344 on any current iPhone or iPad, so the ceiling never
-    # binds; only a screen wider than 2.17:1 would meet it, and none is in scope. It is data in
-    # the writable span rather than an instruction, so there is no site here for a stub to hang
-    # off, and no second host write path is invented for a value that cannot take effect.
-    (0x6679248, '80070000', '28090000',
-     'display-mode max width in the screen-state ctor template: 1920 -> 2344 (the clamp ceiling of the native SetResolution setter; stays baked: an upper bound every runtime width stays under, not a requested size)'),
-  ],
+  # game.tsv here because the base main is the shipped one -- no update replaces it). No baked
+  # cuts remain: the one width that used to stay baked -- the docked mode width in the
+  # screen-state ctor template -- is host-filled now (HOST_FILLS below), because it did take
+  # effect after all: the guest reports the template's per-mode sizes as its display size and
+  # crops its presents by them, so on any screen whose runtime width is not the baked 2344 the
+  # crop (2344x1080) exceeded the swapchain texture the stubs had sized (1552x1080 on an iPad)
+  # and the host dropped every present -- a black screen with the game running and audible.
+  'fc9ea4ccc955d5799f37752b2d730b31': [],
+}
+
+# Display-mode size words in the screen-state ctor template (the ctor copies the rodata block at
+# 0x6679240 into the state object +0xa4..+0xb3: handheld width at the template's +0, docked at
+# +8, the heights beside them). They are data in the writable span, not instructions, so no stub
+# can hang off them; the loader instead writes the screen's own width for each mode over the
+# baked one when the game starts (patch_nso.py HOST_FILLS, loader.c dm_fps_state_apply), the
+# same values the state page cells carry, so the reported size, the crop and the textures agree
+# on every screen: without the host variables the fills take 2344 / 1280, as baked until now.
+HOST_FILLS = {
+  'fc9ea4ccc955d5799f37752b2d730b31': [('H', 0x6679240), ('D', 0x6679248)],
 }
 
 # ---- Render width from the host (frame step state page +0x38, a packed u64 width | height << 32) ----
@@ -49,6 +59,8 @@ CUTS = {
 # Each site below is a single `mov wN, #1920` that overwrites its register unconditionally -- an argument or a value about to be
 # stored -- so the stub writes only that register (adrp + ldr w + b back: no flags, no LR, nothing else observable). The flags
 # matter at the first site: the csel two instructions later still tests the tst before it. Sites in the order of the former cuts.
+# The handheld cell (+0x40, the width at 720 from DM_RENDER_WIDTH_HD, 1280 without the variable) is read by one more site, in
+# _WIDTH_SITES_HD: the getter's entry default, the register every handheld return of the getter flows through.
 _WIDTH_SITES = [
   (0x124e2f8, 8, '08f08052', 'size getter, docked path (dual check)'),
   (0x124e324, 8, '08f08052', 'size getter, docked path (single check)'),
@@ -59,6 +71,9 @@ _WIDTH_SITES = [
   (0x23f1354, 0, '00f08052', 'Screen.SetResolution request (defaults initialiser)'),
   (0x296b530, 0, '00f08052', 'Screen.SetResolution request (settings apply)'),
 ]
+_WIDTH_SITES_HD = [
+  (0x124e238, 23, '17a08052', 'size getter, handheld width (the entry default every handheld return flows through)'),
+]
 def render_width(ctx):
     here, emit, site, put, state = ctx.here, ctx.emit, ctx.site, ctx.put, ctx.state
     for off, reg, orig, what in _WIDTH_SITES:
@@ -66,6 +81,11 @@ def render_width(ctx):
         start = here(); emit(ADRP(reg, here(), state)); emit(LDRW(reg, reg, 14))   # ldr wN, [xN, #0x38] (the width, low word of the packed render size)
         emit(B(here(), off + 4))
         put(off, [B(off, start)], f'{what}: render width from the host render size (state page +0x38)')
+    for off, reg, orig, what in _WIDTH_SITES_HD:
+        site(off, orig)
+        start = here(); emit(ADRP(reg, here(), state)); emit(LDRW(reg, reg, 16))   # ldr wN, [xN, #0x40] (the handheld width, low word of the packed handheld render size)
+        emit(B(here(), off + 4))
+        put(off, [B(off, start)], f'{what}: render width from the host render size (state page +0x40)')
 
 # The key is the module build ID as dm/tools/patch_nso.py computes it (module bytes 0x40..0x50; also the BUILD_ID header of
 # main.fixups.tsv) -- NOT the main= value of game.tsv's build line (which happens to agree for this game)
