@@ -696,6 +696,14 @@ shader on a GPU.
 
 ## Pipelines and caches
 
+### Offline pipeline archive reuse and fallback
+
+- **Symptom:** a truncated `.mtl4a` reaches `MTL4ArchiveImpl::loadFromURL`; the bundle reports coverage with `0 of 0 probed bases found`; rebuilt shader libraries reuse an archive of their old binaries; or packing fails with `pso_offline: no base to build` when every eligible pair has function constants.
+- **Cause:** the archive guard checked only four magic bytes; coverage accepted `found == probed` even when every sampled pair was ineligible; the offline cache key included library paths and profile stamps but omitted library bytes; and a zero-base plan aborted before writing its device remainder list.
+- **Fix:** `arch_file_ok` checks the GPU Mach-O load commands and payload ranges, universal slice bounds and the serializer's bundled Metal library ranges before opening the archive. It does not validate the compiler's private payload. `pso_bundle_covers` requires at least one actual lookup and no misses. `pso_offline.py` hashes every consumed library's bytes into the cache key; when all eligible pairs need device specialization, it removes old archives and writes `rest_pairs.tsv` without invoking `metal-tt`.
+- **Found on:** [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md#found-on-this-game), during review of its offline archive path with synthetic libraries and pair lists; no new gameplay or iPhone run.
+- **Check:** `dm/tools/tests/test_pso_offline.py` changes vertex and fragment library bytes without changing entries or stamps, and exercises the all-constant plan. `t_pso_bundle` rejects bare headers, truncated archives, malformed load commands and out-of-range universal slices, accepts real offline and serialized archives, and rejects zero-probe coverage.
+
 ### Pipeline keys omit unused colour state
 
 - **Symptom:** identical render pipelines compile repeatedly under different keys, lengthening startup prewarm and adding pipeline misses during play.

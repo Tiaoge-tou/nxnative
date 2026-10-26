@@ -52,7 +52,9 @@ No `patches.py`. `op_mode` stays docked: Odyssey only takes its motion moves in 
 
 ## Found on this game
 
-General host changes first needed here; each applies to every game:
+General host and tool changes first needed here; each applies to every game:
+
+- **Resolved: NSZ decompression rejected `--keys`** when packing v0: [NSZ decompression rejects `--keys`](../../../docs/reference/packing.md#nsz-decompression-rejects---keys).
 
 - **Largest point size at `c0 + 0x610`**: [04, section 3](../../../docs/agents/04-graphics.md#3-find-the-binding-layout-by-census) and [Graphics `c0 + 0x610`: the largest point size](../../../docs/reference/shaders.md#graphics-c0--0x610-the-largest-point-size).
 - **Invariant positions** (`-fpreserve-invariance` in `dmsh_build.py` and `ios_metal.py`): [Position invariance across shaders](../../../docs/reference/shaders.md#position-invariance-across-shaders).
