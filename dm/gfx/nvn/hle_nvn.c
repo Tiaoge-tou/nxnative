@@ -1230,7 +1230,19 @@ NVN(nvnWindowInitialize, NVNboolean, NVNwindow *w, const NVNwindowBuilder *b) {
 NVN(nvnWindowGetPresentInterval, int, const NVNwindow *w) { return ((const win_t *)w)->interval; }   // Link's Awakening reads it back every frame
 NVN(nvnWindowSetPresentInterval, void, NVNwindow *w, int v) { if (((win_t *)w)->interval != v) LOG("[nvn] the game sets present interval %d → %d", ((win_t *)w)->interval, v); ((win_t *)w)->interval = v; }
 NVN(nvnWindowSetCrop, void, NVNwindow *w, int x, int y, int ww, int hh) {
-    win_t *o = (win_t *)w; int v[4] = {x, y, ww, hh};
+    win_t *o = (win_t *)w;
+    // Handheld: a guest that keeps its display state's current size at the stock 1280x720 (Silksong: the pair its
+    // apply step crops by is never overwritten in handheld, docked's SetResolution stores do it there) crops the
+    // wider handheld render (DM_RENDER_WIDTH_HD) down to 1280 and the present stretches it back out. The host's
+    // handheld size replaces exactly that stale full-frame crop; any other crop is the game's own and stands.
+    static int crop_note;
+    const char *om = getenv("DM_OPMODE"), *rh = getenv("DM_RENDER_WIDTH_HD");
+    long hw = rh ? strtol(rh, NULL, 10) : 0;
+    if (om && !strcmp(om, "0") && !x && !y && ww == 1280 && hh == 720 && hw > 1280 && hw <= 16384 && !(hw % 8)) {
+        if (!crop_note) { crop_note = 1; LOG("[nvn] WindowCrop 1280x720 in handheld: the guest's stale stock size; using the host handheld width %ld", hw); }
+        ww = (int)hw;
+    }
+    int v[4] = {x, y, ww, hh};
     if (memcmp(o->crop, v, sizeof v)) LOG("[nvn] WindowCrop %d,%d %dx%d", x, y, ww, hh);
     memcpy(o->crop, v, sizeof v);
 }
