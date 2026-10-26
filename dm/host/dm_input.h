@@ -13,6 +13,12 @@ enum {
 #define DM_STICK_MAX 32767
 void dm_input_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry);
 uint64_t dm_input_samples(void);   // Cumulative number of times the game has sampled the controller
+// Pad mode for the touch gamepad's skin (hle_hid.c): 0 = play (the pad shows), 1 = a loading state (the pad hides), 2 = a cutscene that
+// cannot be skipped (the pad hides, its recall switch shows), 3 = a cutscene that can be skipped (the pad hides, the recall switch and a
+// skip key show). Read from the game's own state objects by a host thread, only with the pad skin on (DM_PAD_SKIN) and only for a build
+// with a known class layout; any doubt -- a class not ready, a null link, a state value out of range -- reads as 0, so the pad never
+// hides on a guess. The iOS gamepad polls it; other front ends never call it and see no change
+int dm_pad_mode(void);
 // Physical controller path (Mac GameController, DM_KEYS / DM_CTL): stored separately from the keyboard / touch input; when the game reads player 1, buttons are
 // ORed bitwise and each stick axis takes whichever source is deflected more. All 0 when no controller is connected, so values are bit-for-bit the same as before.
 // dm_pad_set is player 1's controller (DM_BTN_SHAKE counts there only); dm_pad_set_player sets player n + 1's, which the game reads on its own npad (hle_hid.c) while
