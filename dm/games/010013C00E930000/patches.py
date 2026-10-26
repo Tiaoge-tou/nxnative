@@ -27,6 +27,16 @@
 # select against -- so that one site carries the handheld width everywhere the getter is used.
 # The mode sizes the guest reports (and crops by) come from the screen-state ctor template, data
 # rather than code; HOST_FILLS below has the loader write the same two widths over them.
+# One more site materialises a size in code, found by build #52's handheld test: the display-state
+# ctor (the function that stores the state object at main+0x8343268) copies the template into the
+# object at +0xa4 and then stores a baked current size beside it -- `mov w8, #1280` at guest
+# 0xb21fb4 to +0xb4, `mov w8, #720` at guest 0xb21fd0 to +0xb8 -- and the apply step feeds exactly
+# that current pair to nvnWindowSetCrop. In docked play the managed SetResolution stores overwrite
+# the pair before it is ever cropped by; in handheld nothing overwrites it, so the guest drew its
+# first frames at the host's handheld size (the window's initial crop) and cropped to the baked
+# 1280x720 from the first apply on, which the present then stretched over the screen. The two
+# sites join the handheld lists below, so the current pair comes from the handheld cell like the
+# getter's entry default does.
 from nso_asm import ADRP, B, LDRW
 
 CUTS = {
@@ -79,6 +89,7 @@ _WIDTH_SITES = [
 ]
 _WIDTH_SITES_HD = [
   (0x124e238, 23, '17a08052', 'size getter, handheld width (the entry default every handheld return flows through)'),
+  (0xb21fb4, 8, '08a08052', 'display-state ctor, current width (the pair the apply step crops by)'),
 ]
 # The height paired with each width above: the same sites materialise it as `mov wN, #1080` (docked) and the getter's entry
 # default as `mov w22, #720` (handheld), each beside its width site. The stubs read the packed size's high word (+0x3c docked,
@@ -98,6 +109,7 @@ _HEIGHT_SITES = [
 ]
 _HEIGHT_SITES_HD = [
   (0x124e23c, 22, '165a8052', 'size getter, handheld height (the entry default beside the handheld width)'),
+  (0xb21fd0, 8, '085a8052', 'display-state ctor, current height (the pair the apply step crops by)'),
 ]
 def render_width(ctx):
     here, emit, site, put, state = ctx.here, ctx.emit, ctx.site, ctx.put, ctx.state
