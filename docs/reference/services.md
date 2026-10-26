@@ -138,6 +138,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Found on:** [Animal Crossing: New Horizons](../../dm/games/01006F8002326000/README.md) (PR #25).
 - **Note:** SDK 11's `fs::CommitSaveData(mount)` is the older name of `fs::Commit` ([Older SDK names for the same calls](#older-sdk-names-for-the-same-calls)); `fs::Commit` with a `CommitOption` is under [Device save data on the account save's directory](#device-save-data-on-the-account-saves-directory).
 
+### Save-write failures stay with their backing transaction
+
+- **Symptom:** a failed write in one independent save can make another save's next `Commit` fail and discard its successful changes; the damaged save may then commit its truncated working file.
+- **Cause:** the host used one process-wide failure marker, consumed by whichever save committed first.
+- **Fix:** each canonical backing save owns its failure state. Open file handles retain that transaction identity, aliases share it, and each commit waits for in-flight writes or size changes to its backing save before consuming or restoring its failure marker (`hle_fs.c`). Concurrent first writes initialize the shared failure-injection settings with `pthread_once`.
+- **Check:** `t_fs_commit_list` injects write failures after truncation in either of two independent saves, verifies that the other save commits its changes, and checks failure propagation through aliases, rename failure handling, and a failed recovery clone. It blocks writes and size changes through an alias while another save commits, then verifies that both Commit ABIs wait for the affected I/O and refuse its failure. `make -C dm/host/tests GAME=<title ID> fs-tsan` also checks concurrent first writes and failed file I/O concurrent with mounting another alias.
+- **Found on:** the [two-save host regression](../../dm/host/tests/t_fs_commit_list.c). [Mario Kart 8 Deluxe](../../dm/games/0100152000022000/README.md) uses independent device and account saves.
+
 ### Save data size queries
 
 - **Symptom:** SIGSEGV at address 0 in `nn::fs::GetSaveDataSizeMax`, about 13 minutes into a new game.
