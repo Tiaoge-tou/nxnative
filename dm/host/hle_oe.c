@@ -125,12 +125,21 @@ HLE_FORCE("_ZN2nn2oe18GetPerformanceModeEv", "performance mode query; same as th
 static unsigned char g_cpu_oc;
 HLE_FORCE("_ZN2nn2oe21IsCpuOverclockEnabledEv", "CPU overclock state (through apm): what SetCpuOverclockEnabled set, off at start", unsigned, h_oe_CpuOc, void) { return g_cpu_oc; }
 HLE_FORCE("_ZN2nn2oe22SetCpuOverclockEnabledEb", "CPU overclock switch (through apm); the host does not scale clocks", void, h_oe_SetCpuOc, unsigned on) { g_cpu_oc = on & 0xff; }
-HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resolution: 1920x1080 docked, 1280x720 handheld (profile display_wide + fullscreen: 2344x1080)", void, h_oe_DefRes, int *w, int *h) {
+HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resolution: 1920x1080 docked, the host's handheld size at 720p handheld (profile display_wide + fullscreen: 2344x1080)", void, h_oe_DefRes, int *w, int *h) {
     int con = opmode() == 1; int x = con ? 1920 : 1280, y = con ? 1080 : 720;
     // Profile display_wide (Hades II): with the fullscreen setting on, report the docked height at the phone's
     // 19.5:9 aspect (2344 = 1080 x 19.5/9, to a multiple of 8) instead of 1920x1080, so the game renders the
     // wide picture itself; from 1920x1080 the present can only stretch it (front_ios.m / nvn_mtl.m DM_FULLSCREEN)
     if (DM_GAME_DISPLAY_WIDE && con) { const char *fs = getenv("DM_FULLSCREEN"); if (fs && atoi(fs)) x = 2344; }
+    // Handheld: the panel is this screen, so the answer is the host's render size at the handheld height
+    // (DM_RENDER_WIDTH_HD, which the iOS front end measures on the screen it runs on; the loader's own
+    // validation, so the two cannot disagree). A game can ask again after its window is up -- Silksong's
+    // Unity player does, before its first frame -- and sizes its present crop from the answer: the stock
+    // 1280x720 there undid the wide handheld size the size stubs and the display-mode template already
+    // carried, and the present stretched the 1280-wide crop over the whole screen. Without the variable
+    // (the Mac, a front end that does not measure) the answer is the stock panel size, as before
+    if (!con) { const char *rh = getenv("DM_RENDER_WIDTH_HD"); long hw = rh ? strtol(rh, NULL, 10) : 0;
+        if (hw >= 320 && hw <= 16384 && !(hw % 8)) x = (int)hw; }
     if (w) *w = x; if (h) *h = y;
     static int once; if (!once++) LOG("default display resolution: %dx%d", x, y);
 }
