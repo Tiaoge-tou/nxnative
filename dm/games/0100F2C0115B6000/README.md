@@ -73,6 +73,8 @@ Game-specific findings. The general host changes they led to are listed under [F
 
 General host changes first needed here; each applies to every game:
 
+- **Resolved in the host: frame-step recovery after a 30 fps movie cap**: [The frame step after a 30 fps cap ends](../../../docs/reference/frame-rate.md#the-frame-step-after-a-30-fps-cap-ends). Modelled with the movie flag; no new gameplay recovery observation is claimed.
+
 - **Packaged texture block dimensions and linear storage rows:** [Packaged texture block dimensions and linear storage rows](../../../docs/reference/nvn-objects.md#packaged-texture-block-dimensions-and-linear-storage-rows).
 - **Resolved in the host: dirty-page writes missed during upload**, with both unprotect paths covered by regression tests; the glyph-cache symptom remains unconfirmed here: [Dirty-page writes missed during upload](../../../docs/reference/nvn-objects.md#dirty-page-writes-missed-during-upload).
 - **Depth16 load-clears match fragment writes:** [Depth16 load-clears match fragment writes](../../../docs/reference/rendering.md#depth16-load-clears-match-fragment-writes).
