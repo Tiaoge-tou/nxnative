@@ -12,11 +12,15 @@
 # stores it in its display-state object, and the apply step feeds exactly that pair to
 # nvnWindowSetCrop, so with only the six native cuts the swapchain was wide but the final crop
 # stayed 1920x1080 and the host presented the 16:9 crop stretched.
-# All eight sites materialise the width as `mov wN, #1920`; heights are already 1080 everywhere,
-# so only the width encodings were cut, formerly to a baked 2344. They are now routed through the
-# frame step state page instead (FRAME_STEP below): at each site a stub loads the width the host
-# measured on the screen it runs on, so one build fills an iPhone and an iPad alike; without the
-# host variable the cell holds 2344, the width the wide builds baked until now.
+# All eight sites materialise the width as `mov wN, #1920`, formerly cut to a baked 2344. They
+# are now routed through the frame step state page instead (FRAME_STEP below): at each site a
+# stub loads the width the host measured on the screen it runs on, so one build fills an iPhone
+# and an iPad alike; without the host variable the cell holds 2344, the width the wide builds
+# baked until now. The paired height encodings (`mov wN, #1080` beside each width, and the
+# handheld `mov w22, #720` at the getter's entry) are routed the same way, reading the packed
+# size's high word: the cells' high halves hold 1080 and 720 unless the host overrides the
+# docked height (DM_RENDER_HEIGHT, the launcher's lowered-resolution frame-rate tier), so until
+# that tier is chosen every height stub loads the value the mov materialised, unchanged.
 # The handheld path is routed the same way, through the state page's second cell (+0x40, the width
 # at the handheld height 720): the getter's handheld sizes all flow through the `mov w23, #1280`
 # at its entry -- the default it stores before the mode checks and the fallback its docked checks
@@ -44,6 +48,8 @@ CUTS = {
 # baked one when the game starts (patch_nso.py HOST_FILLS, loader.c dm_fps_state_apply), the
 # same values the state page cells carry, so the reported size, the crop and the textures agree
 # on every screen: without the host variables the fills take 2344 / 1280, as baked until now.
+# With a height override (DM_RENDER_HEIGHT) the loader writes the docked height word after the
+# docked width too, in the same apply; the handheld height word keeps its baked 720.
 HOST_FILLS = {
   'fc9ea4ccc955d5799f37752b2d730b31': [('H', 0x6679240), ('D', 0x6679248)],
 }
@@ -54,8 +60,8 @@ HOST_FILLS = {
 # variable the host writes 2344, the width the wide builds baked until now, so a build behaves exactly as those did. The function
 # exists so the rewriter reserves the state page for this main (a FAR main: the page is appended to the image, see patch_nso.py);
 # the stubs are the game's only readers of the cell, and no frame step is installed (state +0 stays the profile's target, 0 for
-# this game). This build's heights are baked 1080 at every site and the cell's high half says the same, so the stubs read only the
-# low word, with the 32-bit load the original movz wN amounted to (same register, upper half zeroed).
+# this game). The width stubs read the cell's low word and the height stubs its high word (+0x3c docked, +0x44 handheld), each
+# with the 32-bit load the original movz wN amounted to (same register, upper half zeroed).
 # Each site below is a single `mov wN, #1920` that overwrites its register unconditionally -- an argument or a value about to be
 # stored -- so the stub writes only that register (adrp + ldr w + b back: no flags, no LR, nothing else observable). The flags
 # matter at the first site: the csel two instructions later still tests the tst before it. Sites in the order of the former cuts.
@@ -74,6 +80,25 @@ _WIDTH_SITES = [
 _WIDTH_SITES_HD = [
   (0x124e238, 23, '17a08052', 'size getter, handheld width (the entry default every handheld return flows through)'),
 ]
+# The height paired with each width above: the same sites materialise it as `mov wN, #1080` (docked) and the getter's entry
+# default as `mov w22, #720` (handheld), each beside its width site. The stubs read the packed size's high word (+0x3c docked,
+# +0x44 handheld), which the host fills with 1080 / 720 -- the baked values -- unless DM_RENDER_HEIGHT overrides the docked
+# height (loader.c dm_fps_state_apply), so the lowered-resolution frame-rate tier shrinks the render target at every site at
+# once and every other build renders exactly as before. Same stub shape as the widths: the mov overwrites its register
+# unconditionally, so adrp + ldr w + b back touches nothing else (the getter's csel still tests the tst before the pair)
+_HEIGHT_SITES = [
+  (0x124e2fc, 9, '09878052', 'size getter, docked path (dual check)'),
+  (0x124e32c, 8, '08878052', 'size getter, docked path (single check)'),
+  (0x124e36c, 8, '08878052', 'constant size getter'),
+  (0x128bf04, 2, '02878052', 'swapchain texture 1'),
+  (0x128bfac, 2, '02878052', 'swapchain texture 2'),
+  (0x128c13c, 2, '02878052', 'swapchain texture 3'),
+  (0x23f134c, 1, '01878052', 'Screen.SetResolution request (defaults initialiser)'),
+  (0x296b524, 1, '01878052', 'Screen.SetResolution request (settings apply)'),
+]
+_HEIGHT_SITES_HD = [
+  (0x124e23c, 22, '165a8052', 'size getter, handheld height (the entry default beside the handheld width)'),
+]
 def render_width(ctx):
     here, emit, site, put, state = ctx.here, ctx.emit, ctx.site, ctx.put, ctx.state
     for off, reg, orig, what in _WIDTH_SITES:
@@ -86,6 +111,16 @@ def render_width(ctx):
         start = here(); emit(ADRP(reg, here(), state)); emit(LDRW(reg, reg, 16))   # ldr wN, [xN, #0x40] (the handheld width, low word of the packed handheld render size)
         emit(B(here(), off + 4))
         put(off, [B(off, start)], f'{what}: render width from the host render size (state page +0x40)')
+    for off, reg, orig, what in _HEIGHT_SITES:
+        site(off, orig)
+        start = here(); emit(ADRP(reg, here(), state)); emit(LDRW(reg, reg, 15))   # ldr wN, [xN, #0x3c] (the height, high word of the packed render size)
+        emit(B(here(), off + 4))
+        put(off, [B(off, start)], f'{what}: render height from the host render size (state page +0x3c)')
+    for off, reg, orig, what in _HEIGHT_SITES_HD:
+        site(off, orig)
+        start = here(); emit(ADRP(reg, here(), state)); emit(LDRW(reg, reg, 17))   # ldr wN, [xN, #0x44] (the handheld height, high word of the packed handheld render size)
+        emit(B(here(), off + 4))
+        put(off, [B(off, start)], f'{what}: render height from the host render size (state page +0x44)')
 
 # The key is the module build ID as dm/tools/patch_nso.py computes it (module bytes 0x40..0x50; also the BUILD_ID header of
 # main.fixups.tsv) -- NOT the main= value of game.tsv's build line (which happens to agree for this game)
