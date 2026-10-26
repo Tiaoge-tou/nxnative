@@ -124,6 +124,14 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Fix:** `nvn_tex.c` `level_walk`: a level at least one tile wide, high and deep is laid out with its width padded to whole tiles, the levels from the first smaller one on form the mip tail (packed as usual), and the storage is whole tiles, 64 KB aligned.
 - **Found on:** [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md): laid out unpadded, the 1024×1024 ASTC 6×6 clothes of Hinoa and Minoto (43 GOBs wide instead of 48, level 1 at 0x81000 instead of 0x90000) read 2,183 all-zero blocks in level 0 and 3,043 in level 1, which ASTC decodes as its error colour: their trousers, sleeves and gloves were magenta, worst in Kamura Village.
 
+### Sparse textures take the block height of their 64 KB tile
+
+- **Symptom:** a CPU-filled texture shuffled into a patchwork of rectangles (OCTOPATH TRAVELER's world map on the traveler selection).
+- **Cause:** a sparse 2D texture without a packaged layout is laid out with the block height of its 64 KB tile, whose shape in blocks is the standard one: 256×256, 256×128, 128×128, 128×64 and 64×64 blocks for 1, 2, 4, 8 and 16 bytes per block, i.e. 32, 16, 16, 8 and 8 GOBs. The host used the [automatic block height](#automatic-block-height-truncates): 16 GOBs for the 4096×2048 BC1 map (512 block rows), whose tiles then landed in the wrong places.
+- **Fix:** `nvn_tex.c` `sparse_tile_h` gives such a texture its tile's block height; a packaged layout still wins.
+- **Found on:** [OCTOPATH TRAVELER](../../dm/games/010057D006492000/README.md) (Unreal Engine 4.18 flags its streamed and CPU-loaded textures sparse).
+- **Check:** the map's guest bytes deswizzled in Python at 1 to 32 GOBs read right only at 8; a 512×512 RGBA8 sprite sheet only at 16; [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md)'s packaged ASTC 6×6 textures (16 bytes per block) carry 8 in their layout. The 1- and 2-byte heights follow the same tile shapes and were not seen.
+
 ### Sparse textures bound from their first mapped level
 
 - **Symptom:** streamed textures read 0 (magenta on Monster Hunter Rise's title screen's clothes).
@@ -141,7 +149,7 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 
 - **Symptom:** the process ends at once (the window vanishes), with `-[MTLTextureDescriptorInternal validateWithDevice:]` failing an assertion such as `requests 9 mipmap levels, but the dimensions (1, 1, 1) can only support 1`, or `sampleCount must be > 1 for multisample textures`.
 - **Cause:** NVN takes texture fields Metal refuses, and Metal aborts instead of returning nil: more mip levels than the size holds (on NVN the extra levels are 1×1), an array or 3D texture of no layers, more than 2048 layers (a 1D array's layer count is its height, which the size check let through), and sample counts the GPU lacks (an M4 Pro has 1, 2 and 4; NVN also has 8 and 16). A blit at a level the Metal texture lacks is not checked either.
-- **Fix:** `tex_desc` makes such textures with the levels their size holds, one layer for none, and the largest sample count the GPU has below the one asked for (the pipelines follow, since their sample count is the attachments'). A red line names each case once. Textures of more than 2048 layers, and multisample textures of one sample, are not made. Copies and `ReadTexels` at a level the host texture lacks are skipped (`tex_level_ok`). Retail data is within every bound except, possibly, 8- or 16-sample targets.
+- **Fix:** `tex_desc` makes such textures with the levels their size holds and one layer for none. Textures of more than 2048 layers, and multisample textures of one sample or of a sample count the GPU lacks, are not made, as textures past Metal's size limits are (fewer samples would leave shaders reading sample indices past the texture). A red line names each case once. Copies and `ReadTexels` at a level the host texture lacks are skipped (`tex_level_ok`). Retail data is within every bound except, possibly, 8- or 16-sample targets.
 - **Found on:** reported by MacNativeGames (`f864eb0`): a mod's 1×1 texture in Tears of the Kingdom declaring 9 levels. No game here is known to reach it; the sample counts (an M4 Pro has 1, 2 and 4, and a multisample texture of one sample aborts) were checked on that Mac while porting the fix.
 - **Check:** `t_view_levels` makes each case with Metal's validation layer on: a 1×1 texture of 9 levels, a 3D texture whose depth holds the levels, an array of no layers, a 1D array of 4,096 layers, an 8-sample and a 1-sample multisample texture, and a copy at a missing level.
 
