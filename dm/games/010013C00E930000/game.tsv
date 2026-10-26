@@ -42,3 +42,9 @@ app_pool	0xCD500000
 # everything is under Data/: the player's serialized files and the StreamingAssets bundles
 shader_groups	/Data/=data
 shader_note	Hollow Knight: Silksong shaders
+
+# ---- Graphics ----
+# The launcher's frame-rate choice (settings.tsv SS_DISPLAY_HZ): 60, 120 at the full render size, or 120 at a lowered render size
+# (1916x882, the size the touch port measured on this class of screen). The front end drives the present, the present link and the
+# vi vsync event at the rate it measures on the screen, and falls back to 60 when the screen cannot hold 120 (hle_nvn.c)
+display_hz	120
