@@ -161,3 +161,12 @@ memory-dirty: $(B)/t_svc_memory_dirty
 memory-profile: $(B)/t_svc_memory
 	$(PYTHON) test_memory_profile.py
 run: memory memory-dirty memory-profile
+
+# A native blocking notification wait must release the thread's guest core.
+$(B)/t_notify_sched: t_notify_sched.c t_condvar_stub.c ../hle_thread.c ../hle_oe.c ../hle.h ../dm.h $(GAME_H) | $(B)
+	clang -O1 -g -Wall -Werror -Wno-unused-function -DDM_TEST_THREAD_ENTER -I.. $(GINC) -o $@ t_notify_sched.c t_condvar_stub.c
+.PHONY: notify-scheduler
+notify-scheduler: $(B)/t_notify_sched
+	$(B)/t_notify_sched
+	$(B)/t_notify_sched --all-peers
+run: notify-scheduler
