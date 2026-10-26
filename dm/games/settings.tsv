@@ -10,18 +10,19 @@
 #   section   Game, Controls or Performance: a heading on the single settings screen. Rows appear in table order within each section
 #             Reset to tested defaults clears all launcher choices; values fixed by an env file stay
 #   label, note  the setting's name and the line under it (may be empty; only for a setting with a cost: latency, memory, heat)
-DM_FPS_TARGET	choice	30=30 fps,60=60 fps	DM_GAME_FPS_TARGET	DM_GAME_FPS_TARGET!=0	Game	Frame rate
-DM_RENDER_SCALE	range	0.5:1.0:0.05	1.0	fixups:RENDER_SCALE	Game	Render scale
-DM_OPMODE	choice	1=Docked,0=Handheld	DM_GAME_OPMODE	always	Game	Console mode
-DM_PRESENT_UPSCALE	choice	off=Standard,metalfx=MetalFX	off	always	Game	Upscaling	Uses more GPU time and can increase heat.
-DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	Game language
-DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	always	Game	Frame-rate counter
-DM_TOUCH_HAPTICS	toggle	-	1	always	Controls	Touch feedback
-DM_RUMBLE	toggle	-	1	always	Controls	Game rumble
-DM_RUMBLE_GAIN	range	0:3:0.1	1.0	always	Controls	Rumble strength
-DM_PRESENT_SNAP	toggle	-	DM_GAME_PRESENT_SNAP	gfxapi:nvn	Performance	Frame buffering	Up to one frame more display latency.
-DM_PSO_MTL4	toggle	-	DM_GAME_PSO_MTL4	gfxapi:nvn	Performance	Metal 4 pipelines	Keeps a pipeline archive; uses more memory.
-DM_PSO_PREBUILD	toggle	-	1	gfxapi:nvn	Performance	Pipeline prebuild	The first start waits a few minutes for it, once.
-DM_NVN_ENC_THREAD	toggle	-	1	gfxapi:nvn	Performance	Encode thread
-DM_FPS_HOLD	toggle	on/off	DM_GAME_FPS_HOLD	DM_GAME_FPS_TARGET!=0	Performance	Hold frames when late
-DM_METAL_HUD	toggle	-	0	always	Performance	Performance HUD
+DM_FPS_TARGET	choice	30=30 帧,60=60 帧	DM_GAME_FPS_TARGET	DM_GAME_FPS_TARGET!=0	Game	帧率	目标帧率（游戏支持时可选）
+DM_RENDER_SCALE	range	0.5:1.0:0.05	1.0	fixups:RENDER_SCALE	Game	渲染缩放	低于 100% 更流畅，画面稍糊
+DM_OPMODE	choice	1=底座模式,0=掌机模式	DM_GAME_OPMODE	always	Game	主机模式	底座 = 1080p 电视模式；掌机 = 720p，部分游戏的触屏功能仅掌机模式可用
+DM_PRESENT_UPSCALE	choice	off=标准,metalfx=MetalFX	off	always	Game	超分	更吃 GPU，可能增加发热。
+DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	游戏语言	游戏内文本语言
+DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	always	Game	帧数计数器	左上角显示实时帧数
+DM_TOUCH_HAPTICS	toggle	-	1	always	Controls	触控反馈	按下触屏按键时轻震一下
+DM_RUMBLE	toggle	-	1	always	Controls	游戏震动	游戏内震动传到手机或手柄
+DM_RUMBLE_GAIN	range	0:3:0.1	1.0	always	Controls	震动强度	与游戏内的震动设置叠加生效
+DM_HADES_SKIN	toggle	-	1	DM_GAME_DISPLAY_WIDE!=0	Controls	按键皮肤	开 = 图标皮肤；关 = 玻璃按键
+DM_PRESENT_SNAP	toggle	-	DM_GAME_PRESENT_SNAP	gfxapi:nvn	Performance	帧缓冲	可能减少卡顿；会增加显示延迟。
+DM_PSO_MTL4	toggle	-	DM_GAME_PSO_MTL4	gfxapi:nvn	Performance	Metal 4 管线	保留管线档案；占用更多内存。
+DM_PSO_PREBUILD	toggle	-	1	gfxapi:nvn	Performance	管线预构建	首次启动需等待几分钟，仅一次。
+DM_NVN_ENC_THREAD	toggle	-	1	gfxapi:nvn	Performance	编码线程
+DM_FPS_HOLD	toggle	on/off	DM_GAME_FPS_HOLD	DM_GAME_FPS_TARGET!=0	Performance	迟帧保持
+DM_METAL_HUD	toggle	-	0	always	Performance	性能面板	苹果开发者性能浮层（GPU、帧时间等），一般保持关闭
