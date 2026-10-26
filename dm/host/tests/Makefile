@@ -25,6 +25,7 @@ run: $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture $(B)/t_oe $(B)/t_fs $(B)/t_fs_
 	$(B)/t_pctl
 	$(B)/t_time
 	$(B)/t_shared_font
+	$(B)/t_system_event
 	$(B)/t_vorbis
 	$(B)/t_vorbis_divides
 	$(B)/t_hid
@@ -32,6 +33,12 @@ run: $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture $(B)/t_oe $(B)/t_fs $(B)/t_fs_
 	$(B)/t_haptics_apple
 	$(B)/t_nro
 run: $(B)/t_nro
+run: $(B)/t_system_event
+$(B)/t_system_event: t_system_event.c ../hle_thread.c ../hle_sdk16.c ../hle.h ../dm.h $(GAME_H) | $(B)
+	clang -O1 -g -Wall -Werror -Wno-unused-function -Wno-frame-address -I.. $(GINC) -o $@ t_system_event.c
+.PHONY: system-event
+system-event: $(B)/t_system_event
+	$(B)/t_system_event
 $(B)/t_nro: t_nro.c ../loader.c ../hle_ro.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	clang -O1 -g -Wall -Wno-unused-function -Wno-deprecated-declarations -I.. $(GINC) -o $@ t_nro.c
 .PHONY: nro

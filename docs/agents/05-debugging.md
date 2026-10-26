@@ -110,6 +110,16 @@ A crash that needs an unlucky thread interleaving (one run in three, or once in 
 
 To see the order of events, put temporary observation gates (`OBS` in the profile's `patches.py`, only at function entries or right after a `bl`, on position-independent instructions) on the functions involved. Their host callbacks append `(time, thread, event, pointers)` to an in-memory ring, and the crash handler prints the last ~150 entries. Printing each event as it happens is too slow and changes the timing. A function whose first instruction is PC-relative (an `adrp`, typical of short destructors) cannot take a gate: a temporary cut can put `svc #0x8f` at its entry and move its body into the `udf` padding after it (inside the same 4 KB page, an `adrp` keeps its encoding), with `svc_host_call` handling the number. Inside the host callback, the caller's return address is on the guest stack, in the frame the gate pushed (`regs + 800 + 8`), because the gate's own call has replaced `x30`. Remove all of it afterwards.
 
+## Threading cut regressions
+
+`dm/tools/check_thread_cuts.py` replays the registered FFT 1.4.0 and Link's Awakening 1.1.0 cuts against original NSOs without storing game bytes in the repository. Use a Python with `lz4` and `unicorn` (on Apple silicon Unicorn's JIT needs execution outside the agent sandbox):
+
+```bash
+python3 dm/tools/check_thread_cuts.py "<FFT ExeFS>/main" "<Link's Awakening ExeFS>/main"
+```
+
+It verifies build IDs and original instructions, relocates vtables, then checks that the original wrong-worker wake and late destructor fail while the registered cuts pass. `--original` instead asserts the originals are safe and exits nonzero on these failures. This is a controlled instruction replay: FFT's SDK event is a FIFO model, and the physics scene getter supplies a test manager. It does not reproduce the full kernel or gameplay. `make -C dm/host/tests GAME=010038B015560000 preempt` independently checks actual host condition priority/FIFO, mutex reacquisition, start and wake handoffs. Keep the game-specific observations in their notes.
+
 ## Memory growth
 
 1. The host's memory report line (`memory up to frame …`) every few hundred frames; `footprint -p <pid>` from outside. On a phone, a crash with no log usually means `headroom to the system memory limit` reached 0.

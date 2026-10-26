@@ -75,7 +75,9 @@ cp "$PATCHED"/*.fixups.tsv "$PATCHED"/*.gates.tsv "$PATCHED"/*.cuts.tsv "$PATCHE
 if [ -f "$PATCHED/nro.tsv" ]; then cp "$PATCHED/nro.tsv" Gen/dm/ || die "copy the NRO table"; fi   # the NRO modules the game loads with nn::ro (hle_ro.c), embedded by gen_embed.py
 if [ "$GFXAPI" = vulkan ] || [ "$GFXAPI" = gl ]; then cp "$GD/shader_map.tsv" "$GD/pso_manifest.tsv" Gen/dm/ || die "copy shader tables"   # empty NVN tables: the NVN layer draws nothing
 else cp "$GD/shader_map.tsv" "$GD/pso_manifest.tsv" "$GD/c1_full.tsv" Gen/dm/ || die "copy shader tables"
-  if [ -f "$GD/cb_extent.tsv" ]; then cp "$GD/cb_extent.tsv" Gen/dm/ || die "copy cb_extent.tsv"; else t "no $GD/cb_extent.tsv: the host copies whole uniform bindings"; fi; fi   # optional
+  if [ -f "$GD/cb_extent.tsv" ]; then cp "$GD/cb_extent.tsv" Gen/dm/ || die "copy cb_extent.tsv"; else t "no $GD/cb_extent.tsv: the host copies whole uniform bindings"; fi
+  # the shader pairs, beside the shader map where the pipeline prebuild reads them (nvn_mtl.m pso_prebuild): without them the app makes no pulling bases, and a hybrid draw has no stand-in
+  for f in shader_pairs.tsv pso_pairs.tsv; do if [ -f "$GD/$f" ]; then cp "$GD/$f" Gen/dm/ || die "copy $f"; fi; done; fi   # optional
 # The launcher's settings for this game (Launcher.swift): dm/games/settings.tsv filtered by the profile, main's rewriter table and the game's languages (dm/games/settings.py)
 L=$(GFXAPI="$GFXAPI" python3 "$DM/games/settings.py" "$GAME" "$PATCHED" "$VNACP" Gen/dm/launcher.json) || die "launcher settings (dm/games/settings.py)"; t "launcher: $L"
 # Diagnostic build: DM_ENV_FILE=file → dm/env.txt in the bundle (main.m sets one environment variable per line at boot)
@@ -140,5 +142,10 @@ P=Payload/DmIOS.app; MAPS=("$P=$APP" "$P/msl/$MSLDIR=$MSL_IOS/$MSLDIR")
 if [ -n "$AOC" ] && [ -d "$AOC" ]; then MAPS+=("$P/aoc=$AOC"); t "add-on content: $(ls "$AOC" | tr '\n' ' ')"; fi
 MAPS+=("$P/romfs=$ROMFS")
 t "pack IPA (already-compressed game files stored, everything else deflated)"
-python3 tools/pack_ipa.py "$OUT_IPA" --store "$(gp zip_store)" --skip $P/_CodeSignature --skip $P/embedded.mobileprovision --skip $P/msl --skip $P/aoc --skip $P/romfs "${MAPS[@]}" || die "pack_ipa"
+# The pulling vertex libraries (<key>_bp, dm/gfx/tools/dmsh_pull.py) serve the hybrid pipelines. Default to the same pso_mtl4 setting compiled by gen_build.py; IOS_PULL=0 / 1 overrides it.
+PULL=$(sed -n 's/^#define DM_GAME_PSO_MTL4 //p' "$DM/host/gen/$GAME/game_profile.h") || die "read game profile header"
+case "$PULL" in 0|1) ;; *) die "no DM_GAME_PSO_MTL4 in generated game profile";; esac
+# Keep this array nonempty: macOS Bash 3.2 treats an empty array as unset under set -u.
+PACK_OPTS=(--store "$(gp zip_store)"); [ "${IOS_PULL:-$PULL}" = 1 ] || PACK_OPTS+=(--skip-suffix _bp.metallib)
+python3 tools/pack_ipa.py "$OUT_IPA" "${PACK_OPTS[@]}" --skip $P/_CodeSignature --skip $P/embedded.mobileprovision --skip $P/msl --skip $P/aoc --skip $P/romfs "${MAPS[@]}" || die "pack_ipa"
 t "done: $OUT_IPA ($(du -h "$OUT_IPA" | cut -f1))"
