@@ -97,6 +97,8 @@ def header(g):
     if pi not in ('game', 'display'): sys.exit(f'{g.id}: present_interval must be game or display: {pi}')
     ft = g.get('fps_target', '0')   # frame rate cap of the rewriter's frame step (FRAME_STEP in the profile's patches.py: Tears of the Kingdom 1.4.3, Breath of the Wild 1.9.0) or of the engine's own frame limit (hle_fpslock.c): 0 = the game's own step, 30 / 60
     if ft not in ('0', '30', '60'): sys.exit(f'{g.id}: fps_target must be 0, 30 or 60: {ft}')
+    dh = g.get('display_hz', '0')   # the highest display rate the launcher's frame-rate choice offers (settings.tsv SS_DISPLAY_HZ; the iOS front end drives the present, the present link and the vi vsync event at a rate it measures on the screen, hle_nvn.c): 0 = no choice, 60 Hz only; 120 = the 120 Hz tiers
+    if dh not in ('0', '120'): sys.exit(f'{g.id}: display_hz must be 0 or 120: {dh}')
     fh = g.get('fps_hold', 'on')   # whether the frame step may hold a frame longer than the cap's vsyncs when frames come late (hle_nvn.c fstep_tick): on / off
     if fh not in ('on', 'off'): sys.exit(f'{g.id}: fps_hold must be on or off: {fh}')
     ps = g.get('present_snap', 'off')   # present snapshots by default (nvn_mtl.m mtl_snap_on; DM_PRESENT_SNAP and the iOS launcher's Frame buffering override it): on / off
@@ -161,6 +163,7 @@ def header(g):
          f'#define DM_GAME_CORE_PREEMPT {int(cp == "on")}',
          f'#define DM_GAME_ALLOC_BIG_ALIGN {int(aba == "on")}',
          f'#define DM_GAME_FPS_TARGET {int(ft)}',
+         f'#define DM_GAME_DISPLAY_HZ {int(dh)}',
          f'#define DM_GAME_FPS_HOLD {int(fh == "on")}',
          f'#define DM_GAME_PRESENT_SNAP {int(ps == "on")}',
          f'#define DM_GAME_PSO_MTL4 {int(p4 == "on")}',
