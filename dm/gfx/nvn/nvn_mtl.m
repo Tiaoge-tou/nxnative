@@ -112,6 +112,12 @@ static uint64_t g_link_dropped;
 static double g_link_hold_until; static uint64_t g_link_held;   // Changed only on the display-link callback thread: the time the previous frame must stay on screen until by its present interval (0 = no hold), and the ticks that took no new frame because of it
 static int g_pq_inflight;   // Under g_pq_mu: number of presents committed to the GPU whose completion callback has not arrived yet
 int g_dm_present_link;   // Present pacing mode (runtime value of DM_PRESENT_LINK, modified directly during same-process alternating measurement): 0 = acquire the drawable itself; 1 = display link at 60 Hz; 2 = display link at 120 Hz, the game presents a frame every other display-link tick
+static int g_link_want_120, g_link_120_auto;   // the display-rate mode (hle_nvn.c dm_display_set_hz) asked for the 120 Hz link, and whether this function set it (a mode from the user's own DM_PRESENT_LINK is not this layer's to undo)
+void mtl_present_link_120(int on) {
+    g_link_want_120 = on;
+    if (on) { if (g_dm_present_link == 1) { g_dm_present_link = 2; g_link_120_auto = 1; MLOG("present link 120 Hz (the display rate the front end measured)"); } }
+    else if (g_link_120_auto) { g_link_120_auto = 0; if (g_dm_present_link == 2) { g_dm_present_link = 1; MLOG("present link back to 60 Hz (the display rate fell back)"); } }
+}
 static int g_present_latency = 1;
 static uint64_t g_pq_done;
 static uint64_t g_pq_read;
@@ -340,7 +346,8 @@ void mtl_init(void) {
     if (g_dev) return;
     const char *vbc = getenv("DM_NVN_VBUF_CACHE"); g_vbuf_cache = !(vbc && !strcmp(vbc, "0"));
     const char *link = getenv("DM_PRESENT_LINK");
-    g_dm_present_link = link ? atoi(link) : 1; if (g_dm_present_link < 0 || g_dm_present_link > 2) g_dm_present_link = 1;   // Default 1 (real-device same-process alternation: when load exceeds one display-link period, long frames 15% → 0 and frame intervals even out; no difference from 0 at a steady 60); DM_PRESENT_LINK=0 turns it off   // 1 = present on every tick of a 60 Hz display link; 2 = 120 Hz display link, the game presents a frame every other display-link tick (when behind, it can present on the next 8.33 ms display-link tick)
+    g_dm_present_link = link ? atoi(link) : 1; if (g_dm_present_link < 0 || g_dm_present_link > 2) g_dm_present_link = 1;   // Default 1 (real-device same-process alternation: when load exceeds one display-link period, long frames 15% → 0 and frame intervals even out; no difference from 0 at a steady 60); DM_PRESENT_LINK=0 turns it off   // 1 = present on every tick of a 60 Hz display link; 2 = display link at 120 Hz: with the display-rate mode on, a frame presents on any 8.33 ms display-link tick (the vi vsync event follows the same measured rate, hle_sdk16.c); without it, the game presents a frame every other tick (a 60 fps game on a 120 Hz screen)
+    if (g_link_want_120) mtl_present_link_120(1);   // the display rate was measured before this layer started: apply its link mode now
     const char *latency = getenv("DM_PRESENT_LATENCY");
     if (latency && atoi(latency) > 0) g_present_latency = atoi(latency);
     g_res_check_on = getenv("DM_RES_CHECK") != NULL;
@@ -10452,11 +10459,12 @@ int mtl_link_wait_tick(int vsyncs, uint64_t timeout_ns) {
     pthread_mutex_unlock(&g_link_mu); return 1;
 }
 
-// The display's vsync for vi::GetDisplayVsyncEvent (hle_sdk16.c): returns 1 at the first display-link tick of the next 60 Hz vsync after *seen (the tick count it last returned, updated),
-// 0 when the link does not run, runs at 30 Hz (power saving: the 60 Hz event cannot come from it) or gives no tick within the timeout; the caller then keeps its own clock
+// The display's vsync for vi::GetDisplayVsyncEvent (hle_sdk16.c): returns 1 at the first display-link tick of the next vsync after *seen (the tick count it last returned, updated),
+// 0 when the link does not run, runs at 30 Hz (power saving: the 60 Hz event cannot come from it) or gives no tick within the timeout; the caller then keeps its own clock.
+// A vsync is one tick at 60 Hz, or every other tick at 120 Hz -- unless the display-rate mode is driven (hle_nvn.c dm_display_set_hz), when a vsync is every tick of the 120 Hz link
 int mtl_link_wait_vsync(uint64_t *seen, uint64_t timeout_ns) {
     if (!mtl_link_active() || g_link_mode == 3) return 0;
-    const uint64_t step = g_link_mode == 2 ? 2 : 1;
+    const uint64_t step = g_link_mode == 2 && !dm_display_hz() ? 2 : 1;
     pthread_mutex_lock(&g_link_mu);
     if (*seen > g_link_tick_n || g_link_tick_n > *seen + 4 * step) *seen = g_link_tick_n;   // first call, or far behind (a stall): from the current tick on, no burst
     struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
