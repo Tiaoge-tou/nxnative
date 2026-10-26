@@ -156,6 +156,13 @@ The guest address space, heaps, pools, virtual address memory and the allocators
 - **Found on:** [Pokémon Legends: Z-A](../../dm/games/0100F43008C44000/README.md) (2.0.2, SDK 19.3.11; one boot); [Paper Mario: The Thousand-Year Door](../../dm/games/0100ECD018EBE000/README.md): the allocator maps 1.5 GB at boot and 2.0 GB by the arrival in Rogueport. The `sdk` build is [Celeste](../../dm/games/01002B30028F6000/README.md)'s. Absolum's malloc StandardAllocator (40 GB, cut to 2.5 GB) is in [.NET NativeAOT malloc and the GC region range](#net-nativeaot-malloc-and-the-gc-region-range).
 - **Note:** on Pokémon Legends: Z-A, `QueryMemoryInfo` reporting more than 4 GB would take the game's big-memory path (heaps of allocatable − 4.27 GB instead of − 2.76 GB).
 
+### Separate virtual ranges in Snowdrop's page allocator
+
+- **Symptom:** a write to `0x20000ffff` in static initialization (`main+0x164990`), after `AllocateAddressRegion` returns `0x1803`; reducing the request to 3 GB still returns `0x1803` with the SDK's original large-region alignment. With only the outer ranges reduced, a later free crashes at `main+0x1668dc` after reading compressed file data as a slab-owner pointer.
+- **Cause:** the engine reserves three adjacent virtual ranges before committing pages in them. Its enclosing reservation exceeds the iPhone's available guest address space, and the engine does not check the failed reserve before deriving the page addresses. A smaller reservation also needs the SDK's node area and large-region alignment adapted: a separate metadata reservation comes first, and the 1 GB alignment wastes the remaining contiguous space. The large-allocation child has an independent maximum page count; reducing only the outer range lets it allocate across the boundary used by `free` to distinguish allocation classes.
+- **Fix:** the build-gated game cuts reduce the range sizes, their combined reservation and the large allocator's maximum page count together. The fixed metadata reserve remains large enough, and page allocation, commits and frees retain their behavior. The SDK build gets the existing [node-area cut](#the-sdks-address-region-node-area) and [32 MB alignment](#1-gb-alignment-of-regions-of-1-gb-and-more). Per-range occupancy and the original growth fallbacks remain **open** until sustained gameplay validates the smaller ranges; see the game note for the layout, cut sites and current validation.
+- **Found on:** [Mario + Rabbids Sparks of Hope](../../dm/games/0100317013770000/README.md) (1.6.2225577, SDK 13.3.5).
+
 ### .NET NativeAOT malloc and the GC region range
 
 - **Symptom:** `nn::diag` abort at `sdk+0x12dad0` in `nninitStartup`, called from `main+0x756310`.

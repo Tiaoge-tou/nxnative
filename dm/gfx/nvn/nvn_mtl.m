@@ -1845,7 +1845,7 @@ static id<MTLTexture> tex_upgrade(const tex_t *t, id<MTLTexture> base, MTLTextur
         if (!named) tex_put(t->serial, upgraded);
         defer_obj_release(base);
     }
-    MLOG("texture upgraded to allow %s ser=%llu base format %lu → view format %lu (upgrades=%llu)", add & MTLTextureUsageRenderTarget ? "render-target use" : "format views", t->serial, (unsigned long)base.pixelFormat, (unsigned long)view_pf, ++g_pfv_upgrades);
+    MLOG("texture upgraded to allow %s ser=%llu base format %lu → view format %lu (upgrades=%llu)", add & MTLTextureUsageShaderWrite ? "image writes" : add & MTLTextureUsageRenderTarget ? "render-target use" : "format views", t->serial, (unsigned long)base.pixelFormat, (unsigned long)view_pf, ++g_pfv_upgrades);
     return upgraded;
 }
 static id<MTLTexture> tex_upgrade_pfv(const tex_t *t, id<MTLTexture> base, MTLPixelFormat view_pf) { return tex_upgrade(t, base, MTLTextureUsagePixelFormatView, view_pf); }
@@ -3890,6 +3890,14 @@ void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) {
                  t->set_swz, t->swz & 7, t->swz >> 3 & 7, t->swz >> 6 & 7, t->swz >> 9 & 7, v != NULL, v ? v->set_swizzle : 0, v ? v->swz[0] : 0, v ? v->swz[1] : 0, v ? v->swz[2] : 0, v ? v->swz[3] : 0,
                  v ? v->set_format : 0, v ? v->format : 0);
     }
+}
+// RegisterImage explicitly declares image use. Keep that intent in the host snapshot without changing the guest texture or forcing every render target to lose Metal's compression.
+// If it already has a backing, image_prepare
+// adds the usage before the first draw / dispatch that uses this descriptor, preserving the previous GPU content through tex_upgrade.
+void mtl_reg_image(int tid, const tex_t *t, const view_t *v) {
+    if (!t) { mtl_reg_tex(tid, NULL, v); return; }
+    tex_t image = *t; image.d.flags |= NVN_TEXTURE_FLAGS_IMAGE;
+    mtl_reg_tex(tid, &image, v);
 }
 void mtl_reg_samp(int sid, const samp_par *sp) {
     int id_ = sid; if (id_ < 0) return;
@@ -5950,7 +5958,13 @@ static id<MTLTexture> img_binding(int tid, const nvn_rbind *b, uint64_t *rid, in
     void *tv = NULL; *rid = tid ? tex_fast_rid(tid, &tv) : 0;
     id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
     int swz_only = t && !(t.usage & MTLTextureUsageShaderWrite) && (t.parentTexture.usage & MTLTextureUsageShaderWrite);
-    if (t && !(t.usage & MTLTextureUsageShaderWrite) && !swz_only) { RED_ONCE(32, "texture bound to an image slot lacks the shader-write usage (texture ID %d)", tid); t = nil; }
+    if (t && (b->rw || b->atom) && !(t.usage & MTLTextureUsageShaderWrite) && !swz_only) {
+        const tex_t *tt = tid > 0 && tid < g_ntreg && g_treg[tid].ok ? &g_treg[tid].t : NULL;
+        RED_ONCE(32, "texture bound to an image slot lacks the shader-write usage (texture ID %d, serial %llu, target %d, format %#x, flags %#x, Metal usage %#lx, parent usage %#lx, slot %u, writes %u)",
+                 tid, tt ? (unsigned long long)tt->serial : 0ull, tt ? (int)tt->d.target : -1, tt ? (unsigned)tt->d.format : 0u, tt ? (unsigned)tt->d.flags : 0u,
+                 (unsigned long)t.usage, (unsigned long)t.parentTexture.usage, (unsigned)b->reg, (unsigned)b->rw);
+        t = nil;
+    }
     if (t && (swz_only || (b->dpf != NVN_DPF_FLOAT && mtl_pf_dpf(t.pixelFormat) != b->dpf))) {
         uint64_t r2 = 0; id<MTLTexture> v = img_fit(tid, t, b->dpf, &r2);
         if (v) { t = v; *rid = r2; } else if (swz_only) t = nil;
@@ -5958,6 +5972,40 @@ static id<MTLTexture> img_binding(int tid, const nvn_rbind *b, uint64_t *rid, in
     *real = t != nil;
     if (!t) { t = dummy_img(b->dtt, b->dpf); *rid = g_dummy_img_rid[b->dtt & 7][b->dpf & 3]; }
     return t;
+}
+// Resolve shader image writes before an encoder is opened. Snowdrop's cf5ba107e29b51f4 writes a COMPRESSIBLE-only R16F texture registered with RegisterTexture, not RegisterImage.
+// An image bind may follow rendering into a texture created without IMAGE; upgrading it inside encode_args would
+// copy out of an attachment while its render pass was still open. Close that pass first, then replace the shared backing (all registered sampled views follow g_ser_gen).
+static void image_prepare(NvProg *pr, unsigned stages) {
+    if (!pr) return;
+    for (int st = 0; st < 6; st++) {
+        if (!(stages & (1u << st))) continue;
+        NvShader *sh = pr->sh[st]; if (!sh) continue;
+        for (int i = 0; i < sh->rf.nb; i++) {
+            const nvn_rbind *b = &sh->rf.b[i]; if (b->kind != NVN_RB_IMG || b->reg >= 32 || (!b->rw && !b->atom)) continue;
+            int tid = (int)(S.img[st][b->reg] & 0xfffff); if (tid <= 0) continue;
+            os_unfair_lock_lock(&g_rmu);
+            if (tid >= g_ntreg || !g_treg[tid].ok) { os_unfair_lock_unlock(&g_rmu); continue; }
+            // The actual image binding is image intent too: some engines write a descriptor with RegisterTexture and use its handle in an image slot.
+            tex_t image = g_treg[tid].t; image.d.flags |= NVN_TEXTURE_FLAGS_IMAGE;
+            id<MTLTexture> base = tex_mtl(&image); while (base.parentTexture) base = base.parentTexture;
+            int upgrade = base && !(base.usage & MTLTextureUsageShaderWrite);
+            os_unfair_lock_unlock(&g_rmu);
+            if (!upgrade) continue;
+            rp_end();
+            os_unfair_lock_lock(&g_rmu);
+            // A guest registration can change while the pass ends; resolve its current snapshot again under the descriptor lock.
+            if (tid < g_ntreg && g_treg[tid].ok) {
+                image = g_treg[tid].t; image.d.flags |= NVN_TEXTURE_FLAGS_IMAGE;
+                base = tex_mtl(&image); while (base.parentTexture) base = base.parentTexture;
+                if (base && !(base.usage & MTLTextureUsageShaderWrite)) {
+                    tex_upgrade(&image, base, img_usage(&image, base.pixelFormat), base.pixelFormat);
+                    args_dirty_all();
+                }
+            }
+            os_unfair_lock_unlock(&g_rmu);
+        }
+    }
 }
 // Image atomics run natively on the image's own texture (dmsh_atomic.py), so they and every other access of the image see the same texels: a block-linear image's Metal texture as
 // much as a linear one's pool memory. They used to go through a raw pointer beside the texture, which for a block-linear image (a deswizzled copy) could only be a scratch buffer
@@ -8483,6 +8531,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     g_mdxc.next = NULL;
     if (!S.prog) { RED_ONCE(18, "no program bound before the draw"); PD("Z %llu draw skipped: no program bound", g_stat_pass + !g_enc); return; }
     __unsafe_unretained NvProg *pr = g_geo_program ? g_geo_program : prog_get(S.prog);
+    image_prepare(pr, 0x1f);
     draw_gs_check(pr);   // a geometry stage left with no function (see prog_fold_gs)
     if (S.rast_discard) { tf_draw(pr, dw, di); return; }   // the vertex stage only: transform feedback capture, or nothing (tf_draw)
     // Transform feedback records every draw between Begin and End, rasterized or not: Donkey Kong Country: Tropical Freeze captures its fur's lagged positions with rasterization on
@@ -8854,6 +8903,7 @@ static void dispatch(const p_dispatch *dp) {
     if (!tg[0]) { RED_ONCE(29, "compute shader lacks threadgroup size reflection"); return; }
     if (g_nubd && ubd_conflict_cs(cs, dp->ind)) { g_ubd_conflicts++; ubd_land(); }   // see ubd_conflict_cs
     rp_end();
+    image_prepare(prog_get(S.cprog), 0x20);
     int own = dispatch_own();
     if (own && g_blit) { enc_b_end(g_blit); g_blit = nil; }
     id<MTLComputeCommandEncoder> ce = own ? pg_compute() : (id<MTLComputeCommandEncoder>)dispatch_enc();

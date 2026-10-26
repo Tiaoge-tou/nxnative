@@ -37,6 +37,7 @@
 #   · control sections loose in main, in no GLSLC output or BNSH file (Advance Wars 1+2: Re-Boot Camp's Bink 2 shaders): paired with their code areas by data records or adjacency, see raw_shaders
 #   · SNVN (Retro Studios, Donkey Kong Country: Tropical Freeze): zlib program records in the SNVN chunks of MaterialArchive.arc, of the MTRL resources in its .pak archives
 #       and of the startup material archive LZSS-compressed in main, see rfrm_shaders and retro_main_forms
+#   · BERG (Snowdrop, Mario + Rabbids Sparks of Hope): shader objects in the individually zstd-compressed records of its SDF data slices, see snowdrop_shaders
 # Code area: 0x30 header + (graphics) 0x50 SPH + instructions; header magic 0x12345678 for graphics, 0x12345679 for compute. The control section starts with 0x98761234, +0x704 = code area length,
 #   +0x700 = start of the c1 constant segment within the code area; for compute +0x748 thread group xyz (u32 ×3), +0x754 shared memory bytes (checked one by one against PC reflection on D2R's 22 compute shaders).
 # Stage: BNSH uses the stage slot; BAHS uses bits 10..13 of SPH word 0 (1 vertex 2 hull 3 domain 4 geometry 5 pixel), and a compute header means compute.
@@ -44,7 +45,7 @@
 #   (SecredUber's 16600 stage shaders have only 3079 distinct control sections, with 6367 cases of same control, different code), so hashing the control alone picks the wrong library.
 # Output: <package dir>/<stage>_<source group>.bin, each record = 'BTCDBTCD' + header (+0x28 control length, +0x2c code length) padded to 0x38 + code area + control section, one copy per key;
 #   map rows have the same columns as D2R's shader_map.tsv (column 5 records where the key first appeared); the answer table has one row per compute shader {"local", "shared"} (shared memory rounded up to 16 bytes, as D2R did).
-# Usage: shader_split.py <RomFS dir> <ExeFS main> <output package dir> <output map> <output answer table> [<output pair table> [<output pipeline pair table (pso_pairs.tsv)>]]   (decompressing main needs lz4: run with dm's venv python)   Environment J=concurrency (default 8)
+# Usage: shader_split.py <RomFS dir> <ExeFS main> <output package dir> <output map> <output answer table> [<output pair table> [<output pipeline pair table (pso_pairs.tsv)> [<DLC RomFS dirs, comma-separated>]]]   Environment J=concurrency (default 8)
 #   With an update: give RomFS and main as comma-separated lists (base game first, e.g. data/v0/RomFS,data/v327680/RomFS); the output is the union of both versions (see main())
 #   Unity type trees need Unity's common string table, which is taken from the first main
 # Pair table: (vertex key, pixel key) of every BNSH variation (every Unity program); dmsh_build uses it to give vertex shaders the outputs their pixel shaders read but they do not write (see dmsh_build.py vs_pad)
@@ -248,6 +249,31 @@ def glslc_shaders(d, label, need=True):
             if not st or check(label, st, ctl, code): continue
         out.append((f'{label}#GLSLC@{h:#x}', st, ctl, code))
     if not out and need: red(f'{label}: no GLSLC output')
+    return out
+
+SNOWDROP_RECORD = bytes.fromhex('c600cdab')
+def snowdrop_shaders(d, label):
+    """Snowdrop's BERG data slices (SDF version 22): compressed shader records have a 20-byte header {0xabcd00c6, flags, 0, raw length, stored length}, then one zstd frame.
+    The shader object inside keeps each control section immediately before its code area; its own +0x20 and +0x704 give their lengths. Both sections are byte-packed, without alignment.
+    Sparks of Hope's base shader slice has 17,931 records with 18,016 stages (85 hold a second stage), and its update slice adds 443 records. Other assets use bare zstd frames or
+    uncompressed data without this header. A census of all 324,413 valid frames in every slice found no further shaders. Shader programs hold one stage; pairs are selected at draw time.
+    Scan by the record header rather than slice names or every possible zstd magic: compressed bytes can contain a coincidental frame header, which is not another asset."""
+    out = []
+    for m in re.finditer(re.escape(SNOWDROP_RECORD), d):
+        h = m.start()
+        if h + 24 > len(d) or d[h + 20:h + 24] != ZSTD_MAGIC: continue
+        nraw, nstored = struct.unpack_from('<II', d, h + 12)
+        if not nstored or h + 20 + nstored > len(d): red(f'{label} Snowdrop record @{h:#x}: stored bytes out of bounds')
+        raw = zstd_mod().decompress(d[h + 20:h + 20 + nstored])
+        if len(raw) != nraw: red(f'{label} Snowdrop record @{h:#x}: expected {nraw} raw bytes, got {len(raw)}')
+        for cm in re.finditer(re.escape(CTL_MAGIC), raw):
+            c = cm.start()
+            if c + 0x708 > len(raw): continue
+            nc, nk = struct.unpack_from('<I', raw, c + 0x20)[0], struct.unpack_from('<I', raw, c + 0x704)[0]
+            if nc < 0x760 or nc & 3 or nk < 0x34 or c + nc + nk > len(raw): continue
+            ctl, code = raw[c:c + nc], raw[c + nc:c + nc + nk]
+            st = glslc_stage(ctl, code)
+            if st and not check(label, st, ctl, code): out.append((f'{label}#SNOWDROP@{h:#x}:{c:#x}', st, ctl, code))
     return out
 
 NEEDLE = b'HNSHV002'
@@ -1753,7 +1779,7 @@ def ps_inputs(code):
     """Generic attributes a pixel shader reads: SPH words 6–13 are the input map, 8 bits for each of the 32 attributes (Ryujinx ShaderHeader.ImapTypes), non-zero = read; the translated MSL inputs are exactly user(locn<attribute>)"""
     return {i for i in range(32) if struct.unpack_from('<I', code, 0x30 + 4 * (6 + (i >> 2)))[0] >> ((i & 3) * 8) & 0xff}
 
-SINGLE_STAGE = ('#GLSLC@', '#UE', '#MTSPK@', '#MGFX@', '#NLG', '#PGSO', '#RAW@', '#TFXO@', '#NEEDLE@')   # sources whose every shader is a program of one stage: GLSLC outputs, Unreal's shader records, MT Framework's shader package (BNSH variations, Unity programs, MSHD and SDF pair theirs);
+SINGLE_STAGE = ('#GLSLC@', '#UE', '#MTSPK@', '#MGFX@', '#NLG', '#PGSO', '#RAW@', '#TFXO@', '#NEEDLE@', '#SNOWDROP@')   # sources whose every shader is a program of one stage: GLSLC outputs, Unreal's shader records, MT Framework's shader package (BNSH variations, Unity programs, MSHD and SDF pair theirs);
 # MonoGame's effects, whose passes may name no vertex shader and keep the one bound (Celeste: 10 of its 13 effects draw through SpriteBatch's vertex shader, which is in main); Next Level Games'
 # archives (Luigi's Mansion 3 makes 5,317 programs of one stage each at boot); PlatinumGames' shader objects (Bayonetta 3: one stage each, pg_shader); control sections loose in main
 # (Advance Wars 1+2: Re-Boot Camp's Bink shaders, raw_shaders), which no file pairs; and YEBIS's effect file (tfxo_shaders)
@@ -1854,6 +1880,9 @@ def scan_file(args):
     if head[:4] == RFRM:   # a Retro Studios form or pack (rfrm_shaders)
         found += rfrm_shaders(open(path, 'rb').read(), '/' + rel)
         return rel, uniq_keys(found), var_pairs(found), trees
+    if head[:4] == b'BERG':   # Snowdrop's SDF data slices: shader objects in individual compressed records
+        with open(path, 'rb') as f: found += snowdrop_shaders(f.read(), '/' + rel)
+        return rel, uniq_keys(found), var_pairs(found), trees
     if head[:4] == MTARC:   # an MT Framework archive (mtarc_members): its shader package
         mtarc_shaders(open(path, 'rb').read(), '/' + rel, found)
         return rel, uniq_keys(found), var_pairs(found), trees
@@ -1907,6 +1936,7 @@ def main():
     romfs_l, main_l, pkg, mapout, factsout = sys.argv[1:6]
     pairsout = sys.argv[6] if len(sys.argv) > 6 else None
     psopairsout = sys.argv[7] if len(sys.argv) > 7 else None   # pso_pairs.tsv: the pairs the pipeline prebuild takes besides shader_pairs.tsv (the BAHS program variations)
+    dlc_v = sys.argv[8].split(',') if len(sys.argv) > 8 and sys.argv[8] else []   # extra content has no ExeFS; each root is the extracted DLC index
     # Several versions (base game + update): the RomFS and main arguments are comma-separated and paired one to one; the output is their union (keys are content hashes, shaders shared by versions appear once).
     # The first version's source column is unchanged; later versions are prefixed with their workspace directory name (e.g. v327680): /v327680/Shader/…, main@v327680. They sort after the first version, so existing rows keep their package indices.
     romfs_v, main_v = romfs_l.split(','), main_l.split(',')
@@ -1938,7 +1968,10 @@ def main():
         if not names and uepak.unreal_paks(romfs, inline=False): red(f'the RomFS has Unreal paks, but there are no decoded shader code archives in {ued} (the NSP script writes them)')
         for nm in names: found += ue_shaders(open(os.path.join(ued, nm), 'rb').read(), f'/ue_shaders/{nm}')
         results.append(('main', {skey(c, k): (w, s, c, k) for w, s, c, k in found}, var_pairs(found), {}))
-    zdicts = {k: v for r in romfs_v for k, v in zs_dicts(r).items()}   # Tears of the Kingdom's zstd dictionaries (zs_dicts)
+    for romfs in dlc_v:
+        tag = 'aoc/' + os.path.basename(os.path.normpath(romfs))
+        files += sorted((os.path.join(dp, f), tag + '/' + os.path.relpath(os.path.join(dp, f), romfs)) for dp, _, fs in os.walk(romfs) for f in fs)
+    zdicts = {k: v for r in romfs_v + dlc_v for k, v in zs_dicts(r).items()}   # Tears of the Kingdom's zstd dictionaries (zs_dicts)
     keys = {}
     # First pass: every file; Unity bundles carry type trees, and the Shader trees are collected on the way. Second pass: Unity serialized files without type trees are scanned again with the borrowed trees
     J = int(os.environ.get('J', '8'))
@@ -2002,6 +2035,7 @@ def main():
                                             ('MSHD', any('#MSHD#' in r[4] for r in rows)), ('GLSLC', any('#GLSLC@' in r[4] for r in rows)), ('RE Engine SDF', any('#SDF#' in r[4] for r in rows)),
                                             ('MT Framework SPK', any('#MTSPK@' in r[4] for r in rows)), ('MonoGame MGFX', any('#MGFX@' in r[4] for r in rows)),
                                             ('PlatinumGames shader objects', any('#PGSO' in r[4] for r in rows)),
+                                            ('Snowdrop shader objects', any('#SNOWDROP@' in r[4] for r in rows)),
                                             ('Unreal Engine shader code archives', any('#UE' in r[4] for r in rows))) if hit)
         f.write(f'# kind: evidence  {NOTE} ({kinds} in RomFS + main) → control section + code area keys (dm/gfx/tools/shader_split.py)\n')
         f.write('# column 5 records where each key first appears; this game has no PC version to pair with\n')

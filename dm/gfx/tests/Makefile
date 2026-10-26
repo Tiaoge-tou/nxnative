@@ -223,6 +223,8 @@ check_t_image_alias: t_image_alias
 	DM_NVN_ENC_THREAD=0 MTL_DEBUG_LAYER=1 ./t_image_alias
 	DM_NVN_ENC_THREAD=1 MTL_DEBUG_LAYER=1 ./t_image_alias
 run: check_t_image_alias
+t_image_usage: t_image_usage.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_image_usage.m $(MTL_T_SRC) $(FW)
 t_stencil_view: t_stencil_view.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_stencil_view.m $(MTL_T_SRC) $(FW)
 # The Vulkan layer (#included) over the whole NVN layer, whose device and present path it uses
@@ -235,7 +237,7 @@ gl-imports: t_gl_imports
 	./t_gl_imports
 	./t_gl_imports --stubs
 run: gl-imports
-run: t_nvn t_dirty_slots t_dirty_race t_tex_layout t_builtin t_vin t_tbuf2d t_tbuf_align t_deswz_gpu t_pace t_timestamp t_fstep t_refl t_hmap t_cover t_fuse_check t_present_crop t_reorder_chain t_defer_chain t_zskip t_xv t_ub t_vbuf t_geometry t_mip_extent t_rt_range_shape t_rt_range_ro t_rt_range t_rt_depth_ro t_pso_skey t_pso_archive t_pso_bundle t_pull t_pull_inv t_pso_pending t_pfv t_view_levels t_view_swizzle t_vk_desc t_integer_blend t_primitive_restart t_clear_ds t_depth16_clear t_upgrade_alias t_stencil_view
+run: t_nvn t_dirty_slots t_dirty_race t_tex_layout t_builtin t_vin t_tbuf2d t_tbuf_align t_deswz_gpu t_pace t_timestamp t_fstep t_refl t_hmap t_cover t_fuse_check t_present_crop t_reorder_chain t_defer_chain t_zskip t_xv t_ub t_vbuf t_geometry t_mip_extent t_rt_range_shape t_rt_range_ro t_rt_range t_rt_depth_ro t_pso_skey t_pso_archive t_pso_bundle t_pull t_pull_inv t_pso_pending t_pfv t_view_levels t_view_swizzle t_vk_desc t_integer_blend t_primitive_restart t_clear_ds t_depth16_clear t_upgrade_alias t_image_usage t_stencil_view
 	./t_nvn
 	./t_dirty_slots
 	./t_dirty_race
@@ -287,6 +289,7 @@ run: t_nvn t_dirty_slots t_dirty_race t_tex_layout t_builtin t_vin t_tbuf2d t_tb
 	MTL_DEBUG_LAYER=1 ./t_clear_ds
 	MTL_DEBUG_LAYER=1 ./t_depth16_clear
 	MTL_DEBUG_LAYER=1 ./t_upgrade_alias
+	MTL_DEBUG_LAYER=1 ./t_image_usage
 	MTL_DEBUG_LAYER=1 ./t_stencil_view
 	DM_GAME=$(GAME) python3 test_tbdr_budget.py
 .PHONY: run

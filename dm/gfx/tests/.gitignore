@@ -84,6 +84,8 @@ t_upload_budget
 t_upload_budget.dSYM/
 t_view_swizzle
 t_view_swizzle.dSYM/
+t_image_usage
+t_image_usage.dSYM/
 t_vk_desc
 t_vk_desc.dSYM/
 t_gl_imports

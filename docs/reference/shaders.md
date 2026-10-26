@@ -116,6 +116,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Reader:** `kpka_jobs` maps the PAKs, takes the newest copy of each path, peeks at 4 decompressed bytes and inflates only SDF entries (`sdf_shaders`).
 - **Found on:** [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md): 63,111 shaders (30,233 vertex, 21,475 pixel, 11,271 compute, 53 geometry, 33 hull, 46 domain) and 102,345 pairs, in 5 s with 12 jobs.
 
+### Shader records in Snowdrop SDF data slices
+
+- **Symptom:** the split finds no shaders in a RomFS made of `.sdfdata`, `.sdftoc` and `.sdfver` files.
+- **Cause:** Snowdrop stores the shaders in individually compressed records inside its `BERG` data slices. These SDF archives are a different format from RE Engine's shader definitions above. A shader record has a 20-byte header `{u32 0xabcd00c6, flags, 0, raw length, stored length}`, then one zstd frame; reflection data precedes the NVN sections inside it.
+- **Fix:** `shader_split.py` recognizes `BERG` by magic and reads the length-delimited compressed records (`snowdrop_shaders`). Every control section is followed immediately by its code, with lengths from control +0x20 and +0x704; they are byte-packed, so a control need not be aligned. A single record can hold more than one shader. Each section must pass the control / code / stage checks. Programs hold one stage, and the vertex shaders take the [single-stage cover](#single-stage-programs-paired-with-a-cover). Scanning for the record header avoids mistaking a coincidental zstd magic inside compressed data for another asset.
+- **DLC:** additional shader records ship in the DLC's data slices. The NSP script includes each extracted DLC RomFS as an extra shader root, without an ExeFS module, and fingerprints its index and extraction timestamps for split reuse. Vulkan and OpenGL builds include the DLC roots too. When installing or removing optional DLC changes an NVN shader union, the script uses an external profile with new shader tables only after every non-DLC shader row and fact matches the registered tables; package indices may change. The registered module builds, settings and build-gated cuts are preserved. A cached proof of this comparison permits repeat builds to reuse the split.
+- **Found on:** [Mario + Rabbids Sparks of Hope](../../dm/games/0100317013770000/README.md) (Snowdrop, SDF version 22).
+
 ### SPK shader package in an MT Framework ARC
 
 - **How it is stored:** the engine's one shader package, `sc\NX_64\root` (`SPK\0`, type hash `0x02358e1a`) in `nativeNXx64/sa/NX_64/root.arc` ([01](../agents/01-extract.md)). After the package's tables every shader is a code area followed directly by its control section, back to back to the end of the file: 230 vertex shaders, then 230 pixel shaders.
