@@ -9840,7 +9840,11 @@ int mtl_link_wait_tick(int vsyncs, uint64_t timeout_ns) {
     // A frame presented with interval N blocks the game for N vsyncs on the Switch, as the display callback holds it N ticks: games that scale their time step by the interval (BotW's VFR: interval / 2)
     // ran at double speed while they produced interval-2 frames every 60 Hz tick (iPhone log: Link sprinting with B, the interval flapping 1 ↔ 2)
     if (vsyncs < 1) vsyncs = 1;
-    const uint64_t step = g_link_mode == 3 ? (uint64_t)(vsyncs + 1) / 2 : (uint64_t)vsyncs * (g_link_mode == 2 ? 2 : 1);
+    // Ticks per vsync on the 120 Hz link: the link's rate over the present tick's rate (DM_PRESENT_HZ, hle_nvn.c's g_hz): 2 at the
+    // default 60 Hz tick (the guest's vsync is 1/60 s, as above), 1 when the tick is 120 Hz -- the guest then produces at 120 fps.
+    static int phz = -1; if (phz < 0) { const char *e = getenv("DM_PRESENT_HZ"); phz = e ? atoi(e) : 60; if (phz != 30 && phz != 60 && phz != 120) phz = 60; }
+    int per = g_link_mode == 2 ? 120 / phz : 1; if (per < 1) per = 1;
+    const uint64_t step = g_link_mode == 3 ? (uint64_t)(vsyncs + 1) / 2 : (uint64_t)vsyncs * (uint64_t)per;
     pthread_mutex_lock(&g_link_mu);
     if (g_link_tick_n >= started_tick + step) { started_tick = g_link_tick_n; pthread_mutex_unlock(&g_link_mu); return 1; }
     struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
