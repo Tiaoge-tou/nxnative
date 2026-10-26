@@ -74,6 +74,8 @@ t_readback
 t_readback.dSYM/
 t_linear_readback
 t_linear_readback.dSYM/
+t_copy_alias
+t_copy_alias.dSYM/
 t_pso_pending
 t_pso_pending.dSYM/
 t_integer_blend
@@ -94,3 +96,5 @@ t_pso_warm
 t_pso_warm.dSYM/
 t_depth16_clear
 t_depth16_clear.dSYM/
+t_tex_layout
+t_tex_layout.dSYM/

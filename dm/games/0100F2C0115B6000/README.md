@@ -41,6 +41,7 @@ Game-specific findings. The general host changes they led to are listed under [F
 - **Resolved: a draw with no render target.** An agl fragment shader that only stores to a storage buffer draws one triangle into a 1×1 viewport with no target (it samples a 64×64 cube map; the game reads the buffer back). With the attachment-less pass, the cave's rock and stone blocks get ambient light they lacked, and Zelda's bloom halo in the descent cutscene is gone.
 - **How the tile lighting was traced:** the G-buffer class byte selects per-class half-resolution passes through a depth buffer of class values (`gl_FragDepth = mix(0.5, 1, nibble-swapped class / 255)`, then full-screen or per-tile quads with depth `EQUAL`), so `DM_NVN_DEPTHOVR` (depth test forced to `ALWAYS`) with `HILITE` tells "rejected by depth" from "never rasterized".
 - **Current: Ultrahand and Recall highlight validation pending.** The [Depth16 load-clear correction](../../../docs/reference/rendering.md#depth16-load-clears-match-fragment-writes), ported from MacNativeGames, addresses its reported tile grid. The depth conversion mismatch is reproduced in synthetic Mac GPU tests; this game's highlights and the iPhone have not been rechecked here.
+- **Resolved in the host: packaged block dimensions and linear compressed storage sizing**, from the driver probes linked under [Found on this game](#found-on-this-game). CPU layout and CPU / GPU packaged 3D deswizzle tests cover the correction; no new gameplay validation of these cases or iPhone run here.
 - The game issues a depth clear scissored to 8×8 of a 64×64 target outside a pass, which the host still clears whole (`depth-stencil clear with a scissor or partial stencil mask, cleared whole`).
 - About one draw per 8-bit index widening, up to a dozen widenings a frame on the title and load screens, no pass split (log line `8-bit index GPU expansion`).
 - Its 14,766 vertex shaders have no transform feedback.
@@ -72,6 +73,7 @@ Game-specific findings. The general host changes they led to are listed under [F
 
 General host changes first needed here; each applies to every game:
 
+- **Packaged texture block dimensions and linear storage rows:** [Packaged texture block dimensions and linear storage rows](../../../docs/reference/nvn-objects.md#packaged-texture-block-dimensions-and-linear-storage-rows).
 - **Resolved in the host: dirty-page writes missed during upload**, with both unprotect paths covered by regression tests; the glyph-cache symptom remains unconfirmed here: [Dirty-page writes missed during upload](../../../docs/reference/nvn-objects.md#dirty-page-writes-missed-during-upload).
 - **Depth16 load-clears match fragment writes:** [Depth16 load-clears match fragment writes](../../../docs/reference/rendering.md#depth16-load-clears-match-fragment-writes).
 - **Pipeline keys omit absent-target blend and mask state**, and old prewarm rows are normalized and deduplicated: [Pipeline keys omit unused colour state](../../../docs/reference/shaders.md#pipeline-keys-omit-unused-colour-state).

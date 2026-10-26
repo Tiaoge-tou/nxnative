@@ -472,6 +472,14 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Check:** `DM_NVN_BLIT_ORDER=0` turns the barriers off to reproduce.
 - **Found on:** [Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md).
 
+### Buffer copies through aliased Metal addresses
+
+- **Symptom:** a buffer copy, inline update or fill completes, but a following copy through another Metal buffer over the same allocation reads stale bytes.
+- **Cause:** Metal buffers over one allocation have distinct GPU addresses. Device visibility alone does not flush their alias caches. Sparse virtual pools also give the same physical bytes distinct guest addresses, so the copy encoder's guest-range dependency checks can miss a conflict entirely; barriers at encoder boundaries cannot order copies within that encoder.
+- **Fix:** `blit_buf` marks encoders containing buffer copies, updates or fills; their start, intra-encoder and end barriers include `MTL4VisibilityOptionResourceAlias`. Operations touching a sparse virtual range (`nvn_sparse_alias`) receive conservative barriers against prior and subsequent operations, since a mapped run can span unrelated physical allocations. Ordinary buffers retain range-based batching. Texture-only and helper encoders keep their existing visibility options.
+- **Check:** `make -C dm/gfx/tests GAME=010015100B514000 check_t_copy_alias` exercises two no-copy buffers over one allocation, physical-to-virtual, virtual-to-physical and virtual-to-virtual sparse aliases, copies, inline updates and both fill paths, within one encoder and across encoder boundaries, with direct and deferred encoding and Metal validation. On an M4 Pro, the original host failed 37 of 101 checks; [PR #200](https://github.com/seedds/nxnative/pull/200) alone left 24 failures from missed intra-encoder sparse dependencies; the complete fix passes all 101 in both encoding modes.
+- **Found on:** synthetic regression using the sparse mapping mechanism of [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md); the game and iPhone have not been rerun for this change. The no-copy buffer failure was reported by MacNativeGames (`803128e`) in PR #200 and reproduced here.
+
 ### Inline uniform updates inside a render pass
 
 - **Symptom:** many render passes with one draw each and high submit time: Metroid Dread's cutscene frames had about 180 passes with one draw each (about 5 ms of submit time per frame on the Mac).

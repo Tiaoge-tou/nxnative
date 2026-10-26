@@ -2187,6 +2187,16 @@ int nvn_host_readable(uint64_t a, uint64_t n) {
         break; }
     pthread_mutex_unlock(&g_vp_mu); return ok;
 }
+// Sparse virtual addresses alias physical pools, so guest ranges alone cannot
+// prove copy independence. Like nvn_sparse_pool, pool lifetime is fixed while used.
+int nvn_sparse_alias(uint64_t lo, uint64_t hi) {
+    if (hi <= lo) return 0;
+    for (int k = 0; k < NVPOOL; k++) { const struct vpool *v = &g_vp[k];
+        uint64_t base = (uint64_t)(uintptr_t)v->base;
+        if (base && lo < base + v->len && base < hi) return 1;
+    }
+    return 0;
+}
 // Textures of a sparse pool, read through its page table (see the sparse pools above): whether a pool is one, a copy of a texture's bytes (unmapped pages read as 0; → bytes not mapped),
 // whether its content may have changed since an upload (a mapping in its range newer than gen, or a physical page behind it written after the dirty-page stamp), and the write
 // protection of the physical pages behind it (taken before an upload, as for any packaged texture)
