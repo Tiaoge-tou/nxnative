@@ -71,7 +71,8 @@ static int front_ios_render_width(void) { return front_ios_render_width_h(1080);
 // screen for 80-120 Hz and measures the rate the screen truly runs at, and only a rate that holds for 30 display frames is
 // handed to the host (dm_display_set_hz, hle_nvn.c), which moves the present tick, the present display link and the vi vsync
 // event to it; a screen that falls back to 60 Hz (a 60 Hz panel, Low Power Mode, heat) hands 60 back and releases the mode.
-// The lowered tier renders at 1916x882, the size the touch port of Silksong measured for 120 Hz on this class of screen: the
+// The lowered tier renders at 1912x880, the touch port of Silksong's 1916x882 tier taken to a multiple of 8 (a render width
+// must be one, loader.c: 1916 was refused there and the full width used instead, which squeezed the picture): the
 // width goes through the state page's docked cell as any render width does, the height through DM_RENDER_HEIGHT (loader.c)
 static int front_ios_display_hz(void) { const char *e = getenv("SS_DISPLAY_HZ"); return e ? atoi(e) : 60; }
 static int front_ios_display_lowered(void) { const char *e = getenv("SS_DISPLAY_HZ"); return e && strchr(e, 'L') != NULL; }
@@ -165,8 +166,8 @@ static void front_ios_hud_script_fix(int width) {
     [self.view setNeedsLayout]; [self.view layoutIfNeeded];
     UIApplication.sharedApplication.idleTimerDisabled = YES;
     if (front_ios_display_lowered()) {   // the frame-rate choice's lowered tier, unless an env file sets the size itself
-        if (!getenv("DM_RENDER_WIDTH")) setenv("DM_RENDER_WIDTH", "1916", 1);
-        if (!getenv("DM_RENDER_HEIGHT")) setenv("DM_RENDER_HEIGHT", "882", 1);
+        if (!getenv("DM_RENDER_WIDTH")) setenv("DM_RENDER_WIDTH", "1912", 1);
+        if (!getenv("DM_RENDER_HEIGHT")) setenv("DM_RENDER_HEIGHT", "880", 1);
     }
     if (!getenv("DM_RENDER_WIDTH")) setenv("DM_RENDER_WIDTH", [NSString stringWithFormat:@"%d", front_ios_render_width()].UTF8String, 1);   // the render size follows this screen (an env file's value is a diagnostic override and is kept); before the host starts, whose game-start write reads it
     if (!getenv("DM_RENDER_WIDTH_HD")) setenv("DM_RENDER_WIDTH_HD", [NSString stringWithFormat:@"%d", front_ios_render_width_h(720)].UTF8String, 1);   // the same at the handheld height, for the builds whose handheld sizes read it
