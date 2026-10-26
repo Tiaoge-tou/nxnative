@@ -1,5 +1,6 @@
 // Engine frame limits kept in game memory (FPSLocker's evaluate_write entries): some engines cap their own frame rate with a value the host can raise. The target is the profile's
-// fps_target (DM_FPS_TARGET overrides; 0 = leave the game's own limit), the same key that drives Tears of the Kingdom's frame step (loader.c install_fps_state). Called on every present
+// fps_target (DM_FPS_TARGET overrides; 0 = leave the game's own limit) -- or, for an int32 frame-rate field only, the display rate while the front end's measured
+// 120 Hz drives the pacing (dm_display_hz, hle_nvn.c), the game's own value going back when the mode releases -- the same key that drives Tears of the Kingdom's frame step (loader.c install_fps_state). Called on every present
 // (hle_nvn.c); the game sets the values after boot and may set them again, so each is written whenever it differs. Fixed addresses: each row runs only on the main build it was found in (AGENTS.md)
 #include "hle.h"
 #include <mach/mach.h>
@@ -58,13 +59,18 @@ static const struct { const char *build, *what; uint64_t ptr_off; uint32_t field
     // started; the limiter (main+0x7a3e70) runs jobs or sleeps until 33.333 ms have passed, the float at main+0x13c94dc (read only there, at main+0x7a3ea8 and main+0x7a3f18), and the game
     // steps by the time that really passed. The game asks for present interval 2 too, which the profile's present_interval display ignores; both are needed
     { "79e5950ffa85acf63e28c9aec051eac2", "NLG frame limiter target", 0, 0x13c94dc, MS_F32, 1 },
+    // Hollow Knight: Silksong 1.0.30000: Unity's Application.targetFrameRate. The icall tables (names at main+0x7cf2268, functions at main+0x7cf9458) resolve
+    // get/set_targetFrameRate (entries 415/416) to main+0x1b0c080 / +0x1b0c090, three-instruction accessors of the int32 at main+0x8020db0. The field ships as
+    // -1 (pace to the display) and the game's platform code reports a 60 Hz display whatever the screen does (Screen::get_currentResolution builds its 60/1
+    // refresh from immediates), so only the display-rate target raises it: 120 while the measured rate drives the pacing, -1 back when it releases
+    { "fc9ea4ccc955d5799f37752b2d730b31", "Unity targetFrameRate", 0, 0x8020db0, FPS_I32, 1 },
 };
 #define NLOCKS ((int)(sizeof k_locks / sizeof k_locks[0]))
 
 static int rd(uint64_t a, void *out, size_t n) { vm_size_t got = 0; return a >= 0x1000 && vm_read_overwrite(mach_task_self(), (vm_address_t)a, n, (vm_address_t)out, &got) == KERN_SUCCESS && got == n; }
 
 void dm_fps_lock_tick(void) {
-    static int state = -2, rows[NLOCKS], nrow, nlog[NLOCKS], target; static uint8_t *base; static const char *src;
+    static int state = -2, rows[NLOCKS], nrow, nlog[NLOCKS], fixed, disp[NLOCKS]; static uint8_t *base; static const char *src;
     if (state == -1) return;
     if (state == -2) {
         state = -1;
@@ -73,15 +79,24 @@ void dm_fps_lock_tick(void) {
         if (!nrow) return;
         const char *e = getenv("DM_FPS_TARGET"); int t = e ? atoi(e) : DM_GAME_FPS_TARGET; src = e ? "DM_FPS_TARGET" : "game profile fps_target";
         if (t != 0 && t != 30 && t != 60) { LOG("[RED] DM_FPS_TARGET=%s: must be 0, 30 or 60; leaving the game's frame limit", e); t = 0; }
-        if (!t) { for (int r = 0; r < nrow; r++) LOG("main: %s left as the game sets it (%s)", k_locks[rows[r]].what, src); return; }
-        target = t; state = 0;
+        if (!t) for (int r = 0; r < nrow; r++) LOG("main: %s left as the game sets it (%s)", k_locks[rows[r]].what, src);   // no fixed target: the tick stays alive for the display rate below
+        fixed = t; state = 0;
     }
+    // The display rate as a target, for an int32 frame-rate field only: while the front end's measured 120 Hz drives the pacing
+    // (dm_display_hz), a field that ships as Unity's -1 (pace to the display) would pace to the 60 Hz the game's platform code
+    // reports, so the rate the host is actually pacing at is written instead; when the mode releases, the -1 goes back
+    int dtgt = dm_display_hz() == 120 ? 120 : 0;
     for (int r = 0; r < nrow; r++) {
         int k = rows[r]; uint64_t obj = (uint64_t)(uintptr_t)base;
         if (k_locks[k].ptr_off && (!rd((uint64_t)(uintptr_t)(base + k_locks[k].ptr_off), &obj, sizeof obj) || !obj)) continue;   // not created yet
         for (int c = 0; c < k_locks[k].copies; c++) {
             uint64_t a = obj + k_locks[k].field + 4 * (uint64_t)c; uint32_t cur, want; char was[16];
             if (!rd(a, &cur, sizeof cur)) break;
+            int target = k_locks[k].kind == FPS_I32 && !fixed ? dtgt : fixed, tsrc = target && !fixed;   // tsrc: the target is the display rate's
+            if (!target) {   // the display rate released (or no target at all): a value it wrote goes back to the game's own -1
+                if (disp[k] && (int32_t)cur == 120) { uint32_t *p = (uint32_t *)(uintptr_t)a; dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, 0xffffffffu, __ATOMIC_RELAXED); disp[k] = 0; LOG("main: %s 120 → -1 (the display rate released; the game's own pacing is back)", k_locks[k].what); }
+                continue;
+            }
             if (k_locks[k].kind == FPS_F32 || k_locks[k].kind == MS_F32) {
                 int ms = k_locks[k].kind == MS_F32; float f, w = ms ? ms_want(target) : (float)target; memcpy(&f, &cur, sizeof f); memcpy(&want, &w, sizeof want);
                 if (cur == want || !(ms ? f >= 8 && f <= 100 : f >= 10 && f <= 120)) continue;   // already set, or not set yet (RE Engine: 6000 at boot; Unreal: 0 = no limit until the config sets it)
@@ -89,15 +104,17 @@ void dm_fps_lock_tick(void) {
             } else {
                 int fps = k_locks[k].kind == FPS_I32;
                 want = fps ? (uint32_t)target : 60 / (uint32_t)target;
-                if (cur == want || cur < (fps ? 10u : 1u) || cur > (fps ? 120u : 4u)) continue;
-                snprintf(was, sizeof was, "%u", cur);
+                if (cur == want) continue;
+                if (fps && (int32_t)cur == -1) { if (target != 120) continue; snprintf(was, sizeof was, "-1"); }   // Unity's pace-to-display sentinel: only the display rate overwrites it
+                else { if (cur < (fps ? 10u : 1u) || cur > (fps ? 120u : 4u)) continue; snprintf(was, sizeof was, "%u", cur); }
             }
             uint32_t *p = (uint32_t *)(uintptr_t)a;
             dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, want, __ATOMIC_RELAXED);
+            if (tsrc) disp[k] = 1;
             if (nlog[k] < 8) { nlog[k]++; char now[24];
                 if (k_locks[k].kind == MS_F32) snprintf(now, sizeof now, "%.3f ms (%d fps)", ms_want(target), target);
                 else snprintf(now, sizeof now, "%u%s", k_locks[k].kind == FPS_F32 ? (unsigned)target : want, k_locks[k].kind == FPS_F32 || k_locks[k].kind == FPS_I32 ? " fps" : " vsyncs");
-                LOG("main: %s%s %s → %s (%s)", k_locks[k].what, k_locks[k].copies > 1 ? (c ? " (render thread)" : " (game thread)") : "", was, now, src); }
+                LOG("main: %s%s %s → %s (%s)", k_locks[k].what, k_locks[k].copies > 1 ? (c ? " (render thread)" : " (game thread)") : "", was, now, tsrc ? "display rate" : src); }
         }
     }
 }
