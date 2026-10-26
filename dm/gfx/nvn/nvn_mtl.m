@@ -9727,12 +9727,25 @@ static MTLViewport present_viewport(double cw, double ch, double dw, double dh) 
     if (present_fullscreen()) vp = (MTLViewport){0, 0, dw, dh, 0, 1};   // DM_FULLSCREEN fills the whole target instead (the picture stretches), as front_ios.m's view frame already promises on that switch
     return vp;
 }
-// The valid source rectangle of a present (x, y, width, height; the crop of nvnWindowSetCrop, zero = the whole texture); 0 when it lies outside the texture
+// The valid source rectangle of a present (x, y, width, height; the crop of nvnWindowSetCrop, zero = the whole texture); 0 when it lies outside the texture.
+// One out-of-bounds shape is clamped instead of dropped: a full-frame crop from the origin that exceeds the texture. A guest can
+// declare its mode's nominal size as the crop while its swapchain textures follow the size the host actually renders at (a display
+// template baked wider than this screen's render size: Silksong's docked template says 2344 on a screen rendering 1552 wide) -- the
+// pixels in the texture are the complete frame at the texture's own size, so clamping shows the frame; dropping it showed a black
+// screen with the game running. Any other out-of-bounds shape (offset origin, empty, partially outside) still drops, as before
 static int present_crop_rect(id<MTLTexture> src, const int crop[4], NSUInteger r[4]) {
     r[0] = 0; r[1] = 0; r[2] = src.width; r[3] = src.height;
     if (!crop || !(crop[2] || crop[3])) return 1;
     if (crop[0] < 0 || crop[1] < 0 || crop[2] <= 0 || crop[3] <= 0 ||
         (uint64_t)crop[0] + crop[2] > src.width || (uint64_t)crop[1] + crop[3] > src.height) {
+        if (!crop[0] && !crop[1] && crop[2] > 0 && crop[3] > 0 &&
+            ((uint64_t)crop[2] > src.width || (uint64_t)crop[3] > src.height)) {
+            static int noted;
+            if (!noted) { noted = 1; MLOG("present crop %dx%d exceeds the source texture %lux%lu from the origin: clamping to the texture (the guest's declared frame is larger than the texture it rendered into)", crop[2], crop[3], (unsigned long)src.width, (unsigned long)src.height); }
+            r[2] = (NSUInteger)crop[2] < src.width ? (NSUInteger)crop[2] : src.width;
+            r[3] = (NSUInteger)crop[3] < src.height ? (NSUInteger)crop[3] : src.height;
+            return 1;
+        }
         MLOG("[RED] present crop out of bounds: %d,%d %dx%d / source texture %lux%lu", crop[0], crop[1], crop[2], crop[3], (unsigned long)src.width, (unsigned long)src.height); return 0;
     }
     r[0] = crop[0]; r[1] = crop[1]; r[2] = crop[2]; r[3] = crop[3]; return 1;
