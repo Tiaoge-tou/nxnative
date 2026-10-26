@@ -138,6 +138,9 @@ static UIImage *skinImage(const char *name) {   // a padskin image, loaded once 
 static UIImage *skinPressedImage(int i) {   // the pressed-state art (<art>_p) for skin key i, or nil when the skin ships none
     char pn[64]; snprintf(pn, sizeof pn, "%s_p", k_skin[i].art); return skinImage(pn);
 }
+static UIImage *namedPressedImage(const char *name) {   // the pressed-state art (<name>_p) for a named padskin image, or nil when the skin ships none
+    char pn[64]; snprintf(pn, sizeof pn, "%s_p", name); return skinImage(pn);
+}
 static CALayer *imgLayer(CALayer *parent, const char *name) {
     CALayer *l = [CALayer layer]; l.contents = (id)skinImage(name).CGImage; [parent addSublayer:l]; return l;
 }
@@ -234,6 +237,9 @@ static __weak DmGamepad *g_view;
     CALayer *_skinDisc, *_skinKnob;                // the skin's stick disc and its knob (the knob follows the touch)
     CALayer *_skinBtn[SKIN_N];                     // the skin's keys, in k_skin order
     BOOL _skillOff;                                // the skill keys (grp SK_SKILL) are hidden by the eye key
+    CALayer *_skipKey, *_padKey;   // the cutscene keys (skin mode): the skin's Skip medallion at the Bind key's place, its Pad medallion at the eye key's place
+    int _padMode; BOOL _padPeek;                   // the host's pad mode (hle_hid.c dm_pad_mode) and the player's recall of the pad for the rest of the mode
+    NSTimer *_padTimer;                            // polls the pad mode while the skin is up
     BOOL _hades;                                   // DM_PAD_HADES: the glass controls below replace the drawn ones
     UIView *_glassBox;                             // holds the Hades glass controls: hidden while a physical controller is connected
     UIView *_hGlass[HADES_N];          // one clear disc per Hades key
@@ -293,6 +299,9 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             _skinDisc = imgLayer(_controls, "stick"); _skinDisc.opacity = 0.75;
             _skinKnob = imgLayer(_controls, "knob"); _skinKnob.opacity = 0.95;
             for (int i = 0; i < SKIN_N; i++) { _skinBtn[i] = imgLayer(_controls, k_skin[i].art); _skinBtn[i].opacity = 1.0; }
+            _skipKey = imgLayer(_controls, "skip"); _skipKey.hidden = YES;   // the cutscene keys: skin medallions from dm/padskin; applyPadMode shows them while the host reports a cutscene
+            _padKey = imgLayer(_controls, "pad"); _padKey.hidden = YES;
+            _padTimer = [NSTimer scheduledTimerWithTimeInterval:0.15 target:self selector:@selector(padTick) userInfo:nil repeats:YES];   // the view lives as long as the app, so the timer needs no invalidation
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _swap.hidden = YES; _swapLabel.hidden = YES; _ring.hidden = YES; _knob.hidden = YES;
         }
@@ -497,6 +506,9 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
             game |= [self gameBegin:t]; continue;
         }
         if (_skin) {   // skin mode: an image key, the disc (a fixed stick), else the game's touch screen
+            if (_padMode >= 2 && !_padPeek && dist(p, skinCenter(7, self.bounds)) <= k_skin[7].r * self.bounds.size.width * 1.35) { _padPeek = YES; [self applyPadMode]; continue; }   // the Pad recall key: the pad comes back for the rest of the cutscene
+            if (_padMode == 3 && !_padPeek && dist(p, skinCenter(5, self.bounds)) <= k_skin[5].r * self.bounds.size.width * 1.35) { [_owner setObject:@(C_BTN | (uint64_t)B_A << 8) forKey:t]; continue; }   // the Skip key: A, through the usual input path
+            if ([self padHidden]) { game |= [self gameBegin:t]; continue; }   // hidden for a cutscene or a load: the touch is the game's
             int sb = [self skinBtnAt:p];
             if (sb >= 0 && k_skin[sb].grp == SK_TOGGLE) { _skillOff = !_skillOff; [self refresh]; continue; }   // the eye key only flips the skill keys' visibility
             if (sb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_skin[sb].bit << 8) forKey:t]; continue; }
@@ -549,6 +561,26 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (void)touchesEnded:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:YES]; }
 - (void)touchesCancelled:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:NO]; }
 - (void)reset { [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [self pushGame]; [self recompute]; }
+// ---- Pad mode (skin mode): the host watches the game's state (hle_hid.c dm_pad_mode) and the pad hides while a cutscene or a load runs ----
+// Mode 1 (a load) hides the pad outright; modes 2 and 3 (a cutscene) show the Pad recall key at the eye key's place, and mode 3 (the
+// cutscene can be skipped) the Skip key at the Bind key's place. Recalling brings the whole pad back for the rest of the mode. While the
+// pad is hidden every other touch goes to the game's own touch screen, as touches outside the controls always do
+- (BOOL)padHidden { return _padMode > 0 && !_padPeek; }
+- (void)applyPadMode {
+    BOOL hide = [self padHidden];
+    _skinDisc.hidden = hide; _skinKnob.hidden = hide;
+    for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = hide || (_skillOff && k_skin[i].grp == SK_SKILL);
+    _skipKey.hidden = !(_padMode == 3 && !_padPeek);
+    _padKey.hidden = !(_padMode >= 2 && !_padPeek);
+    [self refresh];
+}
+- (void)padTick {
+    int m = dm_pad_mode();
+    if (m == _padMode) return;
+    _padMode = m; _padPeek = NO;
+    [self reset];   // held touches end with the mode change: their keys may be hidden now
+    [self applyPadMode];
+}
 
 // ---- Shapes ----
 static CGPathRef circlePath(CGPoint c, CGFloat r) { return CGPathCreateWithEllipseInRect(CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r), NULL); }
@@ -618,6 +650,8 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         CGFloat kd = d * 0.67; _skinKnob.bounds = CGRectMake(0, 0, kd, kd); _skinKnob.position = hc;
         for (int i = 0; i < SKIN_N; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width; CGPoint c = skinCenter(i, b);
             _skinBtn[i].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
+        if (_skipKey) { CGPoint c = skinCenter(5, b); CGFloat dd = k_skin[5].r * 2 * b.size.width; _skipKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Skip medallion at the Bind key's place, at its size
+        if (_padKey) { CGPoint c = skinCenter(7, b); CGFloat dd = k_skin[7].r * 2 * b.size.width; _padKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Pad medallion at the eye key's place, at its size
         [CATransaction commit]; [self refresh]; return;
     }
     if (_hades) {   // the glass discs at fractions of the whole screen (k_hades); the stick disc is placed by refresh (it floats)
@@ -672,7 +706,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             if (k_skin[i].grp == SK_TOGGLE) { UIImage *p = _skillOff ? skinPressedImage(i) : nil;
                 _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
                 _skinBtn[i].opacity = p ? 1.0 : (_skillOff ? 0.45 : 1.0); _skinBtn[i].transform = CATransform3DIdentity; continue; }
-            _skinBtn[i].hidden = _skillOff && k_skin[i].grp == SK_SKILL;
+            _skinBtn[i].hidden = [self padHidden] || (_skillOff && k_skin[i].grp == SK_SKILL);
             BOOL on = (_btnBits >> k_skin[i].bit) & 1;
             UIImage *p = on ? skinPressedImage(i) : nil;
             _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
@@ -681,6 +715,10 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         CGFloat ol = hypot(o.x, o.y), maxO = 0.30 * [self stickR:0];
         if (ol > maxO) { o.x *= maxO / ol; o.y *= maxO / ol; }
         _skinKnob.position = CGPointMake(h.x + o.x, h.y + o.y); _skinKnob.opacity = _stick[0] ? 1.0 : 0.95;
+        if (_skipKey && !_skipKey.hidden) { BOOL on = (_btnBits >> B_A) & 1;   // the Skip key presses like a skin key: A's bit swaps in its _p art and it dips (without _p art it only dips)
+            UIImage *p = on ? namedPressedImage("skip") : nil;
+            _skipKey.contents = (id)(p ? p : skinImage("skip")).CGImage;
+            _skipKey.transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
     }
     if (_hades) {   // pressed keys: wash lit and a small dip; the stick's glass follows its touch (full opacity), at half opacity at rest
         for (int i = 0; i < HADES_N; i++) { BOOL on = (_btnBits >> k_hades[i].bit) & 1;
