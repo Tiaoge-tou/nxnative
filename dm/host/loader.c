@@ -272,21 +272,22 @@ void dm_fps_state_apply(void) {
         if (m->fill_d_off && ht) { if (m->fill_d_off + 8 > m->size) die("%s: HOST_FILL_D height out of range", m->name); uint32_t v32 = (uint32_t)ht; memcpy(m->base + m->fill_d_off + 4, &v32, sizeof v32); }
         if (m->fill_h_off) { if (m->fill_h_off + 4 > m->size) die("%s: HOST_FILL_H out of range", m->name); uint32_t v32 = (uint32_t)(hw ? hw : 1280); memcpy(m->base + m->fill_h_off, &v32, sizeof v32); }
         if (m->fill_d_off || m->fill_h_off) LOG("%s: display-mode sizes filled from the host (docked %ld, handheld %ld)", m->name, w ? w : 2344, hw ? hw : 1280);
-        // A world resolution record (HOST_FILL_W: four words, the world size at a 576-line reference then the handheld
-        // size, stock 1024x576 / 1280x720): the platform layer publishes the first pair to the world camera, whose
-        // projection ratio follows it, so a record left at the stock 16:9 on a narrower screen frames the world for
-        // 16:9 and the edges fall off the picture (an iPad's handheld HUD cropped at both sides). On such a screen
-        // the pair is rescaled to the screen's own aspect, the handheld width scaled by 576/720; the stock words are
-        // checked first, so a module whose record differs is left alone. Wider screens keep the record untouched:
-        // their framing already follows the render size the stubs serve
+        // A resolution record (HOST_FILL_W: four words, a world size at a 576-line reference then the handheld size,
+        // stock 1024x576 / 1280x720), copied with the display template into a managed settings object at its init
+        // (Silksong: the pair of vector loads at main+0x253cfd4). The handheld pair is the size the game's HUD canvas
+        // and composition are laid out for: left at the stock 1280 on a narrower screen, the canvas overflows the
+        // 1032-wide frame and the HUD's edges fall off the picture (an iPad's handheld silk spool cropped). On such a
+        // screen the handheld word takes the screen's own width; the stock words are checked first, so a module
+        // whose record differs is left alone. The world pair stays stock: rescaling it too was tried (build #70)
+        // and the world texture sampling desynced from it -- a mirrored ghost band under sprites in handheld play.
+        // Which path samples by the stock pair is still open (see the game note). Wider screens keep the record
+        // untouched: their framing already follows the render size the stubs serve
         if (m->fill_w_off) {
             if (m->fill_w_off + 16 > m->size) die("%s: HOST_FILL_W out of range", m->name);
             long hwe = hw ? hw : 1280; uint32_t cur[4]; memcpy(cur, m->base + m->fill_w_off, sizeof cur);
             if (hwe < 1280 && cur[0] == 1024 && cur[1] == 576 && cur[2] == 1280 && cur[3] == 720) {
-                uint32_t ww = (uint32_t)((hwe * 576 / 720 + 2) & ~3u); if (!ww) ww = 4;
-                memcpy(m->base + m->fill_w_off, &ww, sizeof ww);
                 uint32_t v32 = (uint32_t)hwe; memcpy(m->base + m->fill_w_off + 8, &v32, sizeof v32);
-                LOG("%s: world resolution record rescaled to the screen (world %ux576, handheld %ldx720)", m->name, ww, hwe);
+                LOG("%s: resolution record handheld pair set to the screen (%ldx720); the world pair stays stock", m->name, hwe);
             }
         }
     }

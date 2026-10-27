@@ -72,13 +72,16 @@ CUTS = {
 # With a height override (DM_RENDER_HEIGHT) the loader writes the docked height word after the
 # docked width too, in the same apply; the handheld height word keeps its baked 720.
 # The 'W' entry is a second record, at 0x666efa0: four words {1024, 576, 1280, 720} -- a world
-# size at a 576-line reference, then the handheld size. The platform layer publishes the world
-# pair to the world camera (CameraRenderScaled), whose projection ratio follows it; left at the
-# stock 16:9 on a screen narrower than the stock frame (an iPad at 2360x1640), the world and the
-# HUD stayed framed for the stock sizes and the picture's edges fell off (handheld) or letterboxed
-# with uncleared bands (docked). On such a screen the loader rescales the record to the screen's
-# aspect (loader.c dm_fps_state_apply, which checks the stock words first); wider screens keep
-# the record as shipped. Open: unverified on a device -- see the game note.
+# size at a 576-line reference, then the handheld size. A managed settings object's initializer
+# copies it, together with the template above, into the object at main+0x253cfd4 (two vector
+# loads stored as one 32-byte block). The handheld pair is the size the HUD canvas and the
+# composition are laid out for: left at the stock 1280 on a screen narrower than the stock
+# frame (an iPad at 2360x1640), the canvas overflows the frame and the HUD's edges fall off.
+# On such a screen the loader sets the record's handheld word to the screen's width (loader.c
+# dm_fps_state_apply, which checks the stock words first); wider screens keep the record as
+# shipped. The world pair is NOT rescaled: build #70 rescaled it too and the world texture
+# sampling desynced from it (a mirrored ghost band under sprites in handheld play). Which path
+# samples by the stock world pair is open -- see the game note.
 HOST_FILLS = {
   'fc9ea4ccc955d5799f37752b2d730b31': [('H', 0x6679240), ('D', 0x6679248), ('W', 0x666efa0)],
 }
