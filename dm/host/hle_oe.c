@@ -149,9 +149,15 @@ HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resol
     // Unity player does, before its first frame -- and sizes its present crop from the answer: the stock
     // 1280x720 there undid the wide handheld size the size stubs and the display-mode template already
     // carried, and the present stretched the 1280-wide crop over the whole screen. Without the variable
-    // (the Mac, a front end that does not measure) the answer is the stock panel size, as before
+    // (the Mac, a front end that does not measure) the answer is the stock panel size, as before.
+    // A measured width at or below the stock 1280 does not replace the answer either: a guest whose
+    // handheld composition is laid out for the stock frame (Silksong) told a narrower size lays its HUD
+    // canvas out for a wider frame than it draws and the edges fall off, so on a narrow screen every
+    // size channel holds the stock panel size -- this answer, the display-mode template's handheld
+    // word and the frame-step state's handheld cell (loader.c dm_fps_state_apply) -- and the front
+    // end's scale to the screen is the only transform
     if (!con) { const char *rh = getenv("DM_RENDER_WIDTH_HD"); long hw = rh ? strtol(rh, NULL, 10) : 0;
-        if (hw >= 320 && hw <= 16384 && !(hw % 8)) x = (int)hw; }
+        if (hw > 1280 && hw <= 16384 && !(hw % 8)) x = (int)hw; }
     if (w) *w = x; if (h) *h = y;
     static int ncalls; if (ncalls < 16) LOG("default display resolution: %dx%d (call %d)", x, y, ncalls); ncalls++;   // diagnostic: every early answer, not just the first
 }
