@@ -4,6 +4,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 
 ## Textures and formats
 
+### Null textures in diagnostic logs
+
+- **Symptom:** clang reports null dereferences in `nvnWindowInitialize` and `clear_tex`; clearing a null texture crashes with `DM_NVN_PASSDUMP=1`.
+- **Cause:** window initialization checked the texture count but logged the first texture's dimensions without checking its pointer. Clear replay tolerated a null texture but its pass dump unconditionally read the texture serial.
+- **Fix:** check the first texture before logging its dimensions (`hle_nvn.c`) and log serial 0 for a null clear texture (`nvn_mtl.m`).
+- **Found on:** clang static analysis ([issue #424](https://github.com/seedds/nxnative/issues/424)); synthetic null-texture tests, with no gameplay failure reported.
+
 ### Texture objects copied into command records
 
 - **Symptom:** Metal aborts on a texture descriptor with an absurd size (`height (1869367126) greater than … 16384`).
