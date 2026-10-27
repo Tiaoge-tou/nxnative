@@ -250,22 +250,22 @@ void dm_fps_state_apply(void) {
     const char *rw = getenv("DM_RENDER_WIDTH"); long w = rw ? strtol(rw, NULL, 10) : 0;
     if (rw && (w < 320 || w > 16384 || w % 8)) { LOG("[RED] DM_RENDER_WIDTH=%s: a multiple of 8 between 320 and 16384 expected; using 2344", rw); w = 0; }
     // On a screen narrower than 16:9 the measured docked width (an iPad's 1552 or 1640 at the 1080 height) is
-    // NOT served to an ordinary guest: one whose docked composition is laid out for the stock 1920x1080
-    // (Silksong) derives a 16:10 sub-rect from the narrower width and letterboxes it inside the frame, the
-    // never-cleared strips outside it showing as coloured bands -- and a mirrored ghost strip under sprites
-    // was only ever seen on those sub-rect paths. The stock pair is served instead and the front end scales
-    // it to the screen, as it does the handheld frame on such a screen. A height override (the
-    // lowered-resolution tier) opts out: its widths are the tier's own. A guest with a resolution record is
-    // excepted (serve_narrow, computed here from the handheld width the front end measured, and published
-    // below for nn::oe): as on its handheld side (build #76) it is served the measured docked width on every
-    // channel at once (build #81), renders at that size and centre-crops its stock docked canvas into it
+    // NOT served: a guest whose docked composition is laid out for the stock 1920x1080 (Silksong) derives a
+    // 16:10 sub-rect from the narrower width and letterboxes it inside the frame, the never-cleared strips
+    // outside it showing as coloured bands -- and a mirrored ghost strip under sprites was only ever seen on
+    // those sub-rect paths. The stock pair is served instead and the front end scales it to the screen, as
+    // it does the handheld frame on such a screen. A height override (the lowered-resolution tier) opts
+    // out: its widths are the tier's own. Build #81 tried excepting a guest with a resolution record here
+    // too (its handheld side centre-crops, build #76): served the measured docked width on every channel,
+    // the guest letterboxed its 16:9 composition inside the frame with the ghost strip back (device-checked
+    // 2026-10-27) -- its docked composition fits inside the frame rather than cropping into it, so there is
+    // no docked exception; serve_narrow below covers the handheld channels only
     const char *rh0 = getenv("DM_RENDER_WIDTH_HD"); long hw0 = rh0 ? strtol(rh0, NULL, 10) : 0;
     if (rh0 && (hw0 < 320 || hw0 > 16384 || hw0 % 8)) hw0 = 0;
     int serve_narrow = hw0 && hw0 < 1280 && g_fill_mod && g_fill_mod->fill_w_off;
-    long deff = (!ht && w && w < 1920 && !serve_narrow) ? 1920 : (w ? w : 2344);
+    long deff = (!ht && w && w < 1920) ? 1920 : (w ? w : 2344);
     uint64_t rpair = (uint64_t)(uint32_t)deff | (uint64_t)(uint32_t)(ht ? ht : 1080) << 32; memcpy(dm_fps_state + 0x38, &rpair, sizeof rpair);
     if (rw || rht) LOG("%s: render size %ldx%ld (DM_RENDER_WIDTH / DM_RENDER_HEIGHT)", g_fps_mod, deff, ht ? ht : 1080);
-    if (serve_narrow && w && w < 1920) LOG("%s: docked size served measured on a narrow screen (%ldx1080); the guest centre-crops its stock docked canvas", g_fps_mod, deff);
     // Render size at the handheld height (state +0x40, a packed u64 width | 720 << 32): the same routing for a build whose
     // handheld sizes read a state cell too (Silksong's size getter default). The front end sets DM_RENDER_WIDTH_HD beside
     // DM_RENDER_WIDTH; without it the cell takes 1280, the handheld width every build baked until now. On a screen
@@ -276,10 +276,10 @@ void dm_fps_state_apply(void) {
     // did (build #50 on an iPad at 2360x1640). A guest with a resolution record is excepted (serve_narrow, below)
     const char *rh = getenv("DM_RENDER_WIDTH_HD"); long hw = rh ? strtol(rh, NULL, 10) : 0;
     if (rh && (hw < 320 || hw > 16384 || hw % 8)) { LOG("[RED] DM_RENDER_WIDTH_HD=%s: a multiple of 8 between 320 and 16384 expected; using 1280", rh); hw = 0; }
-    // A guest with a resolution record (HOST_FILL_W) is excepted from the narrow hold: its composition
-    // follows the record's world pair, so it is served the screen's own sizes on every channel at once and
-    // the record's world pair is set to the same aspect in the fill below -- the wide screen's arrangement,
-    // under which the display sizes and the world pair agree. The decision (serve_narrow, computed at the
+    // A guest with a resolution record (HOST_FILL_W) is excepted from the narrow hold on the handheld
+    // channels: its composition follows the record's world pair, which stays stock, so served the screen's
+    // own handheld sizes on every channel at once it composes its stock-aspect canvas and the narrower
+    // frame centre-crops it (build #76, device-checked). The decision (serve_narrow, computed at the
     // docked size above from this same width) is published for the one size channel that lives elsewhere,
     // nn::oe's default-resolution answer (hle_oe.c)
     if (serve_narrow) setenv("DM_SERVE_NARROW", "1", 1);
@@ -315,21 +315,18 @@ void dm_fps_state_apply(void) {
         // stretch went unnoticed while the picture was judged by the HUD. On a wide screen the world word takes
         // the screen's own aspect at the same 576 reference (the handheld frame's width over its 720 height);
         // the stock words are checked first, so a module whose record differs is left alone. The handheld pair
-        // is never written (build #71: it does not drive the HUD). On a narrow screen served its own sizes
-        // (serve_narrow, above) the same agreement is arranged the other way: the world pair keeps its 1024
-        // width and its height takes the screen's aspect, so the world is composed taller instead of being
-        // stretched by the front end's scale
-        if (m->fill_w_off && hw && hw != 1280) {
+        // is never written (build #71: it does not drive the HUD). On a narrow screen the record is not
+        // written at all: its consumer reads the world pair as a width at the 576-line reference and never
+        // reads the height word (the one write a served build made there was inert, build #76), while a
+        // write to the pair's width is the letterbox-and-ghost signature of builds #70/#71/#77 -- so the
+        // handheld crop arrangement (serve_narrow) leaves the record stock and the guest composes its
+        // stock-aspect canvas into the measured frame on the display channels alone
+        if (m->fill_w_off && hw > 1280) {
             if (m->fill_w_off + 16 > m->size) die("%s: HOST_FILL_W out of range", m->name);
             uint32_t cur[4]; memcpy(cur, m->base + m->fill_w_off, sizeof cur);
             if (cur[0] == 1024 && cur[1] == 576 && cur[2] == 1280 && cur[3] == 720) {
-                if (hw > 1280) {
-                    uint32_t v32 = (uint32_t)((hw * 576 + 360) / 720); memcpy(m->base + m->fill_w_off, &v32, sizeof v32);
-                    LOG("%s: resolution record world pair widened to the screen (%ux576); the handheld pair stays stock", m->name, v32);
-                } else if (serve_narrow) {
-                    uint32_t v32 = (uint32_t)((1024 * 720 + hw / 2) / hw); memcpy(m->base + m->fill_w_off + 4, &v32, sizeof v32);
-                    LOG("%s: resolution record world pair set to the screen for a narrow screen (1024x%u); the handheld pair stays stock", m->name, v32);
-                }
+                uint32_t v32 = (uint32_t)((hw * 576 + 360) / 720); memcpy(m->base + m->fill_w_off, &v32, sizeof v32);
+                LOG("%s: resolution record world pair widened to the screen (%ux576); the handheld pair stays stock", m->name, v32);
             }
         }
     }
