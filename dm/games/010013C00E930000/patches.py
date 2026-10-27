@@ -71,8 +71,16 @@ CUTS = {
 # on every screen: without the host variables the fills take 2344 / 1280, as baked until now.
 # With a height override (DM_RENDER_HEIGHT) the loader writes the docked height word after the
 # docked width too, in the same apply; the handheld height word keeps its baked 720.
+# The 'W' entry is a second record, at 0x666efa0: four words {1024, 576, 1280, 720} -- a world
+# size at a 576-line reference, then the handheld size. The platform layer publishes the world
+# pair to the world camera (CameraRenderScaled), whose projection ratio follows it; left at the
+# stock 16:9 on a screen narrower than the stock frame (an iPad at 2360x1640), the world and the
+# HUD stayed framed for the stock sizes and the picture's edges fell off (handheld) or letterboxed
+# with uncleared bands (docked). On such a screen the loader rescales the record to the screen's
+# aspect (loader.c dm_fps_state_apply, which checks the stock words first); wider screens keep
+# the record as shipped. Open: unverified on a device -- see the game note.
 HOST_FILLS = {
-  'fc9ea4ccc955d5799f37752b2d730b31': [('H', 0x6679240), ('D', 0x6679248)],
+  'fc9ea4ccc955d5799f37752b2d730b31': [('H', 0x6679240), ('D', 0x6679248), ('W', 0x666efa0)],
 }
 
 # ---- Render width from the host (frame step state page +0x38, a packed u64 width | height << 32) ----

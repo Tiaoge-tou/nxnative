@@ -202,6 +202,7 @@ static void read_layout(module_t *m, const char *dir) {
         else if (!strcmp(key, "FPS_STATE_OFF")) m->fps_state_off = v;
         else if (!strcmp(key, "HOST_FILL_D")) { m->fill_d_off = v; g_fill_mod = m; }
         else if (!strcmp(key, "HOST_FILL_H")) { m->fill_h_off = v; g_fill_mod = m; }
+        else if (!strcmp(key, "HOST_FILL_W")) { m->fill_w_off = v; g_fill_mod = m; }
         else if (!strcmp(key, "BUILD_ID")) sscanf(line, "# %*s %32s", m->build_id);
         else for (int k = 0; k < KEY_N; k++) {
             size_t n = strlen(kn[k]);
@@ -271,6 +272,23 @@ void dm_fps_state_apply(void) {
         if (m->fill_d_off && ht) { if (m->fill_d_off + 8 > m->size) die("%s: HOST_FILL_D height out of range", m->name); uint32_t v32 = (uint32_t)ht; memcpy(m->base + m->fill_d_off + 4, &v32, sizeof v32); }
         if (m->fill_h_off) { if (m->fill_h_off + 4 > m->size) die("%s: HOST_FILL_H out of range", m->name); uint32_t v32 = (uint32_t)(hw ? hw : 1280); memcpy(m->base + m->fill_h_off, &v32, sizeof v32); }
         if (m->fill_d_off || m->fill_h_off) LOG("%s: display-mode sizes filled from the host (docked %ld, handheld %ld)", m->name, w ? w : 2344, hw ? hw : 1280);
+        // A world resolution record (HOST_FILL_W: four words, the world size at a 576-line reference then the handheld
+        // size, stock 1024x576 / 1280x720): the platform layer publishes the first pair to the world camera, whose
+        // projection ratio follows it, so a record left at the stock 16:9 on a narrower screen frames the world for
+        // 16:9 and the edges fall off the picture (an iPad's handheld HUD cropped at both sides). On such a screen
+        // the pair is rescaled to the screen's own aspect, the handheld width scaled by 576/720; the stock words are
+        // checked first, so a module whose record differs is left alone. Wider screens keep the record untouched:
+        // their framing already follows the render size the stubs serve
+        if (m->fill_w_off) {
+            if (m->fill_w_off + 16 > m->size) die("%s: HOST_FILL_W out of range", m->name);
+            long hwe = hw ? hw : 1280; uint32_t cur[4]; memcpy(cur, m->base + m->fill_w_off, sizeof cur);
+            if (hwe < 1280 && cur[0] == 1024 && cur[1] == 576 && cur[2] == 1280 && cur[3] == 720) {
+                uint32_t ww = (uint32_t)((hwe * 576 / 720 + 2) & ~3u); if (!ww) ww = 4;
+                memcpy(m->base + m->fill_w_off, &ww, sizeof ww);
+                uint32_t v32 = (uint32_t)hwe; memcpy(m->base + m->fill_w_off + 8, &v32, sizeof v32);
+                LOG("%s: world resolution record rescaled to the screen (world %ux576, handheld %ldx720)", m->name, ww, hwe);
+            }
+        }
     }
     char cap[32]; snprintf(cap, sizeof cap, ", capped at %d fps", t);
     LOG("%s: frame step %s%s (%s)", g_fps_mod, !t ? "as the game sets it" : "in whole vsyncs decided by the host", t ? cap : "", e ? "DM_FPS_TARGET" : "game profile fps_target");

@@ -53,6 +53,7 @@ General host changes first needed here; each applies to every game:
 
 ## Open
 
+- On a screen narrower than 16:9 (an iPad Air 11-inch at 2360x1640, reported 2026-10-27) the picture is framed for the stock sizes despite the host's size fills: in handheld the HUD's left edge (the silk spool) falls off the picture, and docked draws the world into a 1552x970 target letterboxed inside the 1552x1080 surface, its uncleared bands showing as white/yellow and blue strips. The world resolution record at main+0x666efa0 ({1024, 576, 1280, 720}, published to the world camera) was never filled; `HOST_FILLS` now has a 'W' entry and the loader rescales that record to the screen's aspect when the handheld width is below the stock 1280. Unverified on a device.
 - The pad layout disagrees: the profile has no `pad_layout` (the default `simple`, 2D) and the notes say 2D, but README.md's touch-controls paragraph does not list this game among those that start in 2D.
 - Whether it reads touch in handheld mode has not been tried.
 - The one geometry shader does not build.
