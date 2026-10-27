@@ -318,13 +318,12 @@ void dm_fps_state_apply(void) {
         // the stock words are checked first, so a module whose record differs is left alone. The handheld pair
         // is never written (build #71: it does not drive the HUD). On a narrow screen served its own sizes
         // (serve_narrow, above) the same agreement is arranged the other way: the world pair keeps its 1024
-        // width and its height takes the screen's aspect. The height word is load-bearing even though the
-        // composition reads the pair as a width only: build #83 served the measured handheld sizes with
-        // the record left stock, and the guest crashed at the save screen in BOTH modes (device-checked
-        // 2026-10-27) -- some other reader takes the pair whole and needs it to agree with the served
-        // sizes, as it does in every arrangement that has run (stock channels with a stock record, or
-        // measured channels with this write). A write to the pair's WIDTH stays the letterbox-and-ghost
-        // signature of builds #70/#71/#77 and is not made
+        // width and its height takes the screen's aspect, so the record agrees with the served sizes as
+        // it does on a wide screen. (Build #83 dropped this write as inert and its device check crashed
+        // at the save screen in both modes -- but the crash was traced to a corrupted datapack on the
+        // test device, not to the arrangement; the write stays because the arrangement carrying it is
+        // the one with the device-checked history, builds #76/#81.) A write to the pair's WIDTH stays
+        // the letterbox-and-ghost signature of builds #70/#71/#77 and is not made
         if (m->fill_w_off && hw && hw != 1280) {
             if (m->fill_w_off + 16 > m->size) die("%s: HOST_FILL_W out of range", m->name);
             uint32_t cur[4]; memcpy(cur, m->base + m->fill_w_off, sizeof cur);
