@@ -20,6 +20,12 @@ FW=-framework Metal -framework MetalFX -framework Foundation -framework QuartzCo
 # Tests that #include nvn_mtl.m link the rest of the NVN layer beside it (hle_nvn.c: memory pools, sparse pools, serials) and the host's large stack, with weak stubs of what they need of the host (t_host_stubs.c)
 MTL_T_DEP=../nvn/hle_nvn.c ../../host/crash.c ../../host/hle_bigstack.c t_host_stubs.c $(GFX) $(GFX_H)
 MTL_T_SRC=../nvn/hle_nvn.c ../../host/crash.c ../../host/hle_bigstack.c t_host_stubs.c $(filter-out ../nvn/nvn_mtl.m,$(GFX))
+t_transform_feedback: t_transform_feedback.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_transform_feedback.m $(MTL_T_SRC) $(FW)
+.PHONY: check_t_transform_feedback
+check_t_transform_feedback: t_transform_feedback
+	DM_TEST_TRANSFORM_FEEDBACK=$(CURDIR)/t_transform_feedback MTL_DEBUG_LAYER=1 python3 -m unittest test_transform_feedback.py
+run: check_t_transform_feedback
 t_nvn: t_nvn.c ../nvn/hle_nvn.c ../../host/crash.c ../../host/hle_bigstack.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_nvn.c ../../host/crash.c ../../host/hle_bigstack.c $(GFX) $(FW)
 t_dirty_slots: t_dirty_slots.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_dirty.h
@@ -141,6 +147,9 @@ t_geometry: t_geometry.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_geometry.m $(MTL_T_SRC) $(FW)
 t_feedback: t_feedback.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_feedback.m $(MTL_T_SRC) $(FW)
+t_rast_discard: t_rast_discard.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_rast_discard.m $(MTL_T_SRC) $(FW)
+run: t_rast_discard
 .PHONY: check_t_feedback
 check_t_feedback: t_feedback
 	MTL_DEBUG_LAYER=1 ./t_feedback
@@ -291,5 +300,6 @@ run: t_nvn t_dirty_slots t_dirty_race t_tex_layout t_builtin t_vin t_tbuf2d t_tb
 	MTL_DEBUG_LAYER=1 ./t_upgrade_alias
 	MTL_DEBUG_LAYER=1 ./t_image_usage
 	MTL_DEBUG_LAYER=1 ./t_stencil_view
+	MTL_DEBUG_LAYER=1 ./t_rast_discard
 	DM_GAME=$(GAME) python3 test_tbdr_budget.py
 .PHONY: run

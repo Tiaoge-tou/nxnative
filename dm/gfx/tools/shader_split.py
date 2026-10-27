@@ -49,7 +49,7 @@
 #   With an update: give RomFS and main as comma-separated lists (base game first, e.g. data/v0/RomFS,data/v327680/RomFS); the output is the union of both versions (see main())
 #   Unity type trees need Unity's common string table, which is taken from the first main
 # Pair table: (vertex key, pixel key) of every BNSH variation (every Unity program); dmsh_build uses it to give vertex shaders the outputs their pixel shaders read but they do not write (see dmsh_build.py vs_pad)
-import collections, concurrent.futures as cf, hashlib, json, os, re, struct, subprocess, sys
+import collections, concurrent.futures as cf, hashlib, json, os, re, struct, subprocess, sys, zlib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../games')); import game as _game
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import uepak
 GAME = _game.load()   # the current game profile (DM_GAME, required): source group rules and the table header note
@@ -220,7 +220,7 @@ def glslc_program(d, h, size, label):
     if len(secs) < 2 or len(set(sts)) < len(sts) or any(not st or check(label, st, ctl, code) for st, (ctl, code) in zip(sts, secs)): return []
     return [(f'{label}#GLSLC@{h:#x}#var', st, ctl, code) for st, (ctl, code) in zip(sts, secs)]
 
-def glslc_shaders(d, label, need=True):
+def glslc_shaders(d, label, need=True, skip=()):
     """GLSLC compiler outputs (838 in 13 Sentinels' main read-only segment, one stage each): from the magic 0x19866891, +0x44 = the whole output's length; an output of one stage holds exactly one control section with the code area right after it (control +0x20 = control length),
     one of several stages is read by its section headers (glslc_program).
     The magic is only 4 bytes, so only outputs that pass the triple check are kept. Every game's main is searched: Unity's player has 11 of its own (Fire Emblem Engage, Ace Attorney Investigations
@@ -231,6 +231,8 @@ def glslc_shaders(d, label, need=True):
     something else at control +0x20 (odd values such as 0x136b), so a length that is not a multiple of 4 is not a control length"""
     out = []
     for m in re.finditer(b'\x91\x68\x86\x19', d):
+        if any(a <= m.start() < b for a, b in skip): continue
+        if m.start() + 0x48 > len(d): continue
         h = m.start(); size = struct.unpack_from('<I', d, h + 0x44)[0]
         c = d.find(CTL_MAGIC, h, h + size) if 0x760 < size <= len(d) - h else -1
         if c < 0: continue
@@ -1562,6 +1564,175 @@ def ue_inline_shaders(d, label, out):
             except Exception: continue
             if len(s) == raw and s[:4] == b'LSLG': take(s, j); break
 
+def arh_entries(d):
+    """Monolith ARH1 index → (path, ARD offset, stored size). The XOR trie
+    reconstructs full paths; the metadata table supplies the actual file bounds.
+    Format: https://github.com/roccodev/ard-tools/blob/master/docs/arh1.md
+    Xenoblade 3 2.2.1: 76,445 entries in bf3.arh, 9.05 GB in bf3.ard."""
+    if len(d) < 48 or d[:4] != b'arh1': return []
+    _, count, so, sn, no, nn, fo, fn, key = struct.unpack_from('<9I', d, 4)
+    if nn != count * 8 or any(o > len(d) or n > len(d) - o for o, n in ((so, sn), (no, nn), (fo, fn * 24))): red('ARH1: index table out of bounds')
+    key = (key ^ 0xf3f35353).to_bytes(4, 'little')
+    # The format encrypts whole u32 words; a final partial word stays plain.
+    dec = lambda o, n: bytes(v ^ key[i & 3] for i, v in enumerate(d[o:o + (n & ~3)])) + d[o + (n & ~3):o + n]
+    strings = dec(so, sn); nodes = list(struct.iter_unpack('<ii', dec(no, nn)))
+    names = {}
+    for i, (nxt, prev) in enumerate(nodes):
+        if nxt >= 0 or prev < 0: continue
+        off = -nxt
+        if off >= len(strings) or (end := strings.find(b'\0', off)) < 0 or end + 5 > len(strings): red('ARH1: invalid path suffix')
+        fid = struct.unpack_from('<I', strings, end + 1)[0]; prefix = []; cur = i; seen = set()
+        while cur:
+            if cur in seen or not 0 <= cur < len(nodes): red('ARH1: invalid path trie')
+            seen.add(cur); parent = nodes[cur][1]
+            if not 0 <= parent < len(nodes): red('ARH1: invalid path parent')
+            ch = cur ^ nodes[parent][0]
+            if not 0 <= ch < 128: red('ARH1: invalid path character')
+            prefix.append(ch); cur = parent
+        names[fid] = (bytes(reversed(prefix)) + strings[off:end]).decode('ascii')
+    out = []
+    for i in range(fn):
+        off, size, raw, flags, fid = struct.unpack_from('<Q4I', d, fo + i * 24)
+        # HasXbc1Header (bit 1): stored size excludes the 48-byte wrapper.
+        if size: out.append((names.get(fid, f'#{fid}'), off, size + (48 if flags & 2 else 0)))
+    return out
+
+
+def arh_jobs(files, parts=64):
+    jobs, used = [], set()
+    for path, rel in files:
+        if not path.endswith('.arh'): continue
+        with open(path, 'rb') as f: d = f.read()
+        if d[:4] != b'arh1': continue
+        ard = path[:-4] + '.ard'
+        if not os.path.isfile(ard): red(f'{rel}: ARH1 index has no ARD data file')
+        entries = arh_entries(d); length = os.path.getsize(ard)
+        if any(o > length or n > length - o for _, o, n in entries): red(f'{rel}: ARD entry out of bounds')
+        step = max(1, (len(entries) + parts - 1) // parts)
+        jobs += [(ard, rel[:-4] + '.ard', (b'ARH1', entries[i:i + step])) for i in range(0, len(entries), step)]
+        used.update((path, ard))
+    return jobs, used
+
+
+def xbc_data(d, off):
+    """An XBC1 stream: 48-byte header, stored / zlib / zstd payload. Return
+    (decoded bytes, end), or None for bytes that merely resemble a header."""
+    if off + 48 > len(d) or d[off:off + 4] != b'xbc1': return None
+    kind, raw, size = struct.unpack_from('<3I', d, off + 4)
+    if kind not in (0, 1, 3) or not size or off + 48 + size > len(d): return None
+    data = d[off + 48:off + 48 + size]
+    if kind == 1: data = zlib.decompress(data)
+    elif kind == 3: data = zstd_mod().decompress(data)
+    if len(data) != raw: red(f'XBC1 @{off:#x}: expected {raw} bytes, decoded {len(data)}')
+    return data, off + 48 + size
+
+
+def monolith_cmp_data(d, off):
+    """Firehawk effect archives: cmp\\0zlib, stored/raw sizes, zlib payload.
+    These independently compressed shader resources sit inside XBC1 entries."""
+    if off + 16 > len(d) or d[off:off + 8] != b'cmp\0zlib': return None
+    size, raw = struct.unpack_from('<2I', d, off + 8)
+    if not size or size > len(d) - off - 16: return None
+    z = zlib.decompressobj(); data = z.decompress(d[off + 16:off + 16 + size]) + z.flush()
+    if not z.eof or z.unused_data or len(data) != raw: red(f'cmp zlib @{off:#x}: payload does not match stored/raw sizes')
+    return data, off + 16 + size
+
+
+def hcps_shaders(d, base, label):
+    """HCPS shader programs (Monolith's wishp, also embedded in models/map
+    streams). SLCT gives the control/code ranges and variant descriptors; each
+    NVSD's final stage record gives their sizes. Pair stages within each variant.
+    Layout cross-checked against xc3_lib/src/spch.rs and the game's own bytes."""
+    def span(off, n):
+        if off < base or off > len(d) or n > len(d) - off: red(f'{label} HCPS @{base:#x}: section out of bounds')
+        return d[off:off + n]
+    span(base, 72)
+    table, count = struct.unpack_from('<2I', d, base + 8)
+    slct_off, slct_size, code_off, code_size, ctl_off, ctl_size = struct.unpack_from('<6I', d, base + 24)
+    span(base + table, count * 8)
+    slcts, codes, ctls = (span(base + o, n) for o, n in ((slct_off, slct_size), (code_off, code_size), (ctl_off, ctl_size)))
+    if not code_size and not ctl_size: return []   # source-only GLSL programs (DLC model streams), no NVN binaries to extract
+    out = []
+    for i in range(count):
+        s = struct.unpack_from('<I', d, base + table + 8 * i)[0]
+        if s + 72 > len(slcts) or slcts[s:s + 4] != b'SLCT': red(f'{label} HCPS: invalid SLCT {i}')
+        num, ptr = struct.unpack_from('<2I', slcts, s + 16)
+        c, cn, k, kn = struct.unpack_from('<4I', slcts, s + 40)
+        ce, ke = c + cn, k + kn
+        if s + ptr + num * 8 > len(slcts) or ce > len(ctls) or ke > len(codes): red(f'{label} HCPS SLCT {i}: variant range out of bounds')
+        for j in range(num):
+            po, pn = struct.unpack_from('<2I', slcts, s + ptr + j * 8); p = s + po
+            if pn < 32 or p + pn > len(slcts): red(f'{label} HCPS: invalid NVSD')
+            vo, vn = struct.unpack_from('<2I', slcts, p + 24)
+            if not vn or vo + vn * 20 > pn: red(f'{label} HCPS: invalid NVSD stage records')
+            _, vs, ps, vc, pc = struct.unpack_from('<5I', slcts, p + vo + (vn - 1) * 20)
+            pend, kend = c + vc + pc, k + vs + ps
+            if pend > ce or kend > ke: red(f'{label} HCPS: program exceeds SLCT range')
+            # A vertex bundle can include a geometry stage (shd_lgt.wishp:
+            # 768-byte vertex + 256-byte geometry, two 0x880 controls). NVSD's
+            # vertex size covers both; each NVN control gives its own code size.
+            while c < pend:
+                if c + 0x708 > pend: red(f'{label} HCPS: truncated control')
+                nc = struct.unpack_from('<I', ctls, c + 0x20)[0]
+                nk = struct.unpack_from('<I', ctls, c + 0x704)[0]
+                if nc < 0x760 or c + nc > pend or not nk or k + nk > kend: red(f'{label} HCPS: shader exceeds program range')
+                ctl, code = ctls[c:c + nc], codes[k:k + nk]; c += (nc + 7) & ~7; k += nk
+                st = glslc_stage(ctl, code)
+                why = check(label, st, ctl, code) if st else 'unknown stage'
+                if why: red(f'{label} HCPS SLCT {i} variant {j}: {why}')
+                out.append((f'{label}#HCPS@{base:#x}#var{i}.{j}', st, ctl, code))
+            if k != kend: red(f'{label} HCPS: unused program code bytes')
+        if c != ce or k != ke: red(f'{label} HCPS SLCT {i}: unused control/code bytes')
+    return out
+
+
+def slct_shaders(d, base, label):
+    """A standalone SLCT has its control/code offsets relative to itself.
+    Monolith embeds this form in main, without an HCPS header. Present those
+    same relative sections to the HCPS reader; no code or control bytes change.
+    Its text-bearing control sections are individually aligned to eight bytes."""
+    if base + 72 > len(d): return []
+    c, cn, k, kn = struct.unpack_from('<4I', d, base + 40)
+    size = max(c + cn, k + kn)
+    if min(c, k) < 72 or size > len(d) - base: return []
+    header = bytearray(80); header[:4] = b'HCPS'
+    struct.pack_into('<2I', header, 8, 72, 1)
+    struct.pack_into('<6I', header, 24, 80, size, 80, size, 80, size)
+    return hcps_shaders(bytes(header) + d[base:base + size], 0, f'{label}#SLCT@{base:#x}')
+
+
+def monolith_shaders(d, label, out):
+    """Scan decoded archive entries and their XBC1 streams without relying on
+    extensions: model streams and map data embed HCPS alongside other assets."""
+    pos = 0; compressed = []
+    # Separate literal scans use Python's fast substring search. Alternation's
+    # character-set search is costly across the archive's decoded texture data.
+    markers = sorted((m.start(), magic == b'xbc1', len(magic)) for magic in (b'xbc1', b'cmp\0zlib') for m in re.finditer(magic, d))
+    for off, xbc, size in markers:
+        if off < pos: continue
+        result = xbc_data(d, off) if xbc else monolith_cmp_data(d, off)
+        pos = off + size if result is None else result[1]
+        if result is not None:
+            compressed.append((off, pos))
+            monolith_shaders(result[0], f'{label}#{"XBC1" if xbc else "cmp-zlib"}@{off:#x}', out)
+    ci = 0
+    for m in re.finditer(b'HCPS', d):
+        base = m.start()
+        while ci < len(compressed) and compressed[ci][1] <= base: ci += 1
+        if ci < len(compressed) and compressed[ci][0] <= base: continue   # a zstd literal is not a decoded container
+        if base + 8 <= len(d) and struct.unpack_from('<I', d, base + 4)[0] in (1000, 1010): out.extend(hcps_shaders(d, base, label))
+    # Effect asset packs keep complete GLSLC outputs alongside HCPS programs.
+    # As above, compressed literals are visited only after decoding their stream.
+    out.extend(glslc_shaders(d, label, need=False, skip=compressed))
+
+
+def arh_shaders(path, rel, entries, out):
+    with open(path, 'rb') as f:
+        for name, off, size in entries:
+            f.seek(off); data = f.read(size)
+            monolith_shaders(data, f'/{rel}{name}', out)
+
+
 def yaz0(s):
     """Yaz0 decompression (Super Mario 3D World + Bowser's Fury: almost all of RomFS is .szs = SARC wrapped in Yaz0). Pure Python runs at about 20–45 MB/s per core, under a minute for the whole 4.7 GB RomFS in parallel, and needs no extra dependency.
     Group header bits: 1 = one literal byte; 0 = back-reference, 2 bytes {length high nibble, 12-bit distance} (distance + 1); length 0 reads one more byte + 0x12, else + 2. Overlapping copies are expanded by their period"""
@@ -1750,6 +1921,8 @@ def unity_text_glslc(x, base):
     return out
 
 def scan_blob(d, label, out):
+    if d[:4] == b'HCPS': out.extend(hcps_shaders(d, 0, label)); return
+    for m in re.finditer(b'SLCT\x03\x10\0\0', d): out.extend(slct_shaders(d, m.start(), label))
     if d[:4] == b'Yaz0': d = yaz0(d)
     if d[:4] == b'SARC':
         for nm, m in sarc_members(d): scan_blob(m, f'{label}/{nm}', out)
@@ -1841,6 +2014,9 @@ def scan_file(args):
     if ext in ('.data', '.patch', '.debug', '.nxpc') and os.path.exists(stem + '.dict'): return rel, {}, set(), {}   # read through its Next Level Games index (nlg_shaders)
     with open(path, 'rb') as f: head = f.read(16)
     found = []; trees = {}
+    if len(args) > 2 and args[2][0] == b'ARH1':
+        arh_shaders(path, rel, args[2][1], found)
+        return rel, uniq_keys(found), var_pairs(found), trees
     if head[:4] == NLG_DICT:
         nlg_shaders(path, '/' + rel, found)
         return rel, uniq_keys(found), var_pairs(found), trees
@@ -1984,8 +2160,9 @@ def main():
     pz_jobs, pkzs = pkz_jobs(files)   # Bayonetta 3's PKZ archives, Oodle Kraken decoded by the game's own decoder in the Mac host
     ck_jobs, cpks = cpk_jobs(files)   # Bayonetta 2's CRI CPK archives (CRILAYLA entries)
     zp_jobs, zips = zip_jobs(files)   # Portal's game.zip (Deflate members)
-    big += pak_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + zp_jobs
-    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in zips]
+    ah_jobs, arhs = arh_jobs(files)   # Monolith's ARH1/ARD archives and embedded XBC1/HCPS programs
+    big += pak_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + zp_jobs + ah_jobs
+    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in zips and p not in arhs]
     with cf.ProcessPoolExecutor(J, initializer=_pool_init, initargs=(common, {}, zdicts)) as ex:
         results += list(ex.map(scan_file, big)) + list(ex.map(scan_file, files, chunksize=16))
     trees, defer = {}, []

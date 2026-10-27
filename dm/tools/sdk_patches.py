@@ -1,6 +1,14 @@
 # The rewriter's patches of Nintendo SDK module builds (sdk), which several games can ship: dm/tools/patch_nso.py applies those of a module's NSO build ID, whatever the game.
 # A patch of a game's own module (main) goes in its profile's patches.py (dm/games/<id>/patches.py). CUTS as described in patch_nso.py ("Registered patches")
 CUTS = {
+  # Xenoblade Chronicles 3 2.2.1, SDK 12.3.9: the same AddressRegionManager
+  # constructor and size-class alignment as Engage's SDK 12.3.7. Its cut 4 GB
+  # malloc reservation must fit the 4.375 GB alias region on iOS.
+  'e8cdceb1e77a8465fe20f21928e8d296': [
+    (0x346430, '08fca752', '087ca052', 'AddressRegionManager node area limit: 1 GB to 62 MB'),
+    (0x3464cc, '09fca752', '097ca052', 'AddressRegionManager occupied node area: 1 GB to 62 MB'),
+    (0x34662c, '0a00a852', '0a40a052', 'AllocateAddressRegion: align regions of 1 GB and more to 32 MB'),
+  ],
   # Pokemon Brilliant Diamond 1.3.0 (SDK 11.4.3): nninitStartup (main+0x2c1d5c) gives pool - used to StandardAllocator with virtual address memory.
   # Its first CentralHeap::Init aborts at sdk+0x2f98e4: the 1 GB node area leaves no room for the 1 GB-aligned 3.14 GB reservation in a 4.375 GB alias region.
   # The constructor (sdk+0x34e0b8) is the same mechanism as Engage's below: the limit and the occupied length must both shrink to 62 MB.
