@@ -1257,7 +1257,18 @@ NVN(nvnWindowSetCrop, void, NVNwindow *w, int x, int y, int ww, int hh) {
     const char *om = getenv("DM_OPMODE"), *rh = getenv("DM_RENDER_WIDTH_HD");
     long hw = rh ? strtol(rh, NULL, 10) : 0;
     if (om && !strcmp(om, "0") && !x && !y && ww == 1280 && hh == 720 && hw > 1280 && hw <= 16384 && !(hw % 8)) {
-        if (!crop_note) { crop_note = 1; LOG("[nvn] WindowCrop 1280x720 in handheld: the guest's stale stock size; using the host handheld width %ld (guest caller %#llx)", hw, (unsigned long long)__builtin_return_address(0)); }
+        if (!crop_note) { crop_note = 1; LOG("[nvn] WindowCrop 1280x720 in handheld: the guest's stale stock size; using the host handheld width %ld (guest caller %#llx)", hw, (unsigned long long)__builtin_return_address(0));
+            // Diagnostic (DM_DIAG_STATE_OFF, set from an env file: a guest offset in main of a pointer slot):
+            // read back the words at +0xa0..+0xbc of the object the slot points to, at the moment of the stale crop
+            const char *dso = getenv("DM_DIAG_STATE_OFF");
+            if (dso) { unsigned long soff = strtoul(dso, NULL, 0);
+                for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main") && soff + 8 <= g_mod[i].size) {
+                    const uint8_t *obj = *(const uint8_t *const *)(g_mod[i].base + soff);
+                    if (obj) { uint32_t v[8]; memcpy(v, obj + 0xa0, sizeof v);
+                        LOG("[nvn] [diag] object (main+%#lx) +0xa0: %u %u %u %u %u %u %u %u", soff, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]); }
+                }
+            }
+        }
         ww = (int)hw;
     }
     int v[4] = {x, y, ww, hh};
