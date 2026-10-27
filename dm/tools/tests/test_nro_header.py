@@ -7,7 +7,8 @@ import sys
 import tempfile
 import unittest
 
-from test_nso_match import image, RET
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # its sibling test module, also when the file runs alone (python -m unittest <file>, as CI does)
+from test_nso_match import image, RET   # noqa: E402
 
 TOOLS = Path(__file__).resolve().parents[1]
 
