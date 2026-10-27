@@ -11,7 +11,7 @@
 #             Reset to tested defaults clears all launcher choices; values fixed by an env file stay
 #   label, note  the setting's name and the line under it (may be empty; only for a setting with a cost: latency, memory, heat)
 DM_FPS_TARGET	choice	30=30 帧,60=60 帧	DM_GAME_FPS_TARGET	DM_GAME_FPS_TARGET!=0	Game	帧率	目标帧率（游戏支持时可选）
-SS_DISPLAY_HZ	choice	60=60 帧,120=120 帧	60	DM_GAME_DISPLAY_HZ!=0	Game	帧率	120 帧需要设备屏幕支持，屏幕跟不上时自动回到 60；120 帧模式；持续高负载下可能因温控而降频
+SS_DISPLAY_HZ	choice	60=60 帧,120=120 帧	60	DM_GAME_DISPLAY_HZ!=0	Game	帧率	120 帧需要设备屏幕支持，若设备不支持会自动回落 60 帧，持续高负载下可能因温控而降频，请谨慎使用
 DM_RENDER_SCALE	range	0.5:1.0:0.05	1.0	fixups:RENDER_SCALE	Game	渲染缩放	低于 100% 更流畅，画面稍糊
 DM_OPMODE	choice	1=底座模式,0=掌机模式	DM_GAME_OPMODE	always	Game	主机模式	底座 = 1080p 电视模式；掌机 = 720p，部分游戏的触屏功能仅掌机模式可用
 DM_PRESENT_UPSCALE	choice	off=标准,metalfx=MetalFX	off	always	Game	超分	更吃 GPU，可能增加发热。
