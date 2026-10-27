@@ -258,7 +258,7 @@ void dm_fps_state_apply(void) {
     // lowered-resolution tier) opts out: its widths are the tier's own. A guest with a resolution record is
     // excepted (serve_narrow, computed here from the handheld width the front end measured, and published
     // below for nn::oe): as on its handheld side (build #76) it is served the measured docked width on every
-    // channel at once (build #80), renders at that size and centre-crops its stock docked canvas into it
+    // channel at once (build #81), renders at that size and centre-crops its stock docked canvas into it
     const char *rh0 = getenv("DM_RENDER_WIDTH_HD"); long hw0 = rh0 ? strtol(rh0, NULL, 10) : 0;
     if (rh0 && (hw0 < 320 || hw0 > 16384 || hw0 % 8)) hw0 = 0;
     int serve_narrow = hw0 && hw0 < 1280 && g_fill_mod && g_fill_mod->fill_w_off;

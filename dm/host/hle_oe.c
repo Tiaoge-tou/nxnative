@@ -143,7 +143,7 @@ HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resol
     // as out of bounds. Without the variable the answer keeps the baked 2344, as before
     if (DM_GAME_DISPLAY_WIDE && con) { const char *fs = getenv("DM_FULLSCREEN"); if (fs && atoi(fs)) { const char *rw = getenv("DM_RENDER_WIDTH"); long dw = rw ? strtol(rw, NULL, 10) : 0;
         x = (dw >= 320 && dw <= 16384 && !(dw % 8)) ? (int)dw : 2344; } }
-    // Narrow exception, docked (build #80): a guest the loader serves its narrow screen's own sizes
+    // Narrow exception, docked (build #81): a guest the loader serves its narrow screen's own sizes
     // (DM_SERVE_NARROW, set there for a guest with a resolution record) is told the measured docked
     // width here too, so the channels agree as they do in handheld; it renders at that size and
     // centre-crops its stock docked canvas into the frame
