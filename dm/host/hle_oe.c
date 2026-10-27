@@ -143,6 +143,12 @@ HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resol
     // as out of bounds. Without the variable the answer keeps the baked 2344, as before
     if (DM_GAME_DISPLAY_WIDE && con) { const char *fs = getenv("DM_FULLSCREEN"); if (fs && atoi(fs)) { const char *rw = getenv("DM_RENDER_WIDTH"); long dw = rw ? strtol(rw, NULL, 10) : 0;
         x = (dw >= 320 && dw <= 16384 && !(dw % 8)) ? (int)dw : 2344; } }
+    // Narrow exception, docked (build #80): a guest the loader serves its narrow screen's own sizes
+    // (DM_SERVE_NARROW, set there for a guest with a resolution record) is told the measured docked
+    // width here too, so the channels agree as they do in handheld; it renders at that size and
+    // centre-crops its stock docked canvas into the frame
+    if (con && getenv("DM_SERVE_NARROW")) { const char *rw = getenv("DM_RENDER_WIDTH"); long dw = rw ? strtol(rw, NULL, 10) : 0;
+        if (dw >= 320 && dw <= 16384 && !(dw % 8)) x = (int)dw; }
     // Handheld: the panel is this screen, so the answer is the host's render size at the handheld height
     // (DM_RENDER_WIDTH_HD, which the iOS front end measures on the screen it runs on; the loader's own
     // validation, so the two cannot disagree). A game can ask again after its window is up -- Silksong's
@@ -155,9 +161,11 @@ HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resol
     // canvas out for a wider frame than it draws and the edges fall off, so on a narrow screen every
     // size channel holds the stock panel size -- this answer, the display-mode template's handheld
     // word and the frame-step state's handheld cell (loader.c dm_fps_state_apply) -- and the front
-    // end's scale to the screen is the only transform
+    // end's scale to the screen is the only transform. The one exception is a guest the loader serves
+    // its narrow screen's own sizes (DM_SERVE_NARROW, set there for a guest with a resolution record,
+    // whose world pair is set to the same aspect): this answer follows, so the channels still agree
     if (!con) { const char *rh = getenv("DM_RENDER_WIDTH_HD"); long hw = rh ? strtol(rh, NULL, 10) : 0;
-        if (hw > 1280 && hw <= 16384 && !(hw % 8)) x = (int)hw; }
+        if (hw >= 320 && hw <= 16384 && !(hw % 8) && (hw > 1280 || getenv("DM_SERVE_NARROW"))) x = (int)hw; }
     if (w) *w = x; if (h) *h = y;
     static int ncalls; if (ncalls < 16) LOG("default display resolution: %dx%d (call %d)", x, y, ncalls); ncalls++;   // diagnostic: every early answer, not just the first
 }
