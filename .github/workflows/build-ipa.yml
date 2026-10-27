@@ -407,6 +407,7 @@ jobs:
           cd "$RUNNER_TEMP" && rm -rf slim-pack && mkdir slim-pack && cd slim-pack
           unzip -q "$GITHUB_WORKSPACE/out/game.ipa"
           rm -rf Payload/DmIOS.app/romfs
+          rm -f Payload/DmIOS.app/romfs.img
           mkdir -p "$GITHUB_WORKSPACE/out-slim"
           zip -q -r "$GITHUB_WORKSPACE/out-slim/game-slim.ipa" Payload
           cd "$GITHUB_WORKSPACE/out-slim"
