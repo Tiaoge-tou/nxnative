@@ -202,7 +202,6 @@ static void read_layout(module_t *m, const char *dir) {
         else if (!strcmp(key, "FPS_STATE_OFF")) m->fps_state_off = v;
         else if (!strcmp(key, "HOST_FILL_D")) { m->fill_d_off = v; g_fill_mod = m; }
         else if (!strcmp(key, "HOST_FILL_H")) { m->fill_h_off = v; g_fill_mod = m; }
-        else if (!strcmp(key, "HOST_FILL_W")) { m->fill_w_off = v; g_fill_mod = m; }
         else if (!strcmp(key, "BUILD_ID")) sscanf(line, "# %*s %32s", m->build_id);
         else for (int k = 0; k < KEY_N; k++) {
             size_t n = strlen(kn[k]);
@@ -253,11 +252,17 @@ void dm_fps_state_apply(void) {
     if (rw || rht) LOG("%s: render size %ldx%ld (DM_RENDER_WIDTH / DM_RENDER_HEIGHT)", g_fps_mod, w ? w : 2344, ht ? ht : 1080);
     // Render size at the handheld height (state +0x40, a packed u64 width | 720 << 32): the same routing for a build whose
     // handheld sizes read a state cell too (Silksong's size getter default). The front end sets DM_RENDER_WIDTH_HD beside
-    // DM_RENDER_WIDTH; without it the cell takes 1280, the handheld width every build baked until now
+    // DM_RENDER_WIDTH; without it the cell takes 1280, the handheld width every build baked until now. On a screen
+    // narrower than the stock handheld frame the cell is held at 1280 as well: the guest's handheld composition is
+    // laid out for the stock frame and cannot shrink with the screen (told 1032 on an iPad, it lays its HUD canvas
+    // out for a wider frame and the edges fall off the picture), so it composes the stock frame and the front end
+    // scales that to the screen -- the slight stretch is the price, and it is what builds before the host fills
+    // did (build #50 on an iPad at 2360x1640)
     const char *rh = getenv("DM_RENDER_WIDTH_HD"); long hw = rh ? strtol(rh, NULL, 10) : 0;
     if (rh && (hw < 320 || hw > 16384 || hw % 8)) { LOG("[RED] DM_RENDER_WIDTH_HD=%s: a multiple of 8 between 320 and 16384 expected; using 1280", rh); hw = 0; }
-    uint64_t hpair = (uint64_t)(uint32_t)(hw ? hw : 1280) | 720ULL << 32; memcpy(dm_fps_state + 0x40, &hpair, sizeof hpair);
-    if (rh) LOG("%s: render size %ldx720 (DM_RENDER_WIDTH_HD)", g_fps_mod, hw ? hw : 1280);
+    long heff = hw > 1280 ? hw : 1280;
+    uint64_t hpair = (uint64_t)(uint32_t)heff | 720ULL << 32; memcpy(dm_fps_state + 0x40, &hpair, sizeof hpair);
+    if (rh) LOG("%s: render size %ldx720 (DM_RENDER_WIDTH_HD)", g_fps_mod, heff);
     // Host-filled display-mode size words (fixups HOST_FILL_D / HOST_FILL_H, the module is the state page's own): a guest whose
     // mode sizes live in a data template rather than in code (Silksong's screen-state ctor template: handheld width at +0,
     // docked at +8) takes its reported display size -- and with it the present crop -- from that template, so a width baked
@@ -265,31 +270,18 @@ void dm_fps_state_apply(void) {
     // The loader writes the screen's own widths over the baked ones here, before the guest starts and copies the template.
     // With a height override (DM_RENDER_HEIGHT) the template's docked height word follows too (the word after the docked
     // width): the guest reads its display height from the same template, and a lowered width with the stock height would
-    // report a size nothing renders at. The handheld height stays 720, as the handheld pair does
+    // report a size nothing renders at. The handheld height stays 720, as the handheld pair does.
+    // The handheld word follows the narrow rule of the state page's handheld cell above: on a screen no wider
+    // than the stock frame it is left at the baked 1280, so the reported size, the crop and the frame the
+    // guest composes stay the stock one and the front end's scale to the screen is the only transform. The
+    // docked word is always filled: a baked docked width wider than the swapchain the stubs sized drops
+    // every present (an iPad's docked black screen)
     if (g_fill_mod) {
         module_t *m = g_fill_mod;
         if (m->fill_d_off) { if (m->fill_d_off + 4 > m->size) die("%s: HOST_FILL_D out of range", m->name); uint32_t v32 = (uint32_t)(w ? w : 2344); memcpy(m->base + m->fill_d_off, &v32, sizeof v32); }
         if (m->fill_d_off && ht) { if (m->fill_d_off + 8 > m->size) die("%s: HOST_FILL_D height out of range", m->name); uint32_t v32 = (uint32_t)ht; memcpy(m->base + m->fill_d_off + 4, &v32, sizeof v32); }
-        if (m->fill_h_off) { if (m->fill_h_off + 4 > m->size) die("%s: HOST_FILL_H out of range", m->name); uint32_t v32 = (uint32_t)(hw ? hw : 1280); memcpy(m->base + m->fill_h_off, &v32, sizeof v32); }
-        if (m->fill_d_off || m->fill_h_off) LOG("%s: display-mode sizes filled from the host (docked %ld, handheld %ld)", m->name, w ? w : 2344, hw ? hw : 1280);
-        // A resolution record (HOST_FILL_W: four words, a world size at a 576-line reference then the handheld size,
-        // stock 1024x576 / 1280x720), copied with the display template into a managed settings object at its init
-        // (Silksong: the pair of vector loads at main+0x253cfd4). The handheld pair is the size the game's HUD canvas
-        // and composition are laid out for: left at the stock 1280 on a narrower screen, the canvas overflows the
-        // 1032-wide frame and the HUD's edges fall off the picture (an iPad's handheld silk spool cropped). On such a
-        // screen the handheld word takes the screen's own width; the stock words are checked first, so a module
-        // whose record differs is left alone. The world pair stays stock: rescaling it too was tried (build #70)
-        // and the world texture sampling desynced from it -- a mirrored ghost band under sprites in handheld play.
-        // Which path samples by the stock pair is still open (see the game note). Wider screens keep the record
-        // untouched: their framing already follows the render size the stubs serve
-        if (m->fill_w_off) {
-            if (m->fill_w_off + 16 > m->size) die("%s: HOST_FILL_W out of range", m->name);
-            long hwe = hw ? hw : 1280; uint32_t cur[4]; memcpy(cur, m->base + m->fill_w_off, sizeof cur);
-            if (hwe < 1280 && cur[0] == 1024 && cur[1] == 576 && cur[2] == 1280 && cur[3] == 720) {
-                uint32_t v32 = (uint32_t)hwe; memcpy(m->base + m->fill_w_off + 8, &v32, sizeof v32);
-                LOG("%s: resolution record handheld pair set to the screen (%ldx720); the world pair stays stock", m->name, hwe);
-            }
-        }
+        if (m->fill_h_off) { if (m->fill_h_off + 4 > m->size) die("%s: HOST_FILL_H out of range", m->name); if (hw > 1280) { uint32_t v32 = (uint32_t)hw; memcpy(m->base + m->fill_h_off, &v32, sizeof v32); } }
+        if (m->fill_d_off || m->fill_h_off) LOG("%s: display-mode sizes filled from the host (docked %ld, handheld %ld)", m->name, w ? w : 2344, heff);
     }
     char cap[32]; snprintf(cap, sizeof cap, ", capped at %d fps", t);
     LOG("%s: frame step %s%s (%s)", g_fps_mod, !t ? "as the game sets it" : "in whole vsyncs decided by the host", t ? cap : "", e ? "DM_FPS_TARGET" : "game profile fps_target");

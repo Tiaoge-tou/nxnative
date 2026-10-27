@@ -71,19 +71,18 @@ CUTS = {
 # on every screen: without the host variables the fills take 2344 / 1280, as baked until now.
 # With a height override (DM_RENDER_HEIGHT) the loader writes the docked height word after the
 # docked width too, in the same apply; the handheld height word keeps its baked 720.
-# The 'W' entry is a second record, at 0x666efa0: four words {1024, 576, 1280, 720} -- a world
-# size at a 576-line reference, then the handheld size. A managed settings object's initializer
-# copies it, together with the template above, into the object at main+0x253cfd4 (two vector
-# loads stored as one 32-byte block). The handheld pair is the size the HUD canvas and the
-# composition are laid out for: left at the stock 1280 on a screen narrower than the stock
-# frame (an iPad at 2360x1640), the canvas overflows the frame and the HUD's edges fall off.
-# On such a screen the loader sets the record's handheld word to the screen's width (loader.c
-# dm_fps_state_apply, which checks the stock words first); wider screens keep the record as
-# shipped. The world pair is NOT rescaled: build #70 rescaled it too and the world texture
-# sampling desynced from it (a mirrored ghost band under sprites in handheld play). Which path
-# samples by the stock world pair is open -- see the game note.
+# A second record sits at 0x666efa0: four words {1024, 576, 1280, 720} -- a world size at a
+# 576-line reference, then the handheld size, copied with the template above into a managed
+# settings object by its initializer (main+0x253cfd4, two vector loads stored as one 32-byte
+# block). It is NOT filled: two device builds settled that (see the game note). Rescaling
+# both pairs (build #70) completed the handheld HUD on a narrow screen but desynced the
+# world texture sampling (a mirrored ghost band under sprites) and smeared the docked save
+# page; setting the handheld word alone (build #71) brought the handheld cropping back and
+# the ghost stayed. The HUD's layout follows the record's world pair, and any write to the
+# record desyncs a sampler that reads it as shipped -- so the record stays stock, and narrow
+# screens are served by holding the handheld sizes at stock instead (loader.c).
 HOST_FILLS = {
-  'fc9ea4ccc955d5799f37752b2d730b31': [('H', 0x6679240), ('D', 0x6679248), ('W', 0x666efa0)],
+  'fc9ea4ccc955d5799f37752b2d730b31': [('H', 0x6679240), ('D', 0x6679248)],
 }
 
 # ---- Render width from the host (frame step state page +0x38, a packed u64 width | height << 32) ----

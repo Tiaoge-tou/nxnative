@@ -67,7 +67,7 @@ else:
 #   OBS = {build ID: [(offset, number, original instruction word, reason)]}: observation gates. Numbers match OBS_* in the host's hle.h; the original instruction must be position
 #     independent (no PC-relative / branch / anything involving x18 or tpidr), asserted offline; when the host has no callback attached the gate block goes in and out once and returns
 #   FRAME_STEP = {build ID: function(ctx)}: the frame step stubs of a main ("Frame step in whole vsyncs" below)
-#   HOST_FILLS = {build ID: [('D' | 'H' | 'W', offset)]}: display-mode size words (docked / handheld) the loader fills with the screen's widths when the game starts (fixups header HOST_FILL_D / HOST_FILL_H, loader.c dm_fps_state_apply); 'W' is a resolution record whose handheld word the loader sets to the screen's width on a screen narrower than the stock frame (HOST_FILL_W)
+#   HOST_FILLS = {build ID: [('D' | 'H', offset)]}: display-mode size words (docked / handheld) the loader fills with the screen's widths when the game starts (fixups header HOST_FILL_D / HOST_FILL_H, loader.c dm_fps_state_apply); the handheld word is filled only on a screen wider than the stock handheld frame (the loader holds it at stock below that)
 #   MATCH_CUTS = {module name: [nso_match rule, ...]}: fallback for modules without registered CUTS. Only the profile selected by DM_GAME participates; a derived profile uses
 #     the repository's rules, an external-only provisional profile its own. Missing or ambiguous matches are reported and skipped; known builds retain their exact CUTS.
 PATCH_FILES = [os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sdk_patches.py')] + sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../games/*/patches.py')))
