@@ -1257,7 +1257,7 @@ NVN(nvnWindowSetCrop, void, NVNwindow *w, int x, int y, int ww, int hh) {
     const char *om = getenv("DM_OPMODE"), *rh = getenv("DM_RENDER_WIDTH_HD");
     long hw = rh ? strtol(rh, NULL, 10) : 0;
     if (om && !strcmp(om, "0") && !x && !y && ww == 1280 && hh == 720 && hw > 1280 && hw <= 16384 && !(hw % 8)) {
-        if (!crop_note) { crop_note = 1; LOG("[nvn] WindowCrop 1280x720 in handheld: the guest's stale stock size; using the host handheld width %ld", hw); }
+        if (!crop_note) { crop_note = 1; LOG("[nvn] WindowCrop 1280x720 in handheld: the guest's stale stock size; using the host handheld width %ld (guest caller %#llx)", hw, (unsigned long long)__builtin_return_address(0)); }
         ww = (int)hw;
     }
     int v[4] = {x, y, ww, hh};
