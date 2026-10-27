@@ -30,6 +30,22 @@ The guest address space, heaps, pools, virtual address memory and the allocators
 - **Found on:** [Hyrule Warriors: Age of Calamity](../../dm/games/01002B00111A2000/README.md); [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md); [Metroid Dread](../../dm/games/010093801237C000/README.md); [Catherine: Full Body](../../dm/games/0100BF00112C0000/README.md) (SDK 8.2.1; one boot). The source names no game for the late failures in a busy scene.
 - **Check:** probe `DM_SVC=1`'s `svc 0x1` request and the `AllocateMemoryBlock` result.
 
+### Offline NRO copies are not additional guest memory
+
+- **Symptom:** `SetHeapSize OOM: req 0xffffffffe0000000 > cap 0xd0000000`, followed by an abort when allocating the launcher NRO.
+- **Cause:** `big_bss_bytes` counted the bss of every offline-mapped NRO, including inactive ones, as additional used memory. The game already allocates the original NRO image and bss buffers from its heap. Subtracting the inflated used value from the application pool underflowed the startup heap request.
+- **Fix:** exclude NROs from `big_bss_bytes`, as `image_bytes` already does. Ordinary NSO modules' large bss still counts. No application-pool increase or heap clamp is needed.
+- **Found on:** [FINAL FANTASY X/X-2 HD Remaster](../../dm/games/0100BC300CB48000/README.md); after the fix its startup heap is 3.08 GB.
+- **Check:** the memory SVC tests compare used-memory queries with an ordinary large-bss module and a larger NRO present together.
+
+### Thread stacks backed by active NRO data
+
+- **Symptom:** repeated `[RED] MapMemory refused (0xd401)` for a stack source inside a loaded NRO's writable data, then an abort in `MapAliasStack` / `CreateThread`.
+- **Cause:** the host rejected all NRO-backed stack sources because reload can overwrite their backing. The launcher's static allocator legitimately supplies thread stacks from its bss.
+- **Fix:** permit the writable, unsealed range of an active NRO. Deactivation checks outstanding stack borrowers and marks the module inactive under the same memory-map lock used by `MapMemory`; reload cannot replace borrowed backing. Unloading with a live borrower is rejected. Loaded-state reads are atomic.
+- **Found on:** [FINAL FANTASY X/X-2 HD Remaster](../../dm/games/0100BC300CB48000/README.md), launcher `nro815+0x124854`, through SDK 5.4's thread creation path.
+- **Check:** `make -C dm/host/tests GAME=01007BB017812000 memory` checks active-NRO mapping, refusal to deactivate with a live mapping, successful deactivation after unmap, and rejection of an inactive source under the sanitizers.
+
 ### A heap request beyond the heap region returns ResultOutOfMemory
 
 - **Symptom:** `SetHeapSize OOM: req 0x120000000 > cap 0xd0000000`, then `Break#1 reason=0` in `nninitStartup`, with a backtrace through `nn::os::SetMemoryHeapSize` (`sdk+0x967a4`).
