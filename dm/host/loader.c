@@ -202,6 +202,7 @@ static void read_layout(module_t *m, const char *dir) {
         else if (!strcmp(key, "FPS_STATE_OFF")) m->fps_state_off = v;
         else if (!strcmp(key, "HOST_FILL_D")) { m->fill_d_off = v; g_fill_mod = m; }
         else if (!strcmp(key, "HOST_FILL_H")) { m->fill_h_off = v; g_fill_mod = m; }
+        else if (!strcmp(key, "HOST_FILL_W")) { m->fill_w_off = v; g_fill_mod = m; }
         else if (!strcmp(key, "BUILD_ID")) sscanf(line, "# %*s %32s", m->build_id);
         else for (int k = 0; k < KEY_N; k++) {
             size_t n = strlen(kn[k]);
@@ -282,6 +283,25 @@ void dm_fps_state_apply(void) {
         if (m->fill_d_off && ht) { if (m->fill_d_off + 8 > m->size) die("%s: HOST_FILL_D height out of range", m->name); uint32_t v32 = (uint32_t)ht; memcpy(m->base + m->fill_d_off + 4, &v32, sizeof v32); }
         if (m->fill_h_off) { if (m->fill_h_off + 4 > m->size) die("%s: HOST_FILL_H out of range", m->name); if (hw > 1280) { uint32_t v32 = (uint32_t)hw; memcpy(m->base + m->fill_h_off, &v32, sizeof v32); } }
         if (m->fill_d_off || m->fill_h_off) LOG("%s: display-mode sizes filled from the host (docked %ld, handheld %ld)", m->name, w ? w : 2344, heff);
+        // A resolution record (HOST_FILL_W: four words, a world size at a 576-line reference then the handheld size,
+        // stock 1024x576 / 1280x720), copied with the display template into a managed settings object at its init
+        // (Silksong: the pair of vector loads at main+0x253cfd4). Its world pair is the world camera's reference:
+        // the camera projects for the pair's aspect, and the composite stretches that picture into the frame. Left
+        // stock on a screen wider than 16:9, the world is drawn for 16:9 and stretched sideways into the wide
+        // frame -- sprites come out fat -- while the HUD, composed in screen space, stays true, which is why the
+        // stretch went unnoticed while the picture was judged by the HUD. On a wide screen the world word takes
+        // the screen's own aspect at the same 576 reference (the handheld frame's width over its 720 height);
+        // the stock words are checked first, so a module whose record differs is left alone. The handheld pair
+        // is never written (build #71: it does not drive the HUD), and narrow screens keep the whole record
+        // stock: they are served by holding the handheld sizes at stock instead (above)
+        if (m->fill_w_off && hw > 1280) {
+            if (m->fill_w_off + 16 > m->size) die("%s: HOST_FILL_W out of range", m->name);
+            uint32_t cur[4]; memcpy(cur, m->base + m->fill_w_off, sizeof cur);
+            if (cur[0] == 1024 && cur[1] == 576 && cur[2] == 1280 && cur[3] == 720) {
+                uint32_t v32 = (uint32_t)((hw * 576 + 360) / 720); memcpy(m->base + m->fill_w_off, &v32, sizeof v32);
+                LOG("%s: resolution record world pair widened to the screen (%ux576); the handheld pair stays stock", m->name, v32);
+            }
+        }
     }
     char cap[32]; snprintf(cap, sizeof cap, ", capped at %d fps", t);
     LOG("%s: frame step %s%s (%s)", g_fps_mod, !t ? "as the game sets it" : "in whole vsyncs decided by the host", t ? cap : "", e ? "DM_FPS_TARGET" : "game profile fps_target");

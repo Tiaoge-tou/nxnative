@@ -74,15 +74,16 @@ CUTS = {
 # A second record sits at 0x666efa0: four words {1024, 576, 1280, 720} -- a world size at a
 # 576-line reference, then the handheld size, copied with the template above into a managed
 # settings object by its initializer (main+0x253cfd4, two vector loads stored as one 32-byte
-# block). It is NOT filled: two device builds settled that (see the game note). Rescaling
-# both pairs (build #70) completed the handheld HUD on a narrow screen but desynced the
-# world texture sampling (a mirrored ghost band under sprites) and smeared the docked save
-# page; setting the handheld word alone (build #71) brought the handheld cropping back and
-# the ghost stayed. The HUD's layout follows the record's world pair, and any write to the
-# record desyncs a sampler that reads it as shipped -- so the record stays stock, and narrow
-# screens are served by holding the handheld sizes at stock instead (loader.c).
+# block). Its world pair is the world camera's reference. Two narrow-screen fills of it
+# failed on device (builds #70/#71, see the game note) and narrow screens keep the record
+# stock, served by holding the handheld sizes at stock instead. On a screen WIDER than
+# 16:9 the loader widens the record's world word to the screen's aspect at the same 576
+# reference (loader.c): the world camera projects for the frame it lands in, where the
+# stock 16:9 projection was stretched sideways into the wide frame -- sprites came out
+# fat while the HUD, composed in screen space, stayed true. The handheld pair is never
+# written (build #71: it does not drive the HUD).
 HOST_FILLS = {
-  'fc9ea4ccc955d5799f37752b2d730b31': [('H', 0x6679240), ('D', 0x6679248)],
+  'fc9ea4ccc955d5799f37752b2d730b31': [('H', 0x6679240), ('D', 0x6679248), ('W', 0x666efa0)],
 }
 
 # ---- Render width from the host (frame step state page +0x38, a packed u64 width | height << 32) ----
