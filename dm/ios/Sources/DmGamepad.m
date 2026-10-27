@@ -98,8 +98,8 @@ int dm_opmode(void);   // hle_oe.c: 0 = handheld
 // bottom-left (its medallion knob follows the touch), the action keys bottom-right in two rows, quick map / inventory / pause
 // small at the top-right. Centres are fractions of the whole screen, radii a fraction of its width. Keys follow the game's
 // Switch defaults. The three skill keys (grp SK_SKILL: tool, Needolin, Clawline) do nothing until the skill is earned and
-// the pad cannot know the game's progress, so the eye key (grp SK_TOGGLE, not a game key) shows or hides them; they are
-// shown again at each launch.
+// the pad cannot know the game's progress, so the eye key (grp SK_TOGGLE, not a game key) shows or hides them for
+// the session; they are shown at each launch (the default is on, set explicitly in init).
 static BOOL padSkin(void) { const char *e = getenv("DM_PAD_SKIN"); return e && atoi(e); }
 enum { SK_ALWAYS, SK_SKILL, SK_TOGGLE };
 static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_skin[] = {
@@ -277,6 +277,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             [_touchFeedback prepare];
         }
         _owner = [NSMapTable strongToStrongObjectsMapTable]; _faceOf = [NSMapTable strongToStrongObjectsMapTable];
+        _skillOff = NO;   // the skill keys start shown at every launch (the default the player asked for, stated here so no refactor can quietly flip it); the eye key hides them for the session only
         static dispatch_once_t once;
         dispatch_once(&once, ^{
             // each colour carries its own low opacity instead of lowering the whole view's alpha (that would add an off-screen pass for the full-screen layer)
