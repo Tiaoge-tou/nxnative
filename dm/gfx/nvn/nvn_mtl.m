@@ -10280,6 +10280,16 @@ static int present_crop_rect(id<MTLTexture> src, const int crop[4], NSUInteger r
 static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4]) {
     NSUInteger r[4]; if (!present_crop_rect(src, crop, r)) return 0;
     NSUInteger cx = r[0], cy = r[1], cw = r[2], ch = r[3];
+    // A narrower-than-16:9 screen (an iPad) under the stock handheld frame: the frame is 1280x720 and the full-screen
+    // present would stretch it sideways to the screen. Show a left-anchored window of the frame at the screen's own
+    // aspect instead -- the full height at true proportions, the left-hand HUD whole, the right edge of the world off
+    // the screen (the player's choice over the stretch). Full-frame crops of a 720-line texture only, so a docked
+    // (1080-line) present and any guest-set sub-crop are untouched, and a wider screen never satisfies the aspect test.
+    if (!cx && !cy && cw == src.width && ch == src.height && ch == 720 &&
+        (double)cw / (double)ch > (double)dst.width / (double)dst.height * 1.01) {
+        NSUInteger nw = (NSUInteger)((double)ch * (double)dst.width / (double)dst.height);
+        if (nw && nw < cw) { static int noted; if (!noted) { noted = 1; MLOG("present: the %lux%lu frame is wider than the %lux%lu target; showing its left-anchored %lux%lu window (true proportions, the right edge off-screen)", (unsigned long)cw, (unsigned long)ch, (unsigned long)dst.width, (unsigned long)dst.height, (unsigned long)nw, (unsigned long)ch); } cw = r[2] = nw; }
+    }
     static uint64_t last_crop[8]; uint64_t meta[8] = {src.width, src.height, cx, cy, cw, ch, dst.width, dst.height};
     if (memcmp(meta, last_crop, sizeof meta)) { memcpy(last_crop, meta, sizeof meta);
         MLOG("present crop: source texture %lux%lu, valid %lu,%lu %lux%lu → target %lux%lu", (unsigned long)src.width, (unsigned long)src.height,
