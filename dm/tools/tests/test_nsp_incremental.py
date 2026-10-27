@@ -490,6 +490,7 @@ class MacApp(Base):
     def test_packer_reports_reuse_and_first_pack_steps(self):
         t = self.tmp; out = t / 'Game.app'; packs = []
         def pack(cmd, log, env=None, on_line=None):
+            if not on_line: return   # the launcher settings (dm/games/settings.py)
             packs.append(cmd)
             (out / 'Contents/MacOS').mkdir(parents=True, exist_ok=True)
             (out / 'Contents/MacOS/dmhost').write_bytes(b'host')

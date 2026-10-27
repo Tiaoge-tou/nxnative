@@ -1,12 +1,14 @@
-# Player-facing settings: the iOS launcher (dm/ios/Sources/Launcher.swift) shows them before the game starts. dm/games/settings.py writes one game's list into its app (dm/launcher.json,
-# build_ipa.sh): the rows whose condition holds for that game, with its defaults. Each sets an environment variable the host reads when the game starts; one an env file sets
+# Player-facing settings: the iOS launcher (dm/ios/Sources/Launcher.swift) shows them before the game starts; Mac front ends read the same metadata before starting a Mac app.
+# dm/games/settings.py writes one game's list into its app (dm/launcher.json; build_ipa.sh, and dm/mac/pack_app.py through the NSP script): the rows whose condition holds for that game, with its defaults. Each sets an environment variable the host reads when the game starts; one an env file sets
 # (Documents/env.txt, the bundle's dm/env.txt) is shown but kept. Diagnostic switches stay environment-only, so they are not listed here. The player's page is docs/settings.md.
 # Columns, separated by tabs:
 #   variable  the environment variable the setting sets
 #   kind      choice: values value=label,... (languages: the game's own, from its control data); range: values low:high:step, shown as a percentage;
 #             toggle: values - (on sets 1, off 0) or <on>/<off>, the two values the variable takes (on/off)
 #   default   a value (a toggle's: 1 on, 0 off); DM_GAME_<NAME>: the host's own default from the game profile (game_profile.h, game.py); build:<VAR>: the IPA build's setting (build_ipa.sh)
-#   shown     always; DM_GAME_<NAME>!=<value> or ==<value>; fixups:<KEY>: main's rewriter table has that key (a stub in the game's build, patch_nso.py); languages>1; gfxapi:<API>: the packer's GFXAPI
+#             <ios>|<mac> selects the platform's default before resolving a profile macro or build variable
+#   shown     always; DM_GAME_<NAME>!=<value> or ==<value>; fixups:<KEY>: main's rewriter table has that key (a stub in the game's build, patch_nso.py); languages>1; gfxapi:<API>: the packer's GFXAPI;
+#             platform:<ios | mac>: the app's platform (SETTINGS_PLATFORM, ios when unset), for a switch only that platform's front end reads
 #   section   Game, Controls or Performance: a heading on the single settings screen. Rows appear in table order within each section
 #             Reset to tested defaults clears all launcher choices; values fixed by an env file stay
 #   label, note  the setting's name and the line under it (may be empty; only for a setting with a cost: latency, memory, heat)
@@ -16,15 +18,15 @@ DM_RENDER_SCALE	range	0.5:1.0:0.05	1.0	fixups:RENDER_SCALE	Game	渲染缩放	低
 DM_OPMODE	choice	1=底座模式,0=掌机模式	DM_GAME_OPMODE	always	Game	主机模式	底座 = 1080p 电视模式；掌机 = 720p，部分游戏的触屏功能仅掌机模式可用
 DM_PRESENT_UPSCALE	choice	off=标准,metalfx=MetalFX	off	always	Game	超分	更吃 GPU，可能增加发热。
 DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	游戏语言	游戏内文本语言
-DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	always	Game	帧数计数器	左上角显示实时帧数
-DM_TOUCH_HAPTICS	toggle	-	1	always	Controls	触控反馈	按下触屏按键时轻震一下
+DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	platform:ios	Game	帧数计数器	左上角显示实时帧数
+DM_TOUCH_HAPTICS	toggle	-	1	platform:ios	Controls	触控反馈	按下触屏按键时轻震一下
 DM_RUMBLE	toggle	-	1	always	Controls	游戏震动	游戏内震动传到手机或手柄
 DM_RUMBLE_GAIN	range	0:3:0.1	1.0	always	Controls	震动强度	与游戏内的震动设置叠加生效
 DM_RUMBLE_MIN	range	0:0.9:0.05	0	always	Controls	震动下限
 DM_HADES_SKIN	toggle	-	1	DM_GAME_DISPLAY_WIDE!=0	Controls	按键皮肤	开 = 图标皮肤；关 = 玻璃按键
 DM_PRESENT_SNAP	toggle	-	DM_GAME_PRESENT_SNAP	gfxapi:nvn	Performance	帧缓冲	可能减少卡顿；会增加显示延迟。
-DM_PSO_MTL4	toggle	-	DM_GAME_PSO_MTL4	gfxapi:nvn	Performance	Metal 4 管线	保留管线档案；占用更多内存。
+DM_PSO_MTL4	toggle	-	DM_GAME_PSO_MTL4|1	gfxapi:nvn	Performance	Metal 4 管线	保留管线档案；占用更多内存。
 DM_PSO_PREBUILD	toggle	-	1	gfxapi:nvn	Performance	管线预构建	首次启动需等待几分钟，仅一次。
-DM_NVN_ENC_THREAD	toggle	-	1	gfxapi:nvn	Performance	编码线程
+DM_NVN_ENC_THREAD	toggle	-	1|0	gfxapi:nvn	Performance	编码线程
 DM_FPS_HOLD	toggle	on/off	DM_GAME_FPS_HOLD	DM_GAME_FPS_TARGET!=0	Performance	迟帧保持
 DM_METAL_HUD	toggle	-	0	always	Performance	性能面板	苹果开发者性能浮层（GPU、帧时间等），一般保持关闭

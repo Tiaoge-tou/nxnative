@@ -171,7 +171,6 @@ pyright	dm/tools/tests/test_nsp_incremental.py	reportArgumentType	1	Argument of 
 pyright	dm/tools/tests/test_nsp_incremental.py	reportArgumentType	1	Argument of type "int | str | tuple[str, str]" cannot be assigned to parameter "ver" of type "str" in function "derive" Type "int | str | tuple[str, str]" is not assignable to type "str" "int" is not assignable to "str"
 pyright	dm/tools/tests/test_nsp_incremental.py	reportAttributeAccessIssue	1	Cannot assign to attribute "nacp" for class "ModuleType" Attribute "nacp" is unknown
 pyright	dm/tools/tests/test_nsp_incremental.py	reportAttributeAccessIssue	1	Cannot assign to attribute "pg" for class "ModuleType" Attribute "pg" is unknown
-pyright	dm/tools/tests/test_nsp_incremental.py	reportOptionalCall	2	Object of type "None" cannot be called
 pyright	dm/tools/tests/test_nsp_incremental.py	reportOptionalMemberAccess	1	"exec_module" is not a known attribute of "None"
 pyright	dm/tools/tests/test_nsp_incremental.py	reportOptionalMemberAccess	1	"loader" is not a known attribute of "None"
 pyright	dm/tools/tests/test_nsp_mac.py	reportArgumentType	1	Argument of type "ModuleSpec | None" cannot be assigned to parameter "spec" of type "ModuleSpec" in function "module_from_spec" Type "ModuleSpec | None" is not assignable to type "ModuleSpec" "None" is not assignable to "ModuleSpec"
