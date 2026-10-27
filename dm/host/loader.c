@@ -308,10 +308,12 @@ void dm_fps_state_apply(void) {
         // stretch went unnoticed while the picture was judged by the HUD. On a wide screen the world word takes
         // the screen's own aspect at the same 576 reference (the handheld frame's width over its 720 height);
         // the stock words are checked first, so a module whose record differs is left alone. The handheld pair
-        // is never written (build #71: it does not drive the HUD). On a narrow screen served its own sizes
-        // (serve_narrow, above) the same agreement is arranged the other way: the world pair keeps its 1024
-        // width and its height takes the screen's aspect, so the world is composed taller instead of being
-        // stretched by the front end's scale
+        // is never written on a wide screen (build #71: it does not drive the HUD). On a narrow screen served
+        // its own sizes (serve_narrow, above) the record's consumer still reads the world pair as a width at
+        // the 576-line reference -- build #76 set the pair taller (1024x673) and the guest composed the same
+        // stock-aspect canvas as ever, which the narrower frame then cropped -- so the world word takes the
+        // screen's aspect by the same formula as the wide side, and the handheld pair follows at the frame's
+        // own size, keeping the pairs' stock 1.25 relation (1024x576 / 1280x720)
         if (m->fill_w_off && hw && hw != 1280) {
             if (m->fill_w_off + 16 > m->size) die("%s: HOST_FILL_W out of range", m->name);
             uint32_t cur[4]; memcpy(cur, m->base + m->fill_w_off, sizeof cur);
@@ -320,8 +322,9 @@ void dm_fps_state_apply(void) {
                     uint32_t v32 = (uint32_t)((hw * 576 + 360) / 720); memcpy(m->base + m->fill_w_off, &v32, sizeof v32);
                     LOG("%s: resolution record world pair widened to the screen (%ux576); the handheld pair stays stock", m->name, v32);
                 } else if (serve_narrow) {
-                    uint32_t v32 = (uint32_t)((1024 * 720 + hw / 2) / hw); memcpy(m->base + m->fill_w_off + 4, &v32, sizeof v32);
-                    LOG("%s: resolution record world pair set to the screen for a narrow screen (1024x%u); the handheld pair stays stock", m->name, v32);
+                    uint32_t v32 = (uint32_t)((hw * 576 + 360) / 720); memcpy(m->base + m->fill_w_off, &v32, sizeof v32);
+                    uint32_t hp = (uint32_t)hw; memcpy(m->base + m->fill_w_off + 8, &hp, sizeof hp);
+                    LOG("%s: resolution record set to the screen for a narrow screen (%ux576 / %ux720)", m->name, v32, hp);
                 }
             }
         }
