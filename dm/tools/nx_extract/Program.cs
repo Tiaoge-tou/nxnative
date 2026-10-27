@@ -1,5 +1,6 @@
-// NSP extraction: nx_extract <prod.keys> <base NSP> <update NSP or -> <output dir> [base RomFS dir to compare against] [--manifest]
-// Writes <output dir>/ExeFS and <output dir>/RomFS (the merged RomFS when there is an update); with a base RomFS dir, files whose content matches it become APFS clones (no new space).
+// NSP extraction: nx_extract <prod.keys> <base NSP> <update NSP or -> <output dir> [base RomFS dir to compare against] [--manifest] [--romfs-image]
+// --romfs-image streams the merged RomFS directly to <output dir>/RomFS.img (the packing script's default); only ExeFS is expanded. Without it, legacy folder extraction remains available.
+// With a base RomFS dir in legacy mode, files whose content matches it become APFS clones (no new space).
 // --manifest: the RomFS is not written, only a list <output dir>/romfs_manifest.tsv (path, size, first 32 bytes), for surveying a new game (a large game's RomFS is well over 10 GB).
 // A damaged NSP (a file whose data fails the NCA's hash check, e.g. a copy cut short or a broken download) stops the extraction with exit code 3 after listing every damaged file;
 //   --allow-damaged writes those files as read instead and only lists them (Super Mario Galaxy's base NSP with 147 MB zeroed: its two prologue WebM movies).
@@ -30,10 +31,11 @@ static class P {
 
     static int Main(string[] a) {
         bool manifest = Array.IndexOf(a, "--manifest") >= 0; a = Array.FindAll(a, s => s != "--manifest");
+        bool image = Array.IndexOf(a, "--romfs-image") >= 0; a = Array.FindAll(a, s => s != "--romfs-image");
         g_allow = Array.IndexOf(a, "--allow-damaged") >= 0; a = Array.FindAll(a, s => s != "--allow-damaged");
-        if (a.Length < 4) { Console.Error.WriteLine("usage: nx_extract <prod.keys> <base.nsp> <update.nsp|-> <out dir> [base RomFS dir] [--manifest] [--allow-damaged]\n       nx_extract <prod.keys> --aoc <dlc.nsp> <out dir>"); return 2; }
+        if (a.Length < 4) { Console.Error.WriteLine("usage: nx_extract <prod.keys> <base.nsp> <update.nsp|-> <out dir> [base RomFS dir] [--romfs-image|--manifest] [--allow-damaged]\n       nx_extract <prod.keys> --aoc <dlc.nsp> <out dir or image> [--romfs-image]"); return 2; }
         KeySet ks = ExternalKeyReader.ReadKeyFile(a[0]);
-        if (a[1] == "--aoc") return Aoc(ks, a[2], a[3]);
+        if (a[1] == "--aoc") return Aoc(ks, a[2], a[3], image);
         var basePkg = OpenNsp(ks, a[1], ContentMetaType.Application); var updPkg = a[2] == "-" ? null : OpenNsp(ks, a[2]);
         Nca baseProg = Pick(basePkg, NcaContentType.Program) ?? throw new Exception("no Program NCA in the base NSP");
         Nca updProg = updPkg == null ? null : Pick(updPkg, NcaContentType.Program, baseProg.Header.TitleId) ?? throw new Exception("no Program NCA of the base game's program in the update NSP");
@@ -61,7 +63,8 @@ static class P {
         // A program can embed all assets in its code modules (ANIMAL WELL 1.0.10).
         // Preserve the extraction layout without asking LibHac to open an absent section.
         if (!baseProg.SectionExists(1) && (updProg == null || !updProg.SectionExists(1))) {
-            Directory.CreateDirectory(Path.Combine(outDir, "RomFS"));
+            if (image && !manifest) WriteImage(null, Path.Combine(outDir, "RomFS.img"));
+            else if (!manifest) Directory.CreateDirectory(Path.Combine(outDir, "RomFS"));
             if (manifest) File.WriteAllText(Path.Combine(outDir, "romfs_manifest.tsv"), "# path\tbytes\tfirst 32 bytes (hex)\n");
             Console.WriteLine("program has no data section: empty RomFS");
             return Damaged();
@@ -70,6 +73,7 @@ static class P {
         // the same RomFS without hash checks, for reading damaged files as they are (--allow-damaged)
         g_lenient = () => new RomFsFileSystem(updProg != null ? baseProg.OpenStorageWithPatch(updProg, NcaSectionType.Data, IntegrityCheckLevel.IgnoreOnInvalid) : baseProg.OpenStorage(NcaSectionType.Data, IntegrityCheckLevel.IgnoreOnInvalid));
         if (manifest) Manifest(new RomFsFileSystem(romfs), Path.Combine(outDir, "romfs_manifest.tsv"));
+        else if (image) WriteImage(new RomFsFileSystem(romfs), Path.Combine(outDir, "RomFS.img"));
         else Copy(new RomFsFileSystem(romfs), Path.Combine(outDir, "RomFS"), cmpDir);
         return Damaged();
     }
@@ -87,13 +91,15 @@ static class P {
     }
 
     // DLC NSP: one data NCA (content type PublicData / Data) + a meta NCA + the ticket; only the data NCA's RomFS is written
-    static int Aoc(KeySet ks, string nsp, string outDir) {
+    static int Aoc(KeySet ks, string nsp, string outDir, bool image) {
         var pkg = OpenNsp(ks, nsp);
         Nca data = Pick(pkg, NcaContentType.PublicData) ?? Pick(pkg, NcaContentType.Data) ?? throw new Exception("no data NCA in the DLC NSP");
         Console.WriteLine($"add-on content {data.Header.TitleId:x16}");
-        Directory.CreateDirectory(outDir);
-        Copy(new RomFsFileSystem(data.OpenStorage(NcaSectionType.Data, IntegrityCheckLevel.ErrorOnInvalid)), outDir, null);
-        return 0;
+        Directory.CreateDirectory(image ? Path.GetDirectoryName(outDir) : outDir);
+        var fs = new RomFsFileSystem(data.OpenStorage(NcaSectionType.Data, IntegrityCheckLevel.ErrorOnInvalid));
+        g_lenient = () => new RomFsFileSystem(data.OpenStorage(NcaSectionType.Data, IntegrityCheckLevel.IgnoreOnInvalid));
+        if (image) WriteImage(fs, outDir); else Copy(fs, outDir, null);
+        return Damaged();
     }
 
     // Open an NSP (PFS0) or the secure partition of an XCI, import the common tickets, list all NCAs. With a content meta type, only the NCAs that the package's content metas of
@@ -185,6 +191,76 @@ static class P {
             if (len > 0) return System.Text.Encoding.UTF8.GetString(t, i * 0x300, len);
         }
         return "";
+    }
+
+    sealed class ImageEntry {
+        public string Path; public byte[] Name; public bool Directory; public long Size; public ulong A, B;
+        public List<ImageEntry> Children = new List<ImageEntry>();
+    }
+    // Stream the merged, integrity-checked filesystem directly into DMROMFS1. No RomFS directories or per-resource host files are created.
+    static void WriteImage(IFileSystem fs, string dst) {
+        var root = new ImageEntry { Path = "/", Name = Array.Empty<byte>(), Directory = true };
+        var byPath = new Dictionary<string, ImageEntry>(StringComparer.Ordinal) { ["/"] = root };
+        if (fs != null) foreach (DirectoryEntryEx e in fs.EnumerateEntries("*", SearchOptions.RecurseSubdirectories)) {
+            string path = e.FullPath.TrimEnd('/'); if (path.Length == 0) continue;
+            byte[] name = System.Text.Encoding.UTF8.GetBytes(path.Substring(path.LastIndexOf('/') + 1));
+            if (name.Length == 0 || name.Length > 0x300) throw new IOException($"invalid RomFS name length: {path}");
+            byPath.Add(path, new ImageEntry { Path = path, Name = name, Directory = e.Type == DirectoryEntryType.Directory, Size = e.Size });
+        }
+        foreach (var e in byPath.Values) {
+            if (e == root) continue;
+            string parent = e.Path.Substring(0, e.Path.LastIndexOf('/')); if (parent.Length == 0) parent = "/";
+            byPath[parent].Children.Add(e);
+        }
+        var entries = new List<ImageEntry> { root };
+        for (int i = 0; i < entries.Count; i++) if (entries[i].Directory) {
+            var e = entries[i]; e.Children.Sort((a, b) => a.Name.AsSpan().SequenceCompareTo(b.Name));
+            e.A = (ulong)entries.Count; e.B = (ulong)e.Children.Count; entries.AddRange(e.Children);
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(dst));
+        string part = dst + ".part"; long files = 0, bytes = 0; int damaged = g_damaged.Count;
+        try {
+            using (var output = File.Create(part)) using (var writer = new BinaryWriter(output)) {
+                writer.Write(new byte[32]); byte[] buffer = new byte[4 << 20];
+                foreach (var e in entries) {
+                    if (e.Directory) continue;
+                    e.A = (ulong)output.Position; e.B = (ulong)e.Size; files++; bytes += e.Size;
+                    using var f = new UniqueRef<IFile>();
+                    fs.OpenFile(ref f.Ref, e.Path.ToU8Span(), OpenMode.Read).ThrowIfFailure();
+                    try { WriteStream(f.Get, output, e.Size, buffer); }
+                    catch (HorizonResultException x) when (HashError(x)) {
+                        g_damaged.Add(e.Path);
+                        if (!g_allow) continue;
+                        g_lenientFs ??= g_lenient();
+                        using var lf = new UniqueRef<IFile>();
+                        g_lenientFs.OpenFile(ref lf.Ref, e.Path.ToU8Span(), OpenMode.Read).ThrowIfFailure();
+                        output.Position = (long)e.A; output.SetLength(output.Position);
+                        WriteStream(lf.Get, output, e.Size, buffer);
+                    }
+                }
+                if (g_damaged.Count == damaged || g_allow) {
+                    long index = output.Position; using var names = new MemoryStream();
+                    foreach (var e in entries) {
+                        writer.Write(e.A); writer.Write(e.B); writer.Write(checked((uint)names.Position));
+                        writer.Write(checked((ushort)e.Name.Length)); writer.Write((byte)(e.Directory ? 0 : 1)); writer.Write((byte)0);
+                        names.Write(e.Name);
+                    }
+                    names.Position = 0; names.CopyTo(output); long size = output.Position - index;
+                    output.Position = 0; writer.Write(System.Text.Encoding.ASCII.GetBytes("DMROMFS1"));
+                    writer.Write((ulong)index); writer.Write((ulong)size); writer.Write((ulong)entries.Count);
+                }
+            }
+            if (g_damaged.Count != damaged && !g_allow) { File.Delete(part); return; }
+            File.Move(part, dst, true);
+            Console.WriteLine($"{dst}: {files} files {bytes / 1048576.0:F1} MB, image with {entries.Count} entries");
+        } catch { File.Delete(part); throw; }
+    }
+    static void WriteStream(IFile file, Stream output, long size, byte[] buffer) {
+        for (long offset = 0; offset < size;) {
+            file.Read(out long got, offset, buffer.AsSpan(0, (int)Math.Min(buffer.Length, size - offset)), ReadOption.None).ThrowIfFailure();
+            if (got <= 0) throw new IOException($"cannot read @{offset}");
+            output.Write(buffer, 0, (int)got); offset += got;
+        }
     }
 
     // Copy out file by file; files identical to the same path in the compare dir become APFS clones instead
