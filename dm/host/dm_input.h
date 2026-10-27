@@ -19,8 +19,8 @@ uint64_t dm_input_samples(void);   // Cumulative number of times the game has sa
 // with a known class layout; any doubt -- a class not ready, a null link, a state value out of range -- reads as 0, so the pad never
 // hides on a guess. The iOS gamepad polls it; other front ends never call it and see no change
 int dm_pad_mode(void);
-// Physical controller path (Mac GameController, DM_KEYS / DM_CTL): stored separately from the keyboard / touch input; when the game reads player 1, buttons are
-// ORed bitwise and each stick axis takes whichever source is deflected more. All 0 when no controller is connected, so values are bit-for-bit the same as before.
+// Physical controller path (Mac / iOS GameController): stored separately from keyboard / touch and scripted input (DM_KEYS / DM_CTL); when the game reads player 1,
+// buttons are ORed bitwise and each stick axis takes whichever source is deflected more. All 0 when no controller is connected.
 // dm_pad_set is player 1's controller (DM_BTN_SHAKE counts there only); dm_pad_set_player sets player n + 1's, which the game reads on its own npad (hle_hid.c) while
 // dm_pad_players has its bit set; a player whose npad the game does not support (SetSupportedNpadIdType) feeds player 1 instead, so a one-player game sees every controller
 #define DM_PLAYERS 8   // npads No1..No8; player 1 is the Handheld npad in handheld mode (DM_OPMODE=0)

@@ -250,6 +250,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix (resolved):** the handles no longer wait for a routed output: with rumble on and an output sink installed (`dm_haptics_enabled`), a connected npad style gets its two handles; `vib_send` checks for an output at each send (`hle_hid.c`). No sink, rumble off or a disconnected npad still get none, and `IsVibrationPermitted` still follows the routed outputs. `DM_RUMBLE_LOG=1` logs the handle requests and, once a second, the values sent, those with no routed output and the peak amplitude. Each input value is counted separately, including mixed batches; a mutex protects the diagnostic totals across game threads. `t_hid` covers cached startup handles delivering a nonzero value after routing, mixed-batch diagnostics and concurrent sends; `t_hid_tsan` checks those sends for data races.
 - **Found on:** [Unicorn Overlord](../../dm/games/010069401ADB8000/README.md) (the Asian release, `010054B01AD92000`), in the log only: the game has no rumble of its own (it sends amplitude 0 throughout), so nothing could be felt before or after. Not yet checked on a game that rumbles.
 
+### Scripted presses on a path of their own
+
+- **Symptom:** with a controller connected (a DualShock 4 here), `DM_KEYS` and `DM_CTL` presses are logged (`DM_KEYS: … press …`) but the game does not react to them, or only now and then; without the controller the same script works.
+- **Cause:** scripted presses went through player 1's controller path (`dm_pad_set`). A connected controller publishes its whole state there on every change, replacing scripted holds and sticks; the press latch preserves only the first read. Script release also cleared the physical controller's state.
+- **Fix (resolved):** `DM_KEYS` and `DM_CTL` set buttons, a press latch and sticks of their own (`script_set` in `hle_hid.c`), ORed with the keyboard / touch path and player 1's controller when the game reads player 1; for the sticks, the one deflected more wins. Shake includes the scripted path too.
+- **Check:** `dm/host/tests/t_hid.c` (`t_script`) runs the scripted publisher with a controller update during the hold: buttons survive repeated reads after the latch is consumed, the scripted stick wins over drift, shake continues, and release preserves physical input. Short presses are latched once, all four axes reach the handheld npad, and player 2 stays separate.
+- **Found on:** Batman: Arkham Knight (`0100ACD0163D0000`), reported in [PR #326](https://github.com/seedds/nxnative/pull/326) while driving the opening route with `DM_KEYS` and a DualShock 4. Reproduced independently in the host HID test without game files; its game profile is not in this checkout.
+
 ### Touch gestures recognized from the touch points
 
 - **Symptom:** taps in handheld mode do nothing, though the game reads the touch screen (the title's PRESS ANY BUTTON, the menus' cards).
