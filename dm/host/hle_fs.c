@@ -695,18 +695,21 @@ HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; the mount table is permanent, unmou
 
 // ---------- Serve patches (profile serve_patch) ----------
 // A profile may declare byte slots in a game file whose served value depends on the operation mode
-// (game.tsv serve_patch → DM_GAME_SERVE_PATCH: "<file>@<off>:<stock bits>><handheld bits>[@...] ...",
-// offsets and 32-bit float bit patterns in hex, groups space-separated). The file on disk is never
-// touched: ReadFile substitutes the mode's value in the buffer it returns, and only when the bytes
-// read are one of the two known values, so a file from another build is served exactly as it lies.
-// The decision is taken per read from dm_opmode(), so it follows the mode the session runs in; a
-// file already read keeps the values it was read with (a boot scene is read once, at boot).
-// Silksong: the boot scene's baked HUD rig puts the silk-spool cluster at the stock frame's left
-// edge, where the handheld centre-crop of that frame cuts it; the cluster's two group roots are
-// served shifted right in handheld mode and stock in docked mode, whose composition takes the
-// stock frame whole -- the datapack patch, made mode-conditional and kept off the disk.
-typedef struct { uint32_t off, stock, alt; } serve_slot_t;
-typedef struct { char name[64]; serve_slot_t slot[4]; int n; } serve_patch_t;
+// (game.tsv serve_patch → DM_GAME_SERVE_PATCH: "[n:]<file>@<off>:<docked bits>><handheld bits>[@...]
+// ...", offsets and 32-bit float bit patterns in hex, groups space-separated; the n: prefix serves
+// the group on narrow screens only, where the loader publishes DM_SERVE_NARROW). The file on disk
+// is never touched: ReadFile substitutes the mode's value in the buffer it returns, and only when
+// the bytes read are one of the two known values, so a file from another build is served exactly as
+// it lies. The decision is taken per read from dm_opmode(), so it follows the mode the session runs
+// in; a file already read keeps the values it was read with (a boot scene is read once, at boot).
+// Silksong (narrow screens): the boot scene's baked HUD rig puts the silk-spool cluster at the stock
+// frame's left edge, where the handheld centre-crop of that frame cuts it, so the cluster's two
+// group roots are served shifted right in handheld mode and stock in docked mode -- the datapack
+// patch, made mode-conditional and kept off the disk. The same roots' local scale Y is served the
+// reciprocal of the docked present stretch in docked mode (pre-squashed, so the front end's
+// anisotropic scale lands it round) and stock in handheld mode, whose frame is the screen's aspect.
+typedef struct { uint32_t off, dock, hand; } serve_slot_t;
+typedef struct { char name[64]; serve_slot_t slot[4]; int n, narrow; } serve_patch_t;
 static serve_patch_t g_serve[4]; static int g_nserve;
 static pthread_once_t g_serve_once = PTHREAD_ONCE_INIT;
 static void serve_parse(void) {
@@ -715,17 +718,19 @@ static void serve_parse(void) {
         while (*s == ' ') s++;
         if (!*s) break;
         serve_patch_t *p = &g_serve[g_nserve];
+        if (s[0] == 'n' && s[1] == ':') { p->narrow = 1; s += 2; }
         const char *at = strchr(s, '@'); if (!at || at == s || at - s >= (long)sizeof p->name) return;
         memcpy(p->name, s, (size_t)(at - s)); p->name[at - s] = 0; s = at;
         while (*s == '@' && p->n < 4) {
             unsigned off, a, b; int used = 0;
             if (sscanf(s + 1, "%x:%x>%x%n", &off, &a, &b, &used) != 3) return;
-            p->slot[p->n].off = off; p->slot[p->n].stock = a; p->slot[p->n].alt = b; p->n++;
+            p->slot[p->n].off = off; p->slot[p->n].dock = a; p->slot[p->n].hand = b; p->n++;
             s += 1 + used;
         }
         if (p->n) g_nserve++; else return;
     }
 }
+static int serve_narrow_env(void) { static int v = -1; if (v < 0) v = getenv("DM_SERVE_NARROW") != NULL; return v; }
 static const serve_patch_t *g_serve_fd[4096];            // per descriptor (folder files)
 static struct { uint64_t h; const serve_patch_t *p; } g_serve_img[16]; static int g_nserve_img;
 static pthread_mutex_t g_serve_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -734,6 +739,7 @@ static void serve_register(uint64_t h, const char *path) {
     if (!g_nserve) return;
     const char *base = strrchr(path, '/'); base = base ? base + 1 : path;
     for (int i = 0; i < g_nserve; i++) if (!strcmp(base, g_serve[i].name)) {
+        if (g_serve[i].narrow && !serve_narrow_env()) return;
         pthread_mutex_lock(&g_serve_lock);
         if (IMG_H(h)) { if (g_nserve_img < 16) { g_serve_img[g_nserve_img].h = h; g_serve_img[g_nserve_img].p = &g_serve[i]; g_nserve_img++; } }
         else if ((int)h >= 0 && (int)h < 4096) g_serve_fd[(int)h] = &g_serve[i];
@@ -747,15 +753,15 @@ static const serve_patch_t *serve_for(uint64_t h) {
     return (int)h >= 0 && (int)h < 4096 ? g_serve_fd[(int)h] : NULL;
 }
 static void serve_apply(const serve_patch_t *sp, uint64_t h, int64_t off, void *buf, size_t got) {
-    int alt = dm_opmode() == 0;   // handheld serves the alternate values, docked the stock ones
+    int hand = dm_opmode() == 0;   // handheld serves the second value of each slot, docked the first
     int applied = 0;
     for (int i = 0; i < sp->n; i++) { const serve_slot_t *sl = &sp->slot[i];
         if (sl->off >= (uint64_t)off && sl->off + 4 <= (uint64_t)off + got) {
             uint32_t cur; memcpy(&cur, (const uint8_t *)buf + (sl->off - (uint64_t)off), 4);
-            if (cur == sl->stock || cur == sl->alt) { uint32_t want = alt ? sl->alt : sl->stock;
+            if (cur == sl->dock || cur == sl->hand) { uint32_t want = hand ? sl->hand : sl->dock;
                 if (cur != want) { memcpy((uint8_t *)buf + (sl->off - (uint64_t)off), &want, 4); applied = 1; } }
         } }
-    if (applied) { static _Atomic int logged[2]; if (!logged[alt]++) LOG("[fs] serve patch %s: values served %s (handle %llx)", sp->name, alt ? "handheld" : "docked", (unsigned long long)h); }
+    if (applied) { static _Atomic int logged[2]; if (!logged[hand]++) LOG("[fs] serve patch %s: values served %s (handle %llx)", sp->name, hand ? "handheld" : "docked", (unsigned long long)h); }
 }
 
 // ---------- Files ----------

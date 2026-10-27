@@ -44,11 +44,13 @@ shader_groups	/Data/=data
 shader_note	Hollow Knight: Silksong shaders
 
 # ---- Graphics ----
-# Byte slots in the boot scene bundle the file layer serves by operation mode (hle_fs.c serve_patch): the HUD rig baked into
-# Menu_Title puts the silk-spool cluster at the stock frame's left edge (Thread x 0.0, Health x 8.19); served shifted +100 canvas
-# px in handheld mode, where the centre-crop of the stock frame would cut it, and stock in docked mode, whose composition
-# takes the stock frame whole. Bit patterns of the two floats, from the bundle of build fc9ea4cc (see the game note)
-serve_patch	menu_title.bundle@6E3E5C:41030A3D>4129C10A@6EAA5C:00000000>401ADB34
+# Byte slots in the boot scene bundle the file layer serves by operation mode (hle_fs.c serve_patch; n: = narrow screens
+# only, where the handheld frame centre-crops the stock canvas and the docked frame is stretched by the front end). The HUD
+# rig baked into Menu_Title puts the silk-spool cluster at the stock frame's left edge: its Thread and Health group roots
+# (x 0.0 / 8.19) are served shifted +100 canvas px in handheld mode and stock in docked mode; the same roots' local scale Y
+# (stock 1.0) is served 0.856603 in docked mode -- the reciprocal of the iPad mini's docked present stretch (1920x1080 onto
+# 2266x1488) -- so the cluster lands round, and stock in handheld mode. Bit patterns from the bundle of build fc9ea4cc
+serve_patch	n:menu_title.bundle@6E3E5C:41030A3D>4129C10A@6EAA5C:00000000>401ADB34@6E3E6C:3F5B4A53>3F800000@6EAA6C:3F5B4A53>3F800000
 # The launcher's frame-rate choice (settings.tsv SS_DISPLAY_HZ): 60, 120 at the full render size, or 120 at a lowered render size
 # (1916x882, the size the touch port measured on this class of screen). The front end drives the present, the present link and the
 # vi vsync event at the rate it measures on the screen, and falls back to 60 when the screen cannot hold 120 (hle_nvn.c)
