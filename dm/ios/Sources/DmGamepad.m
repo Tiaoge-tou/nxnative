@@ -127,7 +127,7 @@ int dm_opmode(void);   // hle_oe.c: 0 = handheld
 // Drawn controls are replaced by image controls in the layout of the fan Android port of Silksong: a fixed stick disc
 // bottom-left (its medallion knob follows the touch), the action keys bottom-right in two rows, quick map / inventory / pause
 // small at the top-right. Centres are fractions of the whole screen, radii a fraction of its width. Keys follow the game's
-// Switch defaults. The three skill keys (grp SK_SKILL: tool, Needolin, Clawline) do nothing until the skill is earned and
+// Switch defaults. Two skill keys (grp SK_SKILL: Needolin, Clawline) do nothing until the skill is earned and
 // the pad cannot know the game's progress, so the eye key (grp SK_TOGGLE, not a game key) shows or hides them for
 // the session; they start hidden at each launch, the eye in its pressed state (the default the player asked
 // for, set explicitly in init).
@@ -137,20 +137,21 @@ static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_sk
     {"attack",   B_Y,     SK_ALWAYS, 0.684, 0.822, 0.040},   // needle attack
     {"jump",     B_B,     SK_ALWAYS, 0.781, 0.822, 0.040},
     {"dash",     B_ZR,    SK_ALWAYS, 0.876, 0.822, 0.040},   // Swift Step: tap dashes, hold sprints
-    {"tool",     B_R,     SK_SKILL,  0.684, 0.616, 0.040},   // the equipped tool
-    {"needolin", B_X,     SK_SKILL,  0.781, 0.616, 0.040},   // Needolin
+    {"tool",     B_R,     SK_ALWAYS, 0.783, 0.080, 0.023},   // the equipped tool: the top row, between map and bag, always shown (the frame is the top row's double-horn frame)
+    {"needolin", B_X,     SK_SKILL,  0.877, 0.410, 0.040},   // Needolin (swapped with Clawline)
     {"bind",     B_A,     SK_ALWAYS, 0.877, 0.616, 0.040},   // Bind (heal)
-    {"clawline", B_ZL,    SK_SKILL,  0.877, 0.410, 0.040},   // Clawline
+    {"clawline", B_ZL,    SK_SKILL,  0.781, 0.616, 0.040},   // Clawline (swapped with Needolin)
     {"eye",      0,       SK_TOGGLE, 0.672, 0.080, 0.023},   // show / hide the skill keys
-    {"map",      B_L,     SK_ALWAYS, 0.746, 0.080, 0.023},   // quick map
-    {"bag",      B_MINUS, SK_ALWAYS, 0.820, 0.080, 0.023},   // inventory
+    {"map",      B_L,     SK_ALWAYS, 0.727, 0.080, 0.023},   // quick map (the top row respaced evenly for five keys)
+    {"bag",      B_MINUS, SK_ALWAYS, 0.838, 0.080, 0.023},   // inventory
     {"pause",    B_PLUS,  SK_ALWAYS, 0.893, 0.080, 0.023},
+    {"up",       B_UP,    SK_ALWAYS, 0.162, 0.675, 0.022},   // invisible (fully transparent art): the game's Up + R tool prompts read the D-pad, never the stick. Above the stick disc, small enough that its hit circle (r x 1.35) stops short of the disc centre, so a centred touch still starts the stick; skinCenter keeps it at raw fractions, anchored to the disc rather than the stacking cluster
 };
 #define SKIN_N (int)(sizeof k_skin / sizeof k_skin[0])
 #define SKIN_REF_HW 0.4615   // the screen the skin layout was measured on (19.5:9): its height as a fraction of its width
 static CGPoint skinCenter(int i, CGRect b) {   // the centre of skin key i, in points (the layout and the touch hit test share it)
     CGFloat y = k_skin[i].y;
-    if (y > 0.2)   // an action key: the rows stack up from the bottom row (y 0.822) in width fractions, so the cluster keeps its phone shape on any screen; the top row stays a height fraction (it hugs the top edge)
+    if (y > 0.2 && k_skin[i].bit != B_UP)   // an action key: the rows stack up from the bottom row (y 0.822) in width fractions, so the cluster keeps its phone shape on any screen; the top row stays a height fraction (it hugs the top edge). The D-pad Up key is exempt: it is anchored to the stick disc, which sits at raw fractions
         y = 0.822 + (y - 0.822) * SKIN_REF_HW * b.size.width / b.size.height;
     return CGPointMake(k_skin[i].x * b.size.width, y * b.size.height);
 }
