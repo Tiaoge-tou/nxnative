@@ -44,6 +44,11 @@ shader_groups	/Data/=data
 shader_note	Hollow Knight: Silksong shaders
 
 # ---- Graphics ----
+# Byte slots in the boot scene bundle the file layer serves by operation mode (hle_fs.c serve_patch): the HUD rig baked into
+# Menu_Title puts the silk-spool cluster at the stock frame's left edge (Thread x 0.0, Health x 8.19); served shifted +100 canvas
+# px in handheld mode, where the centre-crop of the stock frame would cut it, and stock in docked mode, whose composition
+# takes the stock frame whole. Bit patterns of the two floats, from the bundle of build fc9ea4cc (see the game note)
+serve_patch	menu_title.bundle@6E3E5C:41030A3D>4129C10A@6EAA5C:00000000>401ADB34
 # The launcher's frame-rate choice (settings.tsv SS_DISPLAY_HZ): 60, 120 at the full render size, or 120 at a lowered render size
 # (1916x882, the size the touch port measured on this class of screen). The front end drives the present, the present link and the
 # vi vsync event at the rate it measures on the screen, and falls back to 60 when the screen cannot hold 120 (hle_nvn.c)

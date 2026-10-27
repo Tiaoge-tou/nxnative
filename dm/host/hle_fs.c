@@ -693,6 +693,71 @@ HLE_FORCE("_ZN2nn2fs6CommitEPKcRKNS0_12CommitOptionE", "fsp-srv; same as Commit 
 HLE_FORCE("_ZN2nn2fs14CommitSaveDataEPKc", "fsp-srv; same as Commit (SDK 11's old name)", Result, h_fs_CommitSaveData, const char *name) { return h_fs_Commit(name); }
 HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; the mount table is permanent, unmounting is a no-op", void, h_fs_Unmount, const char *name) { (void)name; }
 
+// ---------- Serve patches (profile serve_patch) ----------
+// A profile may declare byte slots in a game file whose served value depends on the operation mode
+// (game.tsv serve_patch → DM_GAME_SERVE_PATCH: "<file>@<off>:<stock bits>><handheld bits>[@...] ...",
+// offsets and 32-bit float bit patterns in hex, groups space-separated). The file on disk is never
+// touched: ReadFile substitutes the mode's value in the buffer it returns, and only when the bytes
+// read are one of the two known values, so a file from another build is served exactly as it lies.
+// The decision is taken per read from dm_opmode(), so it follows the mode the session runs in; a
+// file already read keeps the values it was read with (a boot scene is read once, at boot).
+// Silksong: the boot scene's baked HUD rig puts the silk-spool cluster at the stock frame's left
+// edge, where the handheld centre-crop of that frame cuts it; the cluster's two group roots are
+// served shifted right in handheld mode and stock in docked mode, whose composition takes the
+// stock frame whole -- the datapack patch, made mode-conditional and kept off the disk.
+typedef struct { uint32_t off, stock, alt; } serve_slot_t;
+typedef struct { char name[64]; serve_slot_t slot[4]; int n; } serve_patch_t;
+static serve_patch_t g_serve[4]; static int g_nserve;
+static pthread_once_t g_serve_once = PTHREAD_ONCE_INIT;
+static void serve_parse(void) {
+    const char *s = DM_GAME_SERVE_PATCH;
+    while (*s && g_nserve < 4) {
+        while (*s == ' ') s++;
+        if (!*s) break;
+        serve_patch_t *p = &g_serve[g_nserve];
+        const char *at = strchr(s, '@'); if (!at || at == s || at - s >= (long)sizeof p->name) return;
+        memcpy(p->name, s, (size_t)(at - s)); p->name[at - s] = 0; s = at;
+        while (*s == '@' && p->n < 4) {
+            unsigned off, a, b; int used = 0;
+            if (sscanf(s + 1, "%x:%x>%x%n", &off, &a, &b, &used) != 3) return;
+            p->slot[p->n].off = off; p->slot[p->n].stock = a; p->slot[p->n].alt = b; p->n++;
+            s += 1 + used;
+        }
+        if (p->n) g_nserve++; else return;
+    }
+}
+static const serve_patch_t *g_serve_fd[4096];            // per descriptor (folder files)
+static struct { uint64_t h; const serve_patch_t *p; } g_serve_img[16]; static int g_nserve_img;
+static pthread_mutex_t g_serve_lock = PTHREAD_MUTEX_INITIALIZER;
+static void serve_register(uint64_t h, const char *path) {
+    pthread_once(&g_serve_once, serve_parse);
+    if (!g_nserve) return;
+    const char *base = strrchr(path, '/'); base = base ? base + 1 : path;
+    for (int i = 0; i < g_nserve; i++) if (!strcmp(base, g_serve[i].name)) {
+        pthread_mutex_lock(&g_serve_lock);
+        if (IMG_H(h)) { if (g_nserve_img < 16) { g_serve_img[g_nserve_img].h = h; g_serve_img[g_nserve_img].p = &g_serve[i]; g_nserve_img++; } }
+        else if ((int)h >= 0 && (int)h < 4096) g_serve_fd[(int)h] = &g_serve[i];
+        pthread_mutex_unlock(&g_serve_lock);
+        return;
+    }
+}
+static const serve_patch_t *serve_for(uint64_t h) {
+    if (!g_nserve) return NULL;
+    if (IMG_H(h)) { for (int i = 0; i < g_nserve_img; i++) if (g_serve_img[i].h == h) return g_serve_img[i].p; return NULL; }
+    return (int)h >= 0 && (int)h < 4096 ? g_serve_fd[(int)h] : NULL;
+}
+static void serve_apply(const serve_patch_t *sp, uint64_t h, int64_t off, void *buf, size_t got) {
+    int alt = dm_opmode() == 0;   // handheld serves the alternate values, docked the stock ones
+    int applied = 0;
+    for (int i = 0; i < sp->n; i++) { const serve_slot_t *sl = &sp->slot[i];
+        if (sl->off >= (uint64_t)off && sl->off + 4 <= (uint64_t)off + got) {
+            uint32_t cur; memcpy(&cur, (const uint8_t *)buf + (sl->off - (uint64_t)off), 4);
+            if (cur == sl->stock || cur == sl->alt) { uint32_t want = alt ? sl->alt : sl->stock;
+                if (cur != want) { memcpy((uint8_t *)buf + (sl->off - (uint64_t)off), &want, 4); applied = 1; } }
+        } }
+    if (applied) { static _Atomic int logged[2]; if (!logged[alt]++) LOG("[fs] serve patch %s: values served %s (handle %llx)", sp->name, alt ? "handheld" : "docked", (unsigned long long)h); }
+}
+
 // ---------- Files ----------
 HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Result, h_fs_OpenFile, uint64_t *out, const char *path, int mode) {
     int mi; int64_t k;
@@ -701,6 +766,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
         if (!g_mnt[mi].img->e[k].type) return RES_PATH_NOT_FOUND;
         if (mode & (MODE_WRITE | MODE_APPEND)) { LOG("fs write to a read-only mount: %s", path); return RES_FAIL; }
         *out = IMG_HANDLE(mi, k);
+        serve_register(*out, path);
         if (g_flag.fs) LOG("fs open [%.2fs] %s mode=%d → image entry %lld", (now_ns() - g_t0_ns) / 1e9, path, mode, (long long)k);
         return RES_OK;
     }
@@ -717,6 +783,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
       atomic_store(&g_ftxn[fd], token); }
     fslog_init();
     if (g_fslog && fd < 4096) { pthread_mutex_lock(&g_fslog_lock); free(g_fdpath[fd]); g_fdpath[fd] = strdup(path); pthread_mutex_unlock(&g_fslog_lock); }
+    serve_register(*out, path);
     if (g_flag.fs) LOG("fs open [%.2fs] %s mode=%d → fd %d", (now_ns() - g_t0_ns) / 1e9, path, mode, fd);
     return RES_OK;
 }
@@ -748,6 +815,7 @@ HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", 
         got += r;
     }
     *out = got;
+    { const serve_patch_t *sp = serve_for(h); if (sp && got) serve_apply(sp, h, off, buf, got); }
     if (g_fslog) { pthread_mutex_lock(&g_fslog_lock);
         static int hash_on = -1; if (hash_on < 0) hash_on = getenv("DM_FSLOG_HASH") != NULL;   // DM_FSLOG_HASH=1: append a column with the FNV-1a 64 of the content read (to compare whether the bytes read from two resource packs match)
         uint64_t fh = 0xcbf29ce484222325ull; if (hash_on) for (size_t i = 0; i < got; i++) fh = (fh ^ ((uint8_t *)buf)[i]) * 0x100000001b3ull;
@@ -801,6 +869,7 @@ HLE_FORCE("_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl", "fsp-srv → ftruncate(2)
 HLE_FORCE("_ZN2nn2fs9FlushFileENS0_10FileHandleE", "fsp-srv; host writes are already in the page cache, flushing is a no-op", Result, h_fs_FlushFile, uint64_t h) { (void)h; return RES_OK; }
 HLE_FORCE("_ZN2nn2fs9CloseFileENS0_10FileHandleE", "fsp-srv → close(2)", void, h_fs_CloseFile, uint64_t h) {
     if (!h || IMG_H(h)) return;   // the null handle after a failed open (see ReadFile): do not touch fd 0; an image entry holds no descriptor
+    if ((int)h >= 0 && (int)h < 4096) g_serve_fd[(int)h] = NULL;
     g_fmode[(int)h & 0xffff] = 0; atomic_store(&g_ftxn[(int)h & 0xffff], 0);
     close((int)h); }
 HLE_FORCE("_ZN2nn2fs15GetFileOpenModeENS0_10FileHandleE", "fsp-srv; the open mode is recorded by the host", int, h_fs_GetFileOpenMode, uint64_t h) { return IMG_H(h) ? MODE_READ : g_fmode[(int)h & 0xffff]; }

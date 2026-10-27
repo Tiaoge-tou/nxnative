@@ -115,6 +115,9 @@ def header(g):
     if pl not in ('simple', 'full', 'touch'): sys.exit(f'{g.id}: pad_layout must be simple, full or touch: {pl}')   # touch = Tap (no control: every touch goes to the game's touch screen)
     fbs = g.words('feedback_snap', '')   # fragment shader key prefixes whose same-pass feedback sampling gets a snapshot first (nvn_mtl.m fb_prepare); none by default
     if any(not re.fullmatch(r'[0-9a-f]{8,16}', k) for k in fbs): sys.exit(f'{g.id}: feedback_snap takes fragment shader keys (8-16 lowercase hex digits): {fbs}')
+    spv = g.words('serve_patch', '')   # byte slots in a game file the file layer serves mode-dependently (hle_fs.c): "<file>@<off>:<stock float bits>><handheld float bits>[@...]" per file, hex; none by default
+    for w in spv:
+        if not re.fullmatch(r'[^@\s]+(@[0-9a-fA-F]+:[0-9a-fA-F]{8}>[0-9a-fA-F]{8})+', w): sys.exit(f'{g.id}: serve_patch takes "<file>@<off>:<stock>><handheld>" groups of hex offsets and float bits: {w}')
     rcd = g.get('render_cond', 'off')   # NVN conditional rendering evaluated at replay, timestamp reports with counter 0 (nvn_mtl.m OP_RENDER_COND): on / off
     if rcd not in ('on', 'off'): sys.exit(f'{g.id}: render_cond must be on or off: {rcd}')
     dwd = g.get('display_wide', 'off')   # nn::oe's default display resolution reported wide while fullscreen is on (hle_oe.c h_oe_DefRes): the game renders the phone's aspect itself instead of a stretched 1920x1080: on / off
@@ -172,6 +175,7 @@ def header(g):
          f'#define DM_GAME_OPMODE {int(om == "console")}',
          f'#define DM_GAME_PERF_BOOST {int(pm == "boost")}',
          f'#define DM_GAME_FEEDBACK_SNAP {q(" ".join(fbs))}',
+         f'#define DM_GAME_SERVE_PATCH {q(" ".join(spv))}',
          f'#define DM_GAME_TEX_FLUSH_UPLOAD {int(tfu == "on")}',
          f'#define DM_GAME_RENDER_COND {int(rcd == "on")}',
          f'#define DM_GAME_DISPLAY_WIDE {int(dwd == "on")}',
