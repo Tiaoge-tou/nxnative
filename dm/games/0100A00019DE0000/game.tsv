@@ -31,6 +31,11 @@ zip_store	.bank:.bik:.fsb:.gpk:.nro:.pkg:.xnb:.metallib
 # the engine renders the wide picture itself instead of the present stretching a 1920x1080 one
 display_wide	on
 
+# The launcher offers the frame-rate choice (SS_DISPLAY_HZ): the front end drives the present, the present link and the
+# vi vsync event at the rate it measures on the screen, and falls back to 60 when the screen cannot hold 120 (hle_nvn.c).
+# Whether this engine follows past 60 is unmeasured (it has no hle_fpslock row for its build yet): an experiment, 2026-10-27.
+display_hz	120
+
 # ---- Memory ----
 # The NPDM declares no system resource (META +0x14 = 0): the game uses SetHeapSize. It asks for 3.10 GB (pool − used memory), which the 3.25 GB heap region of
 # the 4 GB layout holds. main carries an 82 MB bss: the rewritten modules take more than the default 64 MB of used memory, so SetHeapSize(pool − 64 MB) would not fit
