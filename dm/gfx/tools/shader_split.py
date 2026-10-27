@@ -819,16 +819,20 @@ def gfpak_members(d, label):
         yield f'#{i}', data
 
 NLG_DICT = bytes.fromhex('5824f3a9')
-def nlg_dict(d):
+def nlg_dict(d, label):
     """Next Level Games' archive index (Luigi's Mansion 3: '<name>.dict' beside '<name>.data', every RomFS file but the Wwise banks): u32 magic 0xa9f32458, u8 4, u8 1, u8 compressed,
     u8 0, u32 the largest stored chunk, u8 chunk count, u8 record count, u8 name count, u8 0; then one 0x18-byte record per variant {u32 hash, u16 top-level entry count of its
     table, u16, u8 chunk of each of its 16 sections (0 = none)}, one 0x10-byte chunk per piece of data {u32 offset, u32 length, u32 stored length (one zlib stream), u16 alignment
     (log2 in the low 5 bits), u8 file, u8 GPU memory}, and the file names ('.data', '.debug', '.nxpc'). Record v's own entry table is chunk v: 12 bytes per entry {u32 kind (bit 31: a
     list of w1 entries from entry w2; bits 27..30 section; bits 22..26 log2 alignment), u32 length, u32 offset in the section}. The game reads the archive in main+0x1ba00 (Luigi's
     Mansion 3 1.4.0). → (compressed, records [(top, chunks)], chunks [(offset, length, stored, file)], file names)"""
-    comp, nchunk, nrec, nname = d[6], d[0xc], d[0xd], d[0xe]
-    recs = [(struct.unpack_from('<H', d, 0x14 + 0x18 * i)[0], list(d[0x18 + 0x18 * i:0x28 + 0x18 * i])) for i in range(nrec)]
+    nchunk, nrec = (d[0xc], d[0xd]) if len(d) >= 0x10 else (0, 0)
     co = 0x10 + 0x18 * nrec
+    # The layout above, checked before it is read: Mario Strikers: Battle League's (another revision, PR #282) stopped the split with an IndexError that named no file
+    if len(d) < co + 0x10 * nchunk or nrec > nchunk or any(c >= nchunk for i in range(nrec) for c in d[0x18 + 0x18 * i:0x28 + 0x18 * i]):
+        red(f'{label}: the index ({len(d):#x} bytes, header {d[4:0x10].hex(" ")}) is not in the layout of Luigi\'s Mansion 3\'s archives, the only one nlg_dict reads')
+    comp, nname = d[6], d[0xe]
+    recs = [(struct.unpack_from('<H', d, 0x14 + 0x18 * i)[0], list(d[0x18 + 0x18 * i:0x28 + 0x18 * i])) for i in range(nrec)]
     chunks = [struct.unpack_from('<3I2xB', d, co + 0x10 * i) for i in range(nchunk)]
     names = d[co + 0x10 * nchunk:].split(b'\0')[:nname]
     return comp, recs, chunks, [n.decode('latin-1') for n in names]
@@ -866,7 +870,7 @@ def nlg_shaders(path, label, out):
     Every variant whose files are in RomFS is read (the 13 even records; the odd ones point into '.nxpc', which is not shipped), and the shaders found pair by order (checked one by one)"""
     import zlib
     d = open(path, 'rb').read(); stem = path[:-len('.dict')]
-    comp, recs, chunks, names = nlg_dict(d)
+    comp, recs, chunks, names = nlg_dict(d, label)
     files = {i: open(stem + nm, 'rb').read() for i, nm in enumerate(names) if os.path.exists(stem + nm)}
     patch = open(stem + '.patch', 'rb').read() if os.path.exists(stem + '.patch') else None
     cache = {}
@@ -2008,7 +2012,17 @@ def var_pairs(found):
     return {(v['vs'], v['ps']) + (('prog',) if '#BAHS#prog' in g else ()) for g, v in var.items() if 'vs' in v and 'ps' in v}
 
 def scan_file(args):
-    """→ (relative path, {key: …}, pairs, extra); extra = this file's Unity type trees, or 'defer' (no type tree, scanned again in the second pass)"""
+    """→ (relative path, {key: …}, pairs, extra); extra = this file's Unity type trees, 'defer' (no type tree, scanned again in the second pass), or ('unreadable', why).
+    A file no reader can read (a format revision the reader does not know: its red line, or the exception it raised) is left out, and the split goes on: one such
+    archive used to end the whole split with nothing written (PR #282: one of Mario Strikers: Battle League's 879 Next Level Games archives). main reports them"""
+    try: return scan_file_in(args)
+    except (Exception, SystemExit) as e:   # red() is a SystemExit
+        why = str(e).removeprefix('[RED] ') if isinstance(e, SystemExit) else f'{type(e).__name__}: {e}'
+        if not why.lstrip('/').startswith(args[1]): why = f'{args[1]}: {why}'   # most red lines name the file already
+        print(f'[RED] {why} (its shaders are left out)', flush=True)
+        return args[1], {}, set(), ('unreadable', why)
+
+def scan_file_in(args):
     path, rel = args[:2]
     stem, ext = os.path.splitext(path)
     if ext in ('.data', '.patch', '.debug', '.nxpc') and os.path.exists(stem + '.dict'): return rel, {}, set(), {}   # read through its Next Level Games index (nlg_shaders)
@@ -2168,7 +2182,7 @@ def main():
     trees, defer = {}, []
     for rel, uniq, pr, extra in results:
         if extra == 'defer': defer.append(rel)
-        elif extra: trees.update(extra)
+        elif isinstance(extra, dict): trees.update(extra)
     if defer:
         # a hash no bundle supplied takes the layout unityfs.py has for it (KNOWN_TREES); only here, so files a bundle lends a tree to keep their place in the tables (Ace Attorney's built-ins)
         import unityfs
@@ -2178,6 +2192,8 @@ def main():
         for rel, uniq, pr, extra in again:
             if extra == 'defer': red(f'{rel}: Unity serialized file without type trees, and no bundle has a Shader type tree of the same hash to borrow')
         results = [r for r in results if r[3] != 'defer'] + again
+    bad = [extra[1] for *_, extra in results if isinstance(extra, tuple)]
+    if bad: print(f'[RED] {len(bad)} file(s) could not be read, their shaders are left out (first: {bad[0]})', flush=True)   # build_ipa_from_nsp.py reads this line
     per_src = collections.Counter(); pairs = set()
     for rel, uniq, pr, _ in results:
         pairs |= pr

@@ -513,6 +513,13 @@ def pick_nsps(fam, have, versions):
     return out
 
 
+def extract_bytes(picks, clones):
+    """What the extraction writes, estimated from the NSPs' sizes. Later versions clone the base game's RomFS when the base is extracted alone (v0) and the volume supports clones:
+    then each NSP counts once (by path: two NSPs can have the same size). Otherwise every version is a full copy of the base game with its update"""
+    if clones and any(u is None for _, u in picks.values()): return sum(p.stat().st_size for p in {p for b, u in picks.values() for p in (b, u) if p})
+    return sum(b.stat().st_size + (u.stat().st_size if u else 0) for b, u in picks.values())
+
+
 def can_clone(d):   # whether this volume supports APFS clones (nx_extract uses them to save space; without them it writes full copies)
     a, b = d / '.clone_test', d / '.clone_test2'
     try:
@@ -1415,7 +1422,12 @@ def split_shaders(py, repo, roms, mains, pkg, env, logs, g, provisional=False, o
     tmp = pkg.with_name(pkg.name + '.partial'); rmtree(tmp); (tmp / 'tables').mkdir(parents=True)
     run([py, repo / 'dm/gfx/tools/shader_split.py', ','.join(map(str, roms)), ','.join(map(str, mains)), tmp / 'pkg'] + [tmp / 'tables' / n for n in names + ('pso_pairs.tsv',)] + ([','.join(map(str, dlc_roms))] if dlc_roms else []),
         logs / 'shader_split.log', env=env)
-    m = re.search(r'shaders: (\d+) \(', (logs / 'shader_split.log').read_text(errors='replace'))
+    text = (logs / 'shader_split.log').read_text(errors='replace')
+    m = re.search(r'shaders: (\d+) \(', text)
+    bad = re.search(r'^\[RED\] (\d+) file\(s\) could not be read.*$', text, re.M)   # the split leaves out a file no reader reads (its own red line per file in the log) and goes on
+    if bad and not provisional:   # the profile's tables were split from every file: one that does not read now is a reader change
+        raise BuildError(f'{bad.group(0).removeprefix("[RED] ")}; the profile\'s tables hold every file\'s shaders (each file in {logs / "shader_split.log"})')
+    if bad: say(f'{bad.group(0)}; the IPA goes without them (each file in {logs / "shader_split.log"})')
     if m and m.group(1) == '0':   # dmsh_build.py would make no library, and the iOS shader step stop with no word of why
         raise BuildError('the shader split found no shaders in main or the RomFS: the game keeps them in a form shader_split.py does not read; locate them (docs/agents) and add a reader')
     # pso_pairs.tsv (agl BAHS program variations): checked like the others where the profile has one; else kept beside the
@@ -1431,7 +1443,7 @@ def split_shaders(py, repo, roms, mains, pkg, env, logs, g, provisional=False, o
         diff = [n for n in names if data_rows((tmp / 'tables' / n).read_bytes()) != data_rows(g.table(n).read_bytes())]
         if diff: raise BuildError(f'the split shader tables differ from game profile {g.id}\'s: {", ".join(diff)} (game files not the versions the profile registers?)')
     rmtree(kf); swap_in(tmp / 'pkg', pkg); rmtree(tmp)
-    note = f'{int(m.group(1)):,} shaders' if m else ''
+    note = (f'{int(m.group(1)):,} shaders' if m else '') + (f', {bad.group(1)} file(s) unreadable' if bad else '')
     if key:   # an own profile's tables are outputs too; the next split checks the profile after they were written
         key = fingerprint(*inputs, ('files', profile_files(g)))
         kf.write_text(f'{key}\n{note}\n')
@@ -1971,7 +1983,7 @@ def main(args=None):
     picks = pick_nsps(fam, have, versions)
 
     ex = work / 'extract'; ex.mkdir(parents=True, exist_ok=True); (work / 'tmp').mkdir(exist_ok=True)
-    gb = sum({p.stat().st_size for b, u in picks.values() for p in (b, u) if p}) / 2**30 + 6   # extraction + shader cache + slack
+    gb = extract_bytes(picks, can_clone(ex)) / 2**30 + 6   # extraction + shader cache + slack
     if free_gb(work) < gb and not all((ex / v).exists() for v in versions): raise BuildError(f'less than {gb:.0f} GB free on the volume of {work}')
     heapck = provisional and HEAP_CHECK and not args.no_heap_check and not heap_checked(g)   # the heap check, when the game needs one (once per provisional profile: it stamps the profile)
     PROG.plan(1 + len(versions) + bool(fam['dlc']) + 4 - (prepare_xcode or (mac and not mac_pack)))   # prepare Xcode (a Mac-only build: the Mac host) replaces app build + IPA pack with one stage (a Mac app: Mac host + Mac app)

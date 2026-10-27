@@ -20,6 +20,7 @@ DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	always	Game	帧数计数器	左上角显�
 DM_TOUCH_HAPTICS	toggle	-	1	always	Controls	触控反馈	按下触屏按键时轻震一下
 DM_RUMBLE	toggle	-	1	always	Controls	游戏震动	游戏内震动传到手机或手柄
 DM_RUMBLE_GAIN	range	0:3:0.1	1.0	always	Controls	震动强度	与游戏内的震动设置叠加生效
+DM_RUMBLE_MIN	range	0:0.9:0.05	0	always	Controls	震动下限
 DM_HADES_SKIN	toggle	-	1	DM_GAME_DISPLAY_WIDE!=0	Controls	按键皮肤	开 = 图标皮肤；关 = 玻璃按键
 DM_PRESENT_SNAP	toggle	-	DM_GAME_PRESENT_SNAP	gfxapi:nvn	Performance	帧缓冲	可能减少卡顿；会增加显示延迟。
 DM_PSO_MTL4	toggle	-	DM_GAME_PSO_MTL4	gfxapi:nvn	Performance	Metal 4 管线	保留管线档案；占用更多内存。
