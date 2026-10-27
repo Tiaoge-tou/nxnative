@@ -146,6 +146,25 @@ def render_width(ctx):
         start = here(); emit(ADRP(reg, here(), state)); emit(LDRW(reg, reg, 17))   # ldr wN, [xN, #0x44] (the handheld height, high word of the packed handheld render size)
         emit(B(here(), off + 4))
         put(off, [B(off, start)], f'{what}: render height from the host render size (state page +0x44)')
+    # The display-state object's width getter (its vtable's +0xb8 slot; the height getter beside it needs
+    # no help: the handheld height is 720 stored and served alike). Every consumer of the object's current
+    # size -- the apply step whose crop the host then replaces among them -- reads through this getter, but
+    # the stored pair itself is written by the managed SetResolution path with the stock handheld size,
+    # past every site above (a #65 diagnostic build read the object at the frame-1 apply: template pair
+    # 1560x720 / 2344x1080 intact, current pair 1280x720). So the getter itself answers: the stored width
+    # runs first, and only the exact stock 1280 is replaced by the host handheld width (state +0x40, 1280
+    # itself when DM_RENDER_WIDTH_HD is unset, so an unmeasured build answers exactly as before); any
+    # other stored value -- the docked pair, a real change -- passes through untouched. The stub touches
+    # only w0, x9 and the flags (all call-clobbered) and returns to the getter's caller directly.
+    off = 0xb23080
+    site(off, '00b440b9')   # ldr w0, [x0, #0xb4]
+    start = here()
+    emit(LDRW(0, 0, 0x2d))            # ldr w0, [x0, #0xb4] -- the stored width, as the getter reads it
+    emit(0x7114001f)                  # cmp w0, #1280 -- the stock handheld width
+    emit(0x54000061)                  # b.ne +12 -- to the ret below (fixed layout: three words on)
+    emit(ADRP(9, here(), state)); emit(LDRW(0, 9, 16))   # ldr w0, [x9, #0x40] -- the host handheld width
+    emit(0xd65f03c0)                  # ret
+    put(off, [B(off, start)], 'display-state width getter: the stock handheld width reads as the host handheld width (state page +0x40)')
 
 # The key is the module build ID as dm/tools/patch_nso.py computes it (module bytes 0x40..0x50; also the BUILD_ID header of
 # main.fixups.tsv) -- NOT the main= value of game.tsv's build line (which happens to agree for this game)
