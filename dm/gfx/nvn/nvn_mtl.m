@@ -1540,6 +1540,29 @@ static int g_red_once[121];
 // ---------- Texture → MTLTexture ----------
 static int fmt_compressed(int f) { return (f >= 0x41 && f <= 0x50) || (f >= 0x79 && f <= 0x94); }
 static int fmt_depth(int f) { return f >= 0x31 && f <= 0x36; }
+// ---------- BC1-BC5 on a GPU without BC ----------
+// A BC pixel format is valid in a Metal texture only where the GPU supports BC texture compression
+// (MTLDevice.supportsBCTextureCompression: every Mac, and among iOS GPUs the Apple9 family and later --
+// an A15 phone has none, and Metal aborts the process on the descriptor there: Silksong's first area load
+// on an iPhone 13 Pro, the game's datapack carrying a BC3 texture the A19 phone takes natively). Where the
+// GPU has no BC, a BC1-BC5 guest texture is held as RGBA8 instead: fmt_mtl_dev answers the RGBA8 twin of
+// the guest format (sRGB and SNORM follow it) for every mapping in this file, and pkg_upload_ decompresses
+// the blocks on upload (bc_decode_image). On a BC GPU nothing in this section engages. BC6H / BC7 are not
+// substituted: they keep the native format and still need a BC GPU.
+static int g_bc_native = -1;
+static int bc_native(void) {
+    if (g_bc_native < 0 && g_dev) { g_bc_native = [g_dev supportsBCTextureCompression] ? 1 : 0;
+        if (!g_bc_native) MLOG("this GPU has no BC texture compression: BC1-BC5 textures are decompressed to RGBA8 on upload"); }
+    return g_bc_native != 0;
+}
+static int fmt_bc15(int f) { return f >= 0x41 && f <= 0x4c; }   // NVN DXT1 .. BC5_SNORM (nvn_fmt_mtl.c)
+static uint32_t bc_xcode_pf(int f) { return f >= 0x45 && f <= 0x48 ? MTLPixelFormatRGBA8Unorm_sRGB : (f == 0x4a || f == 0x4c) ? MTLPixelFormatRGBA8Snorm : MTLPixelFormatRGBA8Unorm; }
+static int fmt_mtl_dev(int f, uint32_t *pf, uint8_t swz[4]) {
+    int k = nvn_fmt_to_mtl(f, pf, swz);
+    if (k && pf && fmt_bc15(f) && !bc_native()) *pf = bc_xcode_pf(f);
+    return k;
+}
+static int tex_bc_xcode(const tex_t *t) { return fmt_bc15(t->d.format) && !bc_native(); }
 typedef struct { MTLPixelFormat a, b; } pfv_pair;
 static const pfv_pair g_pfv_srgb[] = {
     {MTLPixelFormatRGBA8Unorm, MTLPixelFormatRGBA8Unorm_sRGB},
@@ -1742,7 +1765,7 @@ static MTLTextureUsage img_usage(const tex_t *t, MTLPixelFormat pf) {
 static int tex_atomic_capable(id<MTLTexture> base) { return pf_r32i(base.pixelFormat) && (base.usage & MTLTextureUsageShaderWrite); }
 static MTLTextureDescriptor *tex_desc(const tex_t *t, int packaged) {
     uint32_t pf = 0; uint8_t swz[4];
-    if (!nvn_fmt_to_mtl(t->d.format, &pf, swz) || !pf) { RED_ONCE(0, "texture format %#x has no Metal equivalent (first case)", t->d.format); return nil; }
+    if (!fmt_mtl_dev(t->d.format, &pf, swz) || !pf) { RED_ONCE(0, "texture format %#x has no Metal equivalent (first case)", t->d.format); return nil; }
     // Metal's limits: 16384 in 2D, 2048 in 3D, 2048 array layers; beyond them Metal aborts the process on an assertion, so they are caught here with a red line
     if (t->d.width > 16384 || t->d.height > 16384 || t->d.depth > 2048) { RED_ONCE(71, "texture size exceeds Metal limits: %u×%u×%u levels %u format %#x target %d (first case ser=%llu)", t->d.width, t->d.height, t->d.depth, t->d.levels, t->d.format, t->d.target, (unsigned long long)t->serial); return nil; }
     MTLTextureDescriptor *d = [MTLTextureDescriptor new];
@@ -1789,7 +1812,7 @@ static MTLTextureDescriptor *tex_desc(const tex_t *t, int packaged) {
         }
     }
     d.storageMode = MTLStorageModePrivate;   // Render targets and assets both go in GPU private storage (lossless compression available)
-    d.usage = MTLTextureUsageShaderRead | (fmt_compressed(t->d.format) || packaged ? 0 : MTLTextureUsageRenderTarget)
+    d.usage = MTLTextureUsageShaderRead | ((fmt_compressed(t->d.format) && !tex_bc_xcode(t)) || packaged ? 0 : MTLTextureUsageRenderTarget)   // a decompressed BC texture (bc_native) is an ordinary RGBA8 one: it can be drawn into directly, no shadow
             | img_usage(t, d.pixelFormat);   // Image usage: shader-writable (compute kernels generating the 3D color lookup table, etc.
     // A depth-stencil texture has the format-view usage from the start: its stencil is read through an X32_Stencil8 view (stencil-mode views and textures, the depth-stencil copy), which Metal's
     // contract allows only with that usage. Apple GPUs read the view correctly without it, but the API validation layer aborts the process at the first such view (PR #106, found on Luigi's
@@ -2056,6 +2079,59 @@ static void up_blit_add(id<MTLBuffer> src, size_t off, size_t row, size_t image,
     g_up_blits[g_nup_blits++] = (up_blit){src, off, row, image, size, dst, slice, level};
 }
 
+// ---------- BC1-BC5 block decompression (the upload substitute on a GPU without BC, see bc_native) ----------
+static inline void bc_rgb565(uint16_t c, uint8_t *r, uint8_t *g, uint8_t *b) {
+    unsigned r5 = (c >> 11) & 31, g6 = (c >> 5) & 63, b5 = c & 31;
+    *r = (uint8_t)((r5 << 3) | (r5 >> 2)); *g = (uint8_t)((g6 << 2) | (g6 >> 4)); *b = (uint8_t)((b5 << 3) | (b5 >> 2));
+}
+// One channel of a BC3 alpha / BC4 / BC5 block: two endpoints and sixteen 3-bit indices. snorm: the endpoints are
+// signed and the two extra values of the short interpolation are the extremes (-127 / 127, for -1 / 1)
+static void bc_chan(const uint8_t *b, int snorm, uint8_t out[16]) {
+    int a0 = snorm ? (int8_t)b[0] : b[0], a1 = snorm ? (int8_t)b[1] : b[1], v[8];
+    v[0] = a0; v[1] = a1;
+    if (a0 > a1) { for (int i = 2; i < 8; i++) v[i] = ((8 - i) * a0 + (i - 1) * a1) / 7; }
+    else { for (int i = 2; i < 6; i++) v[i] = ((6 - i) * a0 + (i - 1) * a1) / 5; v[6] = snorm ? -127 : 0; v[7] = snorm ? 127 : 255; }
+    uint64_t idx = 0; for (int i = 0; i < 6; i++) idx |= (uint64_t)b[2 + i] << (8 * i);
+    for (int i = 0; i < 16; i++) { int x = v[(idx >> (3 * i)) & 7]; out[i] = snorm ? (uint8_t)(int8_t)(x < -127 ? -127 : x) : (uint8_t)x; }
+}
+// The colour half of a DXT block (also BC2 / BC3's second half): two RGB565 endpoints, sixteen 2-bit indices.
+// four: always the four-colour interpolation; without it (BC1), c0 <= c1 is three colours and a transparent texel
+static void bc_colour(const uint8_t *b, int four, uint8_t px[16][4]) {
+    uint16_t c0 = (uint16_t)(b[0] | b[1] << 8), c1 = (uint16_t)(b[2] | b[3] << 8);
+    uint8_t col[4][3]; bc_rgb565(c0, &col[0][0], &col[0][1], &col[0][2]); bc_rgb565(c1, &col[1][0], &col[1][1], &col[1][2]);
+    int fourc = four || c0 > c1;
+    if (fourc) { for (int ch = 0; ch < 3; ch++) { col[2][ch] = (uint8_t)((2 * col[0][ch] + col[1][ch]) / 3); col[3][ch] = (uint8_t)((col[0][ch] + 2 * col[1][ch]) / 3); } }
+    else { for (int ch = 0; ch < 3; ch++) col[2][ch] = (uint8_t)((col[0][ch] + col[1][ch]) / 2); col[3][0] = col[3][1] = col[3][2] = 0; }
+    uint32_t idx = (uint32_t)(b[4] | b[5] << 8 | (uint32_t)b[6] << 16 | (uint32_t)b[7] << 24);
+    for (int i = 0; i < 16; i++) { unsigned s = (idx >> (2 * i)) & 3;
+        px[i][0] = col[s][0]; px[i][1] = col[s][1]; px[i][2] = col[s][2]; px[i][3] = (fourc || s != 3) ? 255 : 0; }
+}
+static void bc_decode_block(int f, const uint8_t *blk, uint8_t px[16][4]) {
+    uint8_t ch[16], ch2[16];
+    switch (f) {
+        case 0x41: case 0x42: case 0x45: case 0x46: bc_colour(blk, 0, px); break;   // DXT1 (and its sRGB twin)
+        case 0x43: case 0x47: bc_colour(blk + 8, 1, px);   // DXT3: an explicit 4-bit alpha half first
+            for (int i = 0; i < 16; i++) { unsigned n = (blk[i / 2] >> (4 * (i & 1))) & 15; px[i][3] = (uint8_t)((n << 4) | n); } break;
+        case 0x44: case 0x48: bc_colour(blk + 8, 1, px); bc_chan(blk, 0, ch);   // DXT5: an interpolated alpha half
+            for (int i = 0; i < 16; i++) px[i][3] = ch[i]; break;
+        case 0x49: case 0x4a: bc_chan(blk, f == 0x4a, ch);   // BC4: one channel, sampled as red
+            for (int i = 0; i < 16; i++) { px[i][0] = ch[i]; px[i][1] = 0; px[i][2] = 0; px[i][3] = 255; } break;
+        case 0x4b: case 0x4c: bc_chan(blk, f == 0x4c, ch); bc_chan(blk + 8, f == 0x4c, ch2);   // BC5: red and green
+            for (int i = 0; i < 16; i++) { px[i][0] = ch[i]; px[i][1] = ch2[i]; px[i][2] = 0; px[i][3] = 255; } break;
+        default: for (int i = 0; i < 16; i++) { px[i][0] = 255; px[i][1] = 0; px[i][2] = 255; px[i][3] = 255; } break;   // not BC1-BC5: magenta
+    }
+}
+// A whole level (or one 3D slice) of tightly packed blocks (rows of pitch bytes) decompressed to RGBA8 rows of w*4
+static void bc_decode_image(int f, const uint8_t *src, size_t pitch, uint32_t w, uint32_t h, uint8_t *dst) {
+    int bw = 0, bh = 0, bb = nvn_fmt_bpb(f, &bw, &bh); if (!bb || !bw || !bh) return;
+    uint8_t px[16][4];
+    for (uint32_t by = 0; by < (h + (uint32_t)bh - 1) / (uint32_t)bh; by++) for (uint32_t bx = 0; bx < (w + (uint32_t)bw - 1) / (uint32_t)bw; bx++) {
+        bc_decode_block(f, src + (size_t)by * pitch + (size_t)bx * (size_t)bb, px);
+        for (int y = 0; y < 4; y++) { uint32_t yy = by * 4 + (uint32_t)y; if (yy >= h) break;
+            for (int x = 0; x < 4; x++) { uint32_t xx = bx * 4 + (uint32_t)x; if (xx >= w) break;
+                memcpy(dst + ((size_t)yy * w + xx) * 4, px[y * 4 + x], 4); } }
+    }
+}
 static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse);
 int nvn_host_readable(uint64_t a, uint64_t n);   // hle_nvn.c: guest memory and sparse pools
 int nvn_sparse_pool(const void *pool); uint64_t nvn_sparse_gen(void); uint64_t nvn_sparse_copy(const void *pool, void *dst, uint64_t a, uint64_t n);
@@ -2099,6 +2175,7 @@ static void zb_report(const tex_t *t, unsigned base, const char *why) {
 static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse) {
     MTLTextureDescriptor *d = tex_desc(t, 1);
     if (!d) return nil;
+    int xcode = tex_bc_xcode(t);   // the texture is RGBA8 here (tex_desc): the staging below holds decompressed texels, not the guest's blocks
     id<MTLTexture> mt = reuse && reuse.pixelFormat == d.pixelFormat && reuse.width == d.width && reuse.height == d.height && reuse.mipmapLevelCount == d.mipmapLevelCount && reuse.textureType == d.textureType
                         ? reuse : [g_dev newTextureWithDescriptor:d];
     if (!mt) { RED_ONCE(2, "failed to create MTLTexture %ux%u format %#x target %d", t->d.width, t->d.height, t->d.format, t->d.target); return nil; }
@@ -2115,9 +2192,16 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
         uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
         total += (size_t)((w + bw - 1) / bw) * bpb * ((h + bh - 1) / bh) * z * layers;
     }
+    if (xcode) {   // decompressed RGBA8 is larger than the blocks (up to 4x for BC1 / BC4)
+        total = 0;
+        for (unsigned l = 0; l < d.mipmapLevelCount; l++) {
+            uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
+            total += (size_t)w * h * 4 * z * layers;
+        }
+    }
     g_bp_up_bytes += total;
     void *mb; uint64_t mo;
-    int use_gpu = !sparse && g_nvn_deswz_gpu && mtl_addr((uint64_t)t->mem, t->L.size, &mb, &mo);   // a sparse pool's texture is gathered through its page table on the CPU
+    int use_gpu = !xcode && !sparse && g_nvn_deswz_gpu && mtl_addr((uint64_t)t->mem, t->L.size, &mb, &mo);   // a sparse pool's texture is gathered through its page table on the CPU; a decompressed one (xcode) always takes the CPU path, which decodes it
     if (g_nvn_deswz_gpu && !use_gpu && !sparse) RED_ONCE(40, "swizzled texture storage is not in a memory pool; falling back to the CPU");
     if (use_gpu) {
         // The GPU reads the memory pool at execution time, which is closer to a real Switch than a snapshot at CPU upload time; the dirty-page stamp is still taken before encoding, and later writes still trigger a re-upload.
@@ -2151,6 +2235,10 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
         if (!(part = malloc(t->L.size ? t->L.size : 1))) MDIE("sparse texture copy of %llu bytes failed", (unsigned long long)t->L.size);
         nvn_sparse_copy(t->pool, part, (uint64_t)(uintptr_t)t->mem, t->L.size); src = part;
     }
+    uint8_t *dec = NULL;   // xcode: one level's deswizzled blocks, decompressed into the staging before its blit
+    if (xcode) { uint32_t w0 = MAX(t->d.width, 1u), h0 = MAX(t->d.height, 1u), z0 = t->d.target == 2 ? MAX(t->d.depth, 1u) : 1;
+        size_t dn = (size_t)((w0 + bw - 1) / bw) * bpb * ((h0 + bh - 1) / bh) * z0;
+        if (!(dec = malloc(dn ? dn : 1))) MDIE("BC decompression scratch of %llu bytes failed", (unsigned long long)dn); }
     up_begin();
     id<MTLBuffer> stg = [g_dev newBufferWithLength:total ? total : 16 options:MTLResourceStorageModeShared];
     res_add(stg); [g_up_keep addObject:stg];
@@ -2160,6 +2248,13 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
         uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
         size_t pitch = (size_t)((w + bw - 1) / bw) * bpb, rows = (h + bh - 1) / bh;
         for (unsigned y = 0; y < layers; y++) {
+            if (xcode) {
+                if (nvn_deswizzle(&t->d, l, y, src, dec, pitch)) { RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
+                for (uint32_t s = 0; s < z; s++) bc_decode_image(t->d.format, dec + (size_t)s * pitch * rows, pitch, w, h, (uint8_t *)stg.contents + off + (size_t)s * w * h * 4);
+                up_blit_add(stg, off, (size_t)w * 4, (size_t)w * h * 4, MTLSizeMake(w, h, z), mt, y, l);
+                off += (size_t)w * h * 4 * z;
+                continue;
+            }
             if (nvn_deswizzle(&t->d, l, y, src, (uint8_t *)stg.contents + off, pitch)) { RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
             if (zb && l < 16) { const uint64_t *q = (const uint64_t *)((const uint8_t *)stg.contents + off); size_t nb = pitch * rows * z / 16;
                 for (size_t i = 0; i < nb; i++) g_zb[l] += !(q[2 * i] | q[2 * i + 1]);
@@ -2168,7 +2263,7 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
             off += pitch * rows * z;
         }
     }
-    free(part);
+    free(part); free(dec);
     up_flush();
     return mt;
 }
@@ -2287,7 +2382,7 @@ static id<MTLTexture> tex_linear(const tex_t *t) {
     if (!(t->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) || !t->mem || !t->pool) return nil;
     if (t->d.target != NVN_TEXTURE_TARGET_2D || t->d.levels > 1 || t->d.samples > 1) return nil;
     uint32_t pf = 0; uint8_t swz[4]; int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
-    if (!nvn_fmt_to_mtl(t->d.format, &pf, swz) || !pf || !bpb || bw != 1 || bh != 1) return nil;
+    if (!fmt_mtl_dev(t->d.format, &pf, swz) || !pf || !bpb || bw != 1 || bh != 1) return nil;
     size_t row = t->L.layer_size / (t->d.height ? t->d.height : 1);   // same explicit or aligned stride as GetStorageSize
     void *mb; uint64_t mo;
     if (!mtl_addr((uint64_t)t->mem, (uint64_t)row * (t->d.height ? t->d.height : 1), &mb, &mo)) { RED_ONCE(64, "linear texture storage is not in a memory pool (%ux%u format %#x)", t->d.width, t->d.height, t->d.format); return nil; }
@@ -2460,7 +2555,7 @@ static id<MTLTexture> tex_mtl_(const tex_t *ct) {
     if (t->d.target == 10) {   // Buffer texture (TARGET_BUFFER): create the texture-buffer view directly on the memory pool buffer (zero copy; the GPU reads the pool's current content at execution time, same as NVN semantics)
         uint32_t pf = 0; uint8_t swz[4]; int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
         void *mb; uint64_t mo;
-        if (!nvn_fmt_to_mtl(t->d.format, &pf, swz) || !pf || !bpb) { RED_ONCE(36, "buffer texture format %#x not mapped", t->d.format); return nil; }
+        if (!fmt_mtl_dev(t->d.format, &pf, swz) || !pf || !bpb) { RED_ONCE(36, "buffer texture format %#x not mapped", t->d.format); return nil; }
         if (!t->mem || !mtl_addr((uint64_t)t->mem, (uint64_t)t->d.width * bpb, &mb, &mo)) { RED_ONCE(37, "buffer texture storage is not in a memory pool"); return nil; }
         id<MTLBuffer> b = (__bridge id<MTLBuffer>)mb;
         NSUInteger al = [g_dev minimumLinearTextureAlignmentForPixelFormat:(MTLPixelFormat)pf];
@@ -2997,7 +3092,7 @@ static int mtl_fmt_depth(MTLPixelFormat f) { return f == MTLPixelFormatDepth16Un
 // The shadow's format: the view's, when the base is BC (or a depth format, above) and the view is an uncompressed colour format with one block's bytes per pixel
 static int bcrt_view(id<MTLTexture> base, const view_t *v, int has_v, MTLPixelFormat *pf_out) {
     uint32_t pf = 0; uint8_t swz[4]; int bw = 0, bh = 0, side = 0, bb = base ? shrt_block(base.pixelFormat, &side) : 0;
-    if (!bb || !has_v || !v->set_format || !nvn_fmt_to_mtl(v->format, &pf, swz) || !pf || mtl_fmt_block((MTLPixelFormat)pf) || mtl_fmt_depth((MTLPixelFormat)pf)) return 0;
+    if (!bb || !has_v || !v->set_format || !fmt_mtl_dev(v->format, &pf, swz) || !pf || mtl_fmt_block((MTLPixelFormat)pf) || mtl_fmt_depth((MTLPixelFormat)pf)) return 0;
     if (nvn_fmt_bpb(v->format, &bw, &bh) != bb || bw != 1 || bh != 1) return 0;
     *pf_out = (MTLPixelFormat)pf; return 1;
 }
@@ -3051,7 +3146,7 @@ static MTLPixelFormat rt_view_fmt(id<MTLTexture> base, const view_t *v, int has_
     }
     if (!base || !has_v || !v->set_format) return base.pixelFormat;
     uint32_t pf = 0; uint8_t swz[4];
-    if (!nvn_fmt_to_mtl(v->format, &pf, swz) || !pf || pf == (uint32_t)base.pixelFormat) return base.pixelFormat;
+    if (!fmt_mtl_dev(v->format, &pf, swz) || !pf || pf == (uint32_t)base.pixelFormat) return base.pixelFormat;
     if (tex_need_pfv(base.pixelFormat, (MTLPixelFormat)pf) && !(base.usage & MTLTextureUsagePixelFormatView)) return base.pixelFormat;
     return (MTLPixelFormat)pf;
 }
@@ -3084,7 +3179,7 @@ static void attach(MTLRenderPassAttachmentDescriptor *a, const tex_t *t, const v
             if (vw) { a.texture = vw; defer_obj_unref(vw); }
             else RED_ONCE(67, "cannot create the render target view: format %#x (base texture Metal format %lu)", v->format, (unsigned long)base.pixelFormat);
         } else { uint32_t want = 0; uint8_t swz[4];
-            if (nvn_fmt_to_mtl(v->format, &want, swz) && want && want != (uint32_t)base.pixelFormat)
+            if (fmt_mtl_dev(v->format, &want, swz) && want && want != (uint32_t)base.pixelFormat)
                 RED_ONCE(68, "render target view format %#x cannot be attached (base texture Metal format %lu was created without the format-view usage): drawing in the base format", v->format, (unsigned long)base.pixelFormat); }
     }
 }
@@ -3966,7 +4061,7 @@ static id<MTLTexture> tex_by_id(int tid) {   // Caller holds g_rmu
     // the view format's if Metal has it, else the texture's (GitHub PR #66: The Legend of Zelda: Echoes of Wisdom's hearts are an RGB565 mask, drawn as red rectangles without the swap).
     // The swap is for bits in the guest's order, so only for textures uploaded from guest memory or read from it in place: what Metal rendered or cleared into one has red where Metal puts it
     uint8_t sw[4] = {MTLTextureSwizzleRed, MTLTextureSwizzleGreen, MTLTextureSwizzleBlue, MTLTextureSwizzleAlpha}, fsw[4]; int need_sw = 0; uint32_t fpf = 0;
-    if (!(r.has_v && r.v.set_format && nvn_fmt_to_mtl(r.v.format, &fpf, fsw) && fpf)) nvn_fmt_to_mtl(r.t.d.format, NULL, fsw);
+    if (!(r.has_v && r.v.set_format && fmt_mtl_dev(r.v.format, &fpf, fsw) && fpf)) fmt_mtl_dev(r.t.d.format, NULL, fsw);
     if (fsw[0] != MTLTextureSwizzleRed && !base.buffer && ![tex_get(r.t.serial) isKindOfClass:[NvPkg class]]) { fsw[0] = MTLTextureSwizzleRed; fsw[2] = MTLTextureSwizzleBlue; }
     if (r.has_v && r.v.set_swizzle) memcpy(sw, r.v.swz, 4);
     else if (r.t.set_swz) for (int c = 0; c < 4; c++) sw[c] = (uint8_t)(r.t.swz >> (3 * c) & 7);
@@ -3986,7 +4081,7 @@ static id<MTLTexture> tex_by_id(int tid) {   // Caller holds g_rmu
     if ((r.has_v && (r.v.set_format || r.v.set_levels || r.v.set_layers || r.v.set_target)) || need_sw || stv) {
         if (!r.has_v) memset(&r.v, 0, sizeof r.v);
         uint32_t pf = (uint32_t)base.pixelFormat; uint8_t swz[4];
-        if (r.v.set_format && !(nvn_fmt_to_mtl(r.v.format, &pf, swz) && pf)) pf = (uint32_t)base.pixelFormat;
+        if (r.v.set_format && !(fmt_mtl_dev(r.v.format, &pf, swz) && pf)) pf = (uint32_t)base.pixelFormat;
         if (stv) pf = MTLPixelFormatX32_Stencil8;
         if (r.v.set_format && nvn_fmt_bc(rp->t.d.format) && !nvn_fmt_bc(r.v.format)) {   // the raw blocks of a BC texture through an uncompressed view (see rt_view_fmt): Metal has no such view
             RED_ONCE(86, "Metal cannot create the raw-block view of a compressed texture (NVN format %#x → view %#x): treated as an empty slot", rp->t.d.format, r.v.format);
@@ -7762,7 +7857,7 @@ static int fz_p2_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di, uint8_
                 // the proof would still hold, the sampling would be changed to read on-tile level 0 / the original format, and the picture would be wrong). The view's starting level / layer must be 0 and its format must equal the attachment's actual format, otherwise do not merge
                 int tid_ = (int)(h & 0xfffff); void *tv_ = NULL; if (tid_) tex_fast_rid(tid_, &tv_); __unsafe_unretained id<MTLTexture> tv = (__bridge id<MTLTexture>)tv_;
                 uint32_t apf_ = tv.parentTexture ? (uint32_t)tv.parentTexture.pixelFormat : (uint32_t)tv.pixelFormat; uint8_t swz_[4];
-                if (R.rt.has_cview[j] && R.rt.cview[j].set_format && !(nvn_fmt_to_mtl(R.rt.cview[j].format, &apf_, swz_) && apf_)) apf_ = 0;   // The attachment is attached through a format-changing view: take that format; if unrecognized, do not merge
+                if (R.rt.has_cview[j] && R.rt.cview[j].set_format && !(fmt_mtl_dev(R.rt.cview[j].format, &apf_, swz_) && apf_)) apf_ = 0;   // The attachment is attached through a format-changing view: take that format; if unrecognized, do not merge
                 MTLPixelFormat apf = (MTLPixelFormat)apf_; MTLTextureSwizzleChannels tsw = tv.swizzle;   // a read of the tile takes no channel mapping either (alpha 1 of an RGBX attachment, tex_by_id)
                 int tsw_id = tsw.red == MTLTextureSwizzleRed && tsw.green == MTLTextureSwizzleGreen && tsw.blue == MTLTextureSwizzleBlue && tsw.alpha == MTLTextureSwizzleAlpha;
                 if (!tv || (tv.parentTexture && (tv.parentRelativeLevel || tv.parentRelativeSlice)) || tv.pixelFormat != apf || !tsw_id) {
@@ -9259,7 +9354,7 @@ static void clear_tex(const p_clear_tex *c) {
         t = tex_upgrade(c->tex, t, MTLTextureUsageRenderTarget, t.pixelFormat);   // a clear of a texture made without render-target use (packaged): give it that use
     if (c->has_view && c->view.set_format) {   // View with changed format: the clear value is interpreted in the view format (all 5 of the game's calls are the ui version with an integer view), and the clear is done on a view of the same format
         uint32_t vpf = 0; uint8_t swz[4];
-        if (!nvn_fmt_to_mtl(c->view.format, &vpf, swz) || !vpf) { RED_ONCE(42, "texture clear view format %#x has no equivalent", c->view.format); return; }
+        if (!fmt_mtl_dev(c->view.format, &vpf, swz) || !vpf) { RED_ONCE(42, "texture clear view format %#x has no equivalent", c->view.format); return; }
         if (tex_need_pfv(t.pixelFormat, (MTLPixelFormat)vpf) && !(t.usage & MTLTextureUsagePixelFormatView)) t = tex_upgrade_pfv(c->tex, t, (MTLPixelFormat)vpf);
         if (tex_need_pfv(t.pixelFormat, (MTLPixelFormat)vpf)) {
             id<MTLTexture> v = [t newTextureViewWithPixelFormat:(MTLPixelFormat)vpf];
