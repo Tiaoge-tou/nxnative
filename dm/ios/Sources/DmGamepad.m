@@ -726,7 +726,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
                 if (_sLabel[i]) placeLabel(_sLabel[i], c, r * 1.02);
                 else if (_sSym[i]) setPath(_sSym[i], k_skin[i].grp == SK_TOGGLE ? circlePath(c, r * 0.20) : symPath(c, r, k_skin[i].bit == B_PLUS)); }
             _sStick.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d); _sStick.layer.cornerRadius = d / 2;
-            CGFloat kd2 = d * 0.67; _sKnob.bounds = CGRectMake(0, 0, kd2, kd2); _sKnob.layer.cornerRadius = kd2 / 2; _sKnob.center = hc;
+            CGFloat kd2 = d * 0.44; _sKnob.bounds = CGRectMake(0, 0, kd2, kd2); _sKnob.layer.cornerRadius = kd2 / 2; _sKnob.center = hc;   // the Hades glass knob's fraction: a solid disc at the medallion's 0.67 reads far bigger than the art, whose cap sits inside transparent margins
         }
         [CATransaction commit]; [self refresh]; return;
     }
@@ -794,7 +794,11 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         if (!_sSkin) {   // the glass controls: a key's wash lit while it is pressed (the eye's while the skill keys are hidden), the skill discs hidden with the eye off, the knob following the touch
             for (int i = 0; i < SKIN_N; i++) { if (!_sWash[i]) continue;
                 _sWash[i].opacity = (k_skin[i].grp == SK_TOGGLE ? _skillOff : ((_btnBits >> k_skin[i].bit) & 1)) ? 0.35 : 0;
-                if (_sGlass[i]) _sGlass[i].hidden = [self padHidden] || (_skillOff && k_skin[i].grp == SK_SKILL); }
+                BOOL hid = [self padHidden] || (_skillOff && k_skin[i].grp == SK_SKILL);   // the whole key hides, letter and symbol with the disc: the glyph layers live in the overlay, not in the disc view
+                if (_sGlass[i]) _sGlass[i].hidden = hid;
+                if (_sLabel[i]) _sLabel[i].hidden = hid;
+                if (_sSym[i]) _sSym[i].hidden = hid;
+                _sWash[i].hidden = hid; }
             _sKnob.center = CGPointMake(h.x + o.x, h.y + o.y);
             _sStick.hidden = _sKnob.hidden = [self padHidden];
         }
