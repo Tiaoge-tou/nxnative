@@ -62,8 +62,9 @@ class Registry(unittest.TestCase):
                 self.assertRegex(bid, r'^[0-9a-f]{32}$')
                 self.assertEqual(len(names), len(set(names)))
                 for name in names: self.assertRegex(name, r'^[A-Z][A-Z0-9_]*$')
-            self.assertFalse({k for k in vars(m) if k.isupper() and k not in ('CUTS', 'OBS', 'FRAME_STEP', 'CAPABILITIES', 'MATCH_CUTS')} - set(dir(__import__('nso_asm'))),
+            self.assertFalse({k for k in vars(m) if k.isupper() and k not in ('CUTS', 'OBS', 'FRAME_STEP', 'CAPABILITIES', 'MATCH_CUTS', 'GENERALIZE')} - set(dir(__import__('nso_asm'))),
                              f'{p}: a table patch_nso.py does not read')
+            self.assertIsInstance(getattr(m, 'GENERALIZE', ''), str, f'{p}: GENERALIZE is a note (docs/agents/game-patches.md)')
 
     def test_function_match_rules(self):
         from nso_match import validate

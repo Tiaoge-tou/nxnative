@@ -57,6 +57,15 @@
 - **Fix:** a setting's default may be `<ios>|<mac>`, selected before resolving a profile macro or build variable. Metal 4 uses `DM_GAME_PSO_MTL4|1`, the encode thread `1|0`. The generator validates the platform and the pair. Tests cover a profile with Metal 4 on and one with it off, and both platforms; the host and shader chain are unchanged.
 - **Found on:** synthetic metadata generation for [Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md) while reviewing [PR #352](https://github.com/seedds/nxnative/pull/352); checked against the native defaults, without a gameplay run.
 
+## External drives
+
+### A game folder on an exFAT drive reads one update as two, or fails to remove a folder
+
+- **Symptom:** with the NSP folder on an exFAT or FAT drive, the build leaves out an update whose name has no `[v…]` tag (the folder seems to hold two), or a stage stops with `FileNotFoundError` on a `._<name>` path inside `<id>_build/` and the next run fails on the half-deleted folder.
+- **Cause:** these file systems have no extended attributes, so macOS keeps a file's attributes (a download's quarantine flag) in an AppleDouble file `._<name>` beside it, and deletes it with the file. `scan_nsps` took `._Update [<title ID>800].nsp`, 4 KB of metadata, for an update: its name carries the title ID. Deleting `x` takes `._x` with it, so `shutil.rmtree`'s later unlink of the listed `._x` found it gone; before Python 3.13 that error ended the removal.
+- **Fix:** `scripts/build_ipa_from_nsp.py` `scan_nsps` takes a file only when its header is one nx_extract opens (`is_package`: `PFS0` at 0, or an XCI's `HEAD` at 0x100), and says which files it skips. The name tag alone no longer counts, so the same check also rejects any other tagged file that is not a package. Names that start with `._` are skipped without a line. The script's `rmtree` passes ENOENT from `shutil.rmtree` (the entry is gone, which is the goal) and raises every other error. `dm/tools/tests/test_nsp_external_drive.py` and `test_nsp_scan.py` cover both without game files.
+- **Found on:** the NX2Apple fork's users, who keep games on external drives ([PR #476](https://github.com/seedds/nxnative/pull/476), part of [issue #388](https://github.com/seedds/nxnative/issues/388)); reproduced on an exFAT disk image made with `hdiutil create -fs ExFAT`. Applies to every game.
+
 ## Compressed inputs
 
 ### NSZ decompression rejects `--keys`

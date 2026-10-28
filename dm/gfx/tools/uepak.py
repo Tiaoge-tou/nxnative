@@ -106,15 +106,10 @@ def city64(s):
     return _h16((_h16(v[0], w[0]) + (y ^ (y >> 47)) * _K1 + z) & _M, (_h16(v[1], w[1]) + x) & _M)
 
 def nso_image(path):
-    """A decompressed NSO image and its (read-only start, data end)"""
-    import lz4.block
-    d = open(path, 'rb').read()
-    flags = struct.unpack_from('<I', d, 0xc)[0]; segs = [struct.unpack_from('<III', d, 0x10 + i * 0x10) for i in range(3)]; csz = struct.unpack_from('<III', d, 0x60)
-    img = bytearray(segs[2][1] + segs[2][2])
-    for i, (fo, mo, sz) in enumerate(segs):
-        raw = d[fo:fo + csz[i]]
-        img[mo:mo + sz] = lz4.block.decompress(raw, uncompressed_size=sz) if flags >> i & 1 else raw
-    return bytes(img), segs[1][1], segs[2][1] + segs[2][2]
+    """A decompressed NSO image (dm/tools/nso.py) and its (read-only start, data end); nso.Error (a ValueError) on a damaged file"""
+    import nso
+    with open(path, 'rb') as f: m = nso.load(f.read(), path)
+    return bytes(m.image), m.segments[1][0], len(m.image)
 
 class OodleHost:
     """The game's own OodleLZ_Decompress in the Mac host's tool mode (DM_OODLE_SERVE, dm/host/hle_oodle.c: served before the SDK starts, so no boot), called as decode(compressed, raw length).
@@ -511,24 +506,27 @@ def lslg(s):
     return s[4:6].decode('latin1'), s[k:k + nctl], s[c:c + ncode]
 
 if __name__ == '__main__':
-    cmd = sys.argv[1] if len(sys.argv) > 1 else ''
-    if cmd == 'list':
-        img, lo, hi = nso_image(sys.argv[3])
-        with open(sys.argv[2], 'rb') as f: enc = footer(f)[0]
-        p = Pak(sys.argv[2], find_key(img, lo, hi, sys.argv[2]) if enc else None)
-        with open(sys.argv[4], 'w') as f:
-            f.write('path\traw\tstored\tmethod\tencrypted\tblocks\n')
-            for path in sorted(p.files):
-                e = p.entry(path); f.write(f"{path}\t{e['raw']}\t{e['size']}\t{e['method'] or 'none'}\t{e['encrypted']}\t{len(e['blocks'])}\n")
-        used = sorted({p.entry(x)['method'] for x in p.files} - {''})
-        print(f'pak version {p.version}, mount {p.mount}, {len(p.files)} files, compression {used}')
-    elif cmd == 'job':
-        dec = OodleHost(*sys.argv[5:7]) if len(sys.argv) > 6 else None
-        try: listing, n = job(*sys.argv[2:5], decode=dec)
-        finally:
-            if dec: dec.close()
-        for x in listing: print(f"{x['name']}: {x['shaders']} shaders, {x['compressed']} compressed")
-        print(f'{n} records in {os.path.join(sys.argv[4], "oodle.job")}')
-    elif cmd == 'finish':
-        print('decoded:', ', '.join(finish(*sys.argv[2:4])))
-    else: sys.exit(__doc__ or 'usage: uepak.py list | job | finish (see the header)')
+    import nso
+    try:
+        cmd = sys.argv[1] if len(sys.argv) > 1 else ''
+        if cmd == 'list':
+            img, lo, hi = nso_image(sys.argv[3])
+            with open(sys.argv[2], 'rb') as f: enc = footer(f)[0]
+            p = Pak(sys.argv[2], find_key(img, lo, hi, sys.argv[2]) if enc else None)
+            with open(sys.argv[4], 'w') as f:
+                f.write('path\traw\tstored\tmethod\tencrypted\tblocks\n')
+                for path in sorted(p.files):
+                    e = p.entry(path); f.write(f"{path}\t{e['raw']}\t{e['size']}\t{e['method'] or 'none'}\t{e['encrypted']}\t{len(e['blocks'])}\n")
+            used = sorted({p.entry(x)['method'] for x in p.files} - {''})
+            print(f'pak version {p.version}, mount {p.mount}, {len(p.files)} files, compression {used}')
+        elif cmd == 'job':
+            dec = OodleHost(*sys.argv[5:7]) if len(sys.argv) > 6 else None
+            try: listing, n = job(*sys.argv[2:5], decode=dec)
+            finally:
+                if dec: dec.close()
+            for x in listing: print(f"{x['name']}: {x['shaders']} shaders, {x['compressed']} compressed")
+            print(f'{n} records in {os.path.join(sys.argv[4], "oodle.job")}')
+        elif cmd == 'finish':
+            print('decoded:', ', '.join(finish(*sys.argv[2:4])))
+        else: sys.exit(__doc__ or 'usage: uepak.py list | job | finish (see the header)')
+    except nso.Error as e: sys.exit(f'[RED] {e}')   # a damaged main
