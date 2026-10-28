@@ -783,6 +783,13 @@ The Vulkan layer (`dm/gfx/vk/hle_vk.m`) was written for Hades; Super Mario Galax
 - **Open:** the original GPU's value for an unwritten secondary source has not been measured; zero is the host's defined choice for that missing value.
 - **Found on:** [Mario + Rabbids Kingdom Battle](../../dm/games/010067300059A000/README.md).
 
+### A written secondary blend source (NVN dual-source blending)
+
+- **Symptom:** the host aborts on Metal's compiler queue (`findOrCreateComputeFastClearPipeline`, `[AGX] Failed assertion "error == MTLCompilerErrorNoError"`) seconds into the game, with or without the pipeline prebuild, while `MTLCompilerService` crash reports show `EXC_BAD_ACCESS` in `llvm::ExtractElementInst` under `AGCLLVMStatelessFragmentObject::buildBlendFactor` (`AGCLLVMStatelessPSODynamicLibrary::compile`).
+- **Cause:** target 0 blends with a `SRC1` factor and the pixel shader writes outputs 0 and 1. NVN, as Maxwell, takes output 1 as target 0's second source; the translator declares it `[[color(1)]]`, and Metal reads a second source only from `[[color(0), index(1)]]`. With no such output, Metal 4's blend compiler crashes building the pipeline's colour state ([An unwritten secondary blend source](#an-unwritten-secondary-blend-source) left a written output 1 alone).
+- **Fix:** `dmsh_build.py` `fs_dual` gives a pixel shader listed in the profile's `dual_want.tsv` that writes exactly colours 0 and 1 a second entry point, `main0_d`, the same body with output 1 as `[[color(0), index(1)]]` (`entry_d` in its reflection). `pso_desc` takes it for a pipeline whose output-0 target blends with a `SRC1` factor (`pso_reads_src1`); output 1's attachment, if the pass has one, is then left unwritten, as on Maxwell. A shader without the entry point blends with zero for the second source, as an unwritten one, with a red line naming it, and `DM_NVN_DUAL_WANT=<file>` appends every such key to a file for the profile's list. Only listed shaders get the entry point: 5,474 of Arceus's 6,156 pixel shaders write exactly colours 0 and 1, nearly all for a second render target. `t_missing_src1` checks both Metal pipeline paths with the entry point.
+- **Found on:** [Pokémon Legends: Arceus](../../dm/games/01001F5010DFA000/README.md): `f4f36a03b0c6691d` (`system_resource/gfx2/shader/env/system/ha_post_effects.bnsh`, variation 4: RGBA16Float, destination factor `SRC1_ALPHA`) and `ff45da02e225f961`, in the first minute.
+
 ### Dual-source blending from output location 1
 
 - **Symptom:** Metal refuses the pipeline: "Fragment shader does not write to render target color(0), index(1)".

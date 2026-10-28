@@ -56,6 +56,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Reader:** `shader_split.py` scans each archive entry as a file of its own (`bea_members`).
 - **Found on:** [Big Brain Academy: Brain vs. Brain](../../dm/games/0100620012D6E000/README.md) (NintendoWare Bezel Engine 1.56): 2,125 shaders in about 90 s.
 
+### Bezel Engine 2.9 archives keep their entries inline
+
+- **Symptom:** the split finds almost no shaders and reports `[RED] /Archive/<name>.bea: entry 0 @0x4854535341 is not an ASST entry (its shaders are left out)` for every archive (`… file(s) could not be read`); the "offset" is the bytes `ASSTH`.
+- **Cause:** the 1.56 form (version 0x10100 at +8) has at +0x28 the offset of an array of entry offsets; the 2.9 form (version 0x60000) has the entries themselves there, back to back, each 0x48 bytes (its size the u32 at `ASST` +4), with an 8-byte type tag (`_G3DSHA`, `_TEXDATA`, …) at +0x1c and a 16-byte hash before the data and name offsets, which are the last two u64 of an entry in both forms.
+- **Fix:** `bea_members` reads the entries in place when the array starts with `ASST`.
+- **Found on:** [Super Mario Party Jamboree](../../dm/games/0100965017338000/README.md) (Bezel Engine 2.9, 949 archives, 127,203 entries): 25,693 shaders, against 246 (those in `main`) before, most of them in the 13,839 `.fshb` (`_G3DSHA`) entries; the split takes about 10 minutes.
+
 ### BNSH entries of GFPAK archives
 
 - **Symptom:** a provisional split finds only a fraction of the shaders (3,126 of Pokémon Sword's 41,516).
