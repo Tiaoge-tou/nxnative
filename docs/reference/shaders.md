@@ -302,6 +302,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Reader:** `uepak.py` writes them out as version 2 archives, so the split reads them as any other.
 - **Found on:** [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md) (Unreal Engine 5.6.1): 73,496 unique shaders (9,253 vertex, 61,305 pixel, 2,934 compute, 4 geometry).
 
+### IoStore patch containers keep their shader groups in the base container
+
+- **Symptom:** `ValueError: …/Glow-Switch_0_P.utoc: shader group 0 has no chunk` from `uepak.py io_archive` while the NSP script decodes the shaders (`decode_ue_shaders`, after `[4/8] UE shader decode`).
+- **Cause:** an update's IoStore container is a patch: its shader libraries have the base game's chunk IDs (so they replace their tables), and an unchanged shader group is listed with the base container's chunk ID. `io_archive` looked every group up in the container the library chunk came from.
+- **Fix:** `uepak.py` reads every `.utoc` under the RomFS (`io_tocs`, in mount order: the base game's containers, then `_P` patches and numbered `_0_P`, `_1_P`, … patches, `mount_order`, case-insensitive `_P` marker) and resolves a group's chunk ID in any of them; a library chunk ID two containers share is taken from the later (patch) one, whose tables are the current set. TOC metadata is read without a key; `Toc.read` refuses encrypted data without a key only when the selected library or group needs it, so an encrypted group-only container is refused and a fully superseded encrypted library is never read.
+- **Found on:** LEGO Horizon Adventures (update v262144, Unreal Engine 5; provisional profile): the update's `Glow/Content/Paks/Glow-Switch_0_P.utoc` over the base's `Glow-Switch.utoc`; 20,889 shaders in its two libraries, 20,880 unique after the split.
+
 ### Unreal Engine 4.18 shaders inline in cooked packages
 
 - **How it is stored:** legacy version 4 paks with LZ5-compressed blocks ([01](../agents/01-extract.md)) and no shader code archive. Each material's shader map is serialized in its `.uexp` (38 to 87 shaders in the ones looked at) and the engine's global shaders in `Engine/GlobalShaderCache-GLSL_SWITCH.bin` (945: 597 pixel, 104 vertex, 241 compute, 3 geometry). Each shader's code is a byte array (`i32` length, then the bytes) holding one zlib stream that inflates to the same `LSLG` record as Unreal Engine 5's.
