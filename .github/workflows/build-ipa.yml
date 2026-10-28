@@ -48,6 +48,11 @@ on:
         type: boolean
         required: false
         default: false
+      romfs_img:
+        description: "Also upload the extracted RomFS.img as an artifact (the one-time datapack import for a separate-RomFS build; several GB)"
+        type: boolean
+        required: false
+        default: false
       source:
         description: "Where the game files come from: drive = the zip at NSP_ZIP_URL; quark = pull the .nsp/.nsz files straight from your Quark drive (needs the QUARK_COOKIE secret); hf = the zip named by hf_file from the Hugging Face dataset repo (needs the HF_TOKEN secret)"
         type: choice
@@ -378,7 +383,7 @@ jobs:
           DM_GAME="$GAME_ID" python3 dm/gfx/tools/dmsh_chain.py --header
           mkdir -p "$GITHUB_WORKSPACE/out"
           ARGS=("$GAME_DIR" -k "$RUNNER_TEMP/prod.keys" -o "$GITHUB_WORKSPACE/out/game.ipa"
-                -l "$LANGCODE" --no-keep-extracted --progress lines)
+                -l "$LANGCODE" --romfs separate --progress lines)
           [ -n "$PKG" ] && ARGS+=(-p "$PKG")
           [ -n "$APPNAME" ] && ARGS+=(--app-name "$APPNAME")
           # Skin build: bake the env switches into the bundle's dm/env.txt (main.m
@@ -422,6 +427,23 @@ jobs:
           path: |
             out-slim/game-slim.ipa
             out-slim/game-slim.ipa.sha256
+          retention-days: 7
+
+      - name: Upload the extracted RomFS image (one-time datapack import)
+        if: ${{ success() && inputs.romfs_img }}
+        run: |
+          IMG=$(find "$RUNNER_TEMP/game" -name RomFS.img -type f | head -1)
+          [ -n "$IMG" ] || { echo "::error::romfs_img was requested but no RomFS.img was extracted"; exit 1; }
+          mkdir -p "$GITHUB_WORKSPACE/out-img"
+          cp "$IMG" "$GITHUB_WORKSPACE/out-img/RomFS.img"
+          ls -lh "$GITHUB_WORKSPACE/out-img"
+
+      - name: Upload RomFS image artifact
+        if: ${{ success() && inputs.romfs_img }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nxnative-romfs-img
+          path: out-img/RomFS.img
           retention-days: 7
 
       - name: Split the full IPA for download
