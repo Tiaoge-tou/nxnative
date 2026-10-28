@@ -378,6 +378,14 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Found on:** [The Legend of Zelda: Breath of the Wild — upscaling and measurements](../../dm/games/01007EF00011E000/README.md#upscaling-current).
 - **Limit:** the scaler takes the presented frame, including any filtering and HUD drawing the game already performed. Feeding it an earlier scene target would mean replacing a draw of the game's own, and nothing general identifies which draw is a plain upscale. Scaler support is checked at runtime; unsupported devices, sizes and formats use standard scaling.
 
+### The NVN present crops by the vi layer crop
+
+- **Symptom:** in handheld mode the picture fills only two thirds of the screen's width and height, in the bottom-left corner (the top-left with the upper-left origin), the rest black.
+- **Cause:** the game keeps its 1920x1080 window textures in handheld mode, draws 1280x720 into them and crops through `vi::SetLayerCrop`, never `nvnWindowSetCrop`. The host recorded the layer crop (`hle_vi.c`) only for the Vulkan present ([Swapchain pre-transform and layer crop](#swapchain-pre-transform-and-layer-crop)); the NVN present read only the window's crop and showed the whole texture.
+- **Fix:** the NVN present shows the window's own crop when the game set one, else the vi layer crop (`present_crop` in `hle_nvn.c`); on the Switch both become the crop of the buffer queued to the layer. A layer crop that does not fit the window texture is reported once in red and the whole texture is shown, as before.
+- **Check:** `t_present_crop`: the window's crop wins, the layer crop is used without one, one larger than the texture is ignored, and a real `nvnQueuePresentTexture` queues the layer crop (that check fails with the old call). On an iPhone 15 Pro in handheld mode Link's Awakening's picture fills the screen's height.
+- **Found on:** [The Legend of Zelda: Link's Awakening](../../dm/games/01006BB00C6F0000/README.md#rendering) (1.1.0, handheld mode on the iPhone).
+
 ## Blend, depth and stencil
 
 ### No writes to colour outputs the shader does not write
@@ -699,6 +707,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Cause:** reporting waited for a submission in an unselected frame. Every frame is selected at interval 1, so that condition never holds.
 - **Fix:** before the next frame's first encoder, `gp_periodic_finish` snapshots the sampled frame's labels and registers a shared-event notification at its last committed fence. The report resolves the heap after all of that frame's segments complete, without a GPU wait or an extra command buffer. The heap cannot be reused while the report is pending.
 - **Found on:** review of the measurement tools for [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md); reproduced with synthetic counters and completion events, without game execution. `t_gpuprof` checks consecutive and sparse frame selection, completion ordering and heap ownership; it runs in CPU CI.
+
+### GPU profiles stamp only the encoder they began
+
+- **Symptom:** with `DM_NVN_GPUPROF`, the host aborts minutes in on `-[AGXG16XFamilyComputeContext_mtlnext writeTimestampWithGranularity:afterStage:intoHeap:atIndex:]: unrecognized selector`, `up_flush` on the stack; or a profiled render pass with a wrong GPU time.
+- **Cause:** every encoder end goes through `m4_end`, which called `gp_end` for any encoder, including the upload, diagnostics and present encoders, which are not profiled. `gp_end` closed whichever main-command-buffer encoder `gp_begin` had last opened and sent its end stamp to the encoder it was given. An upload flush inside a profiled draw pass sent the render encoder's timestamp selector to the upload compute encoder (the abort); where the kinds matched, the pass lost its own end stamp.
+- **Fix:** `gp_begin` records the encoder it stamped, and `gp_end` ignores any other encoder, so the open pass keeps its label until its own end.
+- **Found on:** [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md) with `DM_NVN_GPUPROF=every:300` on the Mac (issue #531; one run in four, about frame 23,000). `t_gpuprof` ends an upload encoder inside a profiled pass; it runs in CPU CI. Not rerun in the game.
 
 ## Conditional rendering and queries
 

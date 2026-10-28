@@ -10,6 +10,7 @@ module_t *module_of(const void *p) { (void)p; return NULL; }   // no guest modul
 module_t *g_mod; int g_nmod;                            // host symbols that crash.c depends on
 void svc_thread_dump(void) {}
 int dm_guest_as_contains(uintptr_t address) { (void)address; return 0; } // Tests use host-thread stacks.
+void dm_vi_layer_crop(int c[4]) { c[0] = c[1] = c[2] = c[3] = 0; }   // no vi layer crop in unit tests (hle_vi.c)
 void crash_install(void);
 void nvn_present_config(int hz, int display_mode);
 #include <fcntl.h>

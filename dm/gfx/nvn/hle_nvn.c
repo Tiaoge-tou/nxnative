@@ -1795,6 +1795,20 @@ static void fstep_tick(const win_t *o, int c) {
         t0 = t; v0 = vs; memset(held, 0, sizeof held);
     }
 }
+// The crop a present shows: the window's own (nvnWindowSetCrop), else the vi layer's (vi::SetLayerCrop, hle_vi.c); on the Switch both become the crop of the buffer queued to the layer.
+// Link's Awakening crops only its layer: in handheld mode it draws 1280x720 into its 1920x1080 window textures and crops the layer to that. A layer crop that does not fit the
+// texture is reported once and the whole texture shown, as before the layer crop was read here. lc receives the layer crop
+void dm_vi_layer_crop(int c[4]);   // hle_vi.c: x, y, w, h the game last cropped its layer to (all 0 = none)
+static const int *present_crop(const int win[4], int tw, int th, int lc[4]) {
+    if (win[2] || win[3]) return win;   // the window's own crop (present_crop_rect checks it)
+    dm_vi_layer_crop(lc);
+    if (!lc[2] || !lc[3]) return win;   // no layer crop either: the whole texture
+    if (lc[0] + lc[2] > tw || lc[1] + lc[3] > th) {
+        static int once; if (!once++) LOG("[RED] vi layer crop %d,%d %dx%d does not fit the window texture %dx%d: the present shows the whole texture", lc[0], lc[1], lc[2], lc[3], tw, th);
+        return win;
+    }
+    return lc;
+}
 NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     (void)q; win_t *o = (win_t *)w; o->presents++;
     dm_fps_lock_tick();
@@ -1822,7 +1836,10 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     }
     gfx_enter();
     uint64_t t0 = now_ns();
-    if (idx >= 0 && idx < o->ntex && idx < 4) o->ticket[idx] = mtl_present(CTX(o->tex[idx]), present_period(o) / 1e9, o->crop);   // enqueue only, return immediately
+    if (idx >= 0 && idx < o->ntex && idx < 4) {   // enqueue only, return immediately
+        const tex_t *t = CTX(o->tex[idx]); int lc[4];
+        o->ticket[idx] = mtl_present(t, present_period(o) / 1e9, present_crop(o->crop, (int)t->d.width, (int)t->d.height, lc));
+    }
     gfx_leave();
     atomic_fetch_add(&g_nvn_ns, now_ns() - t0);
     uint64_t f = g_frame, ps, dr; mtl_stats(&ps, &dr);

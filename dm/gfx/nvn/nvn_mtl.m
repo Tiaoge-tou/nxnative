@@ -809,6 +809,7 @@ uint64_t mtl_cut_count(void);
 enum { GP_MAX = 4096 };   // the largest timestamp heap Metal makes
 typedef struct { char kind; uint16_t w, h; uint8_t nc, depth, loads; uint32_t draws, seg; uint64_t pass; uint32_t ld_kb, st_kb; uint16_t cfmt, dfmt; } gp_lab;   // seg: the command buffer (segment) of the submission it is in
 static id<MTL4CounterHeap> g_gp_heap; static gp_lab g_gp_lab[GP_MAX / 2]; static int g_gp_n, g_gp_state, g_gp_cur = -1; static long g_gp_f0 = -2, g_gp_f1, g_gp_every; static uint64_t g_gp_frame;
+static const void *g_gp_e;   // the encoder g_gp_cur belongs to: m4_end also ends the upload / diagnostics / present encoders, which may end while a profiled pass is open (#531)
 static _Atomic int g_gp_busy;   // a periodic profile's report has not been printed yet: the heap is still being read
 static uint64_t g_bw_load, g_bw_store, g_gp_bw_l0, g_gp_bw_s0;   // the bandwidth ledger (defined with the pass statistics below) and its values at the last render pass end
 static uint64_t g_stat_pass, g_stat_draw; static _Atomic uint64_t g_cur_frame; static uint32_t g_seg; static uint32_t g_gp_copies, g_gp_disp, g_gp_ubd;   // copies / dispatches encoded (for the compute encoders' labels)
@@ -845,14 +846,14 @@ static void gp_begin(id e, char kind, MTL4RenderPassDescriptor *d) {   // right 
         MTLRenderPassDepthAttachmentDescriptor *z = d.depthAttachment;
         if (z.texture || d.stencilAttachment.texture) l.dfmt = (uint16_t)(z.texture ? z.texture : d.stencilAttachment.texture).pixelFormat;
         if (z.texture) { l.depth = 1; l.w = (uint16_t)MAX(z.texture.width >> z.level, 1); l.h = (uint16_t)MAX(z.texture.height >> z.level, 1); l.loads += z.loadAction == MTLLoadActionLoad; } }
-    g_gp_lab[g_gp_n] = l; g_gp_cur = g_gp_n;
+    g_gp_lab[g_gp_n] = l; g_gp_cur = g_gp_n; g_gp_e = (__bridge const void *)e;
     if (kind == 'R') [(id<MTL4RenderCommandEncoder>)e writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed afterStage:MTLRenderStageVertex intoHeap:g_gp_heap atIndex:2 * g_gp_n];
     else [(id<MTL4ComputeCommandEncoder>)e writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed intoHeap:g_gp_heap atIndex:2 * g_gp_n];
     g_gp_n++;
 }
 static void gp_end(id e) {   // right before that encoder ends
-    if (g_gp_cur < 0) return;
-    int k = g_gp_cur; g_gp_cur = -1;
+    if (g_gp_cur < 0 || (__bridge const void *)e != g_gp_e) return;   // another queue's encoder: the open pass keeps its label and gets its end stamp from its own end
+    int k = g_gp_cur; g_gp_cur = -1; g_gp_e = NULL;
     if (g_gp_lab[k].kind == 'R') { g_gp_lab[k].ld_kb = (uint32_t)((g_bw_load - g_gp_bw_l0) >> 10); g_gp_lab[k].st_kb = (uint32_t)((g_bw_store - g_gp_bw_s0) >> 10); }   // since the previous pass end (rp_end); sd_finish has set the stores
     if (g_gp_lab[k].kind == 'R') g_gp_lab[k].draws = (uint32_t)g_stat_draw - g_gp_lab[k].draws; else { g_gp_lab[k].draws = g_gp_copies - g_gp_lab[k].draws; g_gp_lab[k].w = (uint16_t)(g_gp_disp - g_gp_lab[k].w); g_gp_lab[k].h = (uint16_t)(g_gp_ubd - g_gp_lab[k].h); }
     if (g_gp_lab[k].kind == 'R') [(id<MTL4RenderCommandEncoder>)e writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed afterStage:MTLRenderStageFragment intoHeap:g_gp_heap atIndex:2 * k + 1];
