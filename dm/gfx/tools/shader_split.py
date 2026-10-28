@@ -53,6 +53,7 @@ import collections, concurrent.futures as cf, hashlib, json, os, re, struct, sub
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../tools'))
 from romfs import os, open, is_image
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../games')); import game as _game
+from profile_guess import glsl_sources
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import uepak
 GAME = _game.load()   # the current game profile (DM_GAME, required): source group rules and the table header note
 GROUPS, NOTE = GAME.pairs('shader_groups'), GAME.get('shader_note')
@@ -255,20 +256,52 @@ def glslc_shaders(d, label, need=True, skip=()):
     if not out and need: red(f'{label}: no GLSLC output')
     return out
 
-SNOWDROP_RECORD = bytes.fromhex('c600cdab')
-def snowdrop_shaders(d, label):
-    """Snowdrop's BERG data slices (SDF version 22): compressed shader records have a 20-byte header {0xabcd00c6, flags, 0, raw length, stored length}, then one zstd frame.
+SNOWDROP_RECORD = rb'[\xc5\xc6]\x00\xcd\xab'
+def snowdrop_wrapped(d, label):
+    """Shader cache records can themselves be SDF zstd chunks. Peek at the decoded header of each frame, and finish only frames starting with a cache record, not other assets.
+    Incremental input keeps false frame magics and a large enclosing slice from causing an unbounded copy of all trailing bytes."""
+    zstd = zstd_mod()
+    for m in re.finditer(re.escape(ZSTD_MAGIC), d):
+        h = pos = m.start(); dec = zstd.ZstdDecompressor(); head = b''
+        try:
+            while len(head) < 20 and not dec.eof:
+                chunk = d[pos:pos + 0x20000] if dec.needs_input else b''
+                if dec.needs_input and not chunk: break
+                pos += len(chunk); head += dec.decompress(chunk, 20 - len(head))
+        except zstd.ZstdError: continue   # a magic inside another compressed asset
+        if len(head) != 20 or not re.match(SNOWDROP_RECORD, head): continue
+        parts = [head]
+        try:
+            while not dec.eof:
+                chunk = d[pos:pos + 0x20000] if dec.needs_input else b''
+                if dec.needs_input and not chunk: red(f'{label} Snowdrop chunk @{h:#x}: truncated frame')
+                pos += len(chunk); parts.append(dec.decompress(chunk))
+        except zstd.ZstdError as e: red(f'{label} Snowdrop chunk @{h:#x}: {e}')
+        yield h, pos - len(dec.unused_data), b''.join(parts)
+
+
+def snowdrop_shaders(d, label, wrapped=True):
+    """Snowdrop's BERG data slices (SDF version 22): compressed shader records have a 20-byte header {0xabcd00c5 / 0xabcd00c6, flags, 0, raw length, stored length}, then zlib / zstd data.
+    Kingdom Battle uses c5 with zlib (0x838-byte controls, including headerless compute), sometimes inside another zstd chunk; Sparks of Hope uses c6 with zstd. Their shader section layout is the same.
     The shader object inside keeps each control section immediately before its code area; its own +0x20 and +0x704 give their lengths. Both sections are byte-packed, without alignment.
     Sparks of Hope's base shader slice has 17,931 records with 18,016 stages (85 hold a second stage), and its update slice adds 443 records. Other assets use bare zstd frames or
-    uncompressed data without this header. A census of all 324,413 valid frames in every slice found no further shaders. Shader programs hold one stage; pairs are selected at draw time.
-    Scan by the record header rather than slice names or every possible zstd magic: compressed bytes can contain a coincidental frame header, which is not another asset."""
-    out = []
-    for m in re.finditer(re.escape(SNOWDROP_RECORD), d):
+    uncompressed data without this header. Some cache records are wrapped in zstd chunks; only decoded frames starting with the cache header are shader assets. Shader programs hold one stage; pairs are selected at draw time.
+    Scan by the record header and peek at decoded chunk headers, not by slice names: compressed bytes can contain a coincidental frame header, which is not another asset."""
+    chunks = list(snowdrop_wrapped(d, label)) if wrapped else []
+    out = []; ci = 0
+    for m in re.finditer(SNOWDROP_RECORD, d):
         h = m.start()
-        if h + 24 > len(d) or d[h + 20:h + 24] != ZSTD_MAGIC: continue
+        while ci < len(chunks) and h >= chunks[ci][1]: ci += 1
+        if ci < len(chunks) and h >= chunks[ci][0]: continue   # literal bytes inside a zstd block are not a separately stored record
+        if h + 24 > len(d): continue
+        zstd = d[h] == 0xc6
+        if zstd:
+            if d[h + 20:h + 24] != ZSTD_MAGIC: continue
+        elif d[h + 20] & 0xf != 8 or int.from_bytes(d[h + 20:h + 22], 'big') % 31: continue
         nraw, nstored = struct.unpack_from('<II', d, h + 12)
         if not nstored or h + 20 + nstored > len(d): red(f'{label} Snowdrop record @{h:#x}: stored bytes out of bounds')
-        raw = zstd_mod().decompress(d[h + 20:h + 20 + nstored])
+        stored = d[h + 20:h + 20 + nstored]
+        raw = zstd_mod().decompress(stored) if zstd else zlib.decompress(stored)
         if len(raw) != nraw: red(f'{label} Snowdrop record @{h:#x}: expected {nraw} raw bytes, got {len(raw)}')
         for cm in re.finditer(re.escape(CTL_MAGIC), raw):
             c = cm.start()
@@ -278,6 +311,8 @@ def snowdrop_shaders(d, label):
             ctl, code = raw[c:c + nc], raw[c + nc:c + nc + nk]
             st = glslc_stage(ctl, code)
             if st and not check(label, st, ctl, code): out.append((f'{label}#SNOWDROP@{h:#x}:{c:#x}', st, ctl, code))
+    for h, _, raw in chunks:
+        out += snowdrop_shaders(raw, f'{label}#SDFZSTD@{h:#x}', wrapped=False)
     return out
 
 NEEDLE = b'HNSHV002'
@@ -2234,7 +2269,7 @@ def main():
         # calls glslcCompile in a module it loads (Fire Emblem: Three Houses; profile_guess.py shader_sources). Captain Toad: Treasure Tracker imports it with agl's GLSL sources, but no module defines it
         cap = os.environ.get('DM_GLSLC_CAPTURE') or os.path.join(os.path.dirname(os.path.abspath(romfs)), 'glslc_capture')
         names = sorted(f for f in os.listdir(cap) if f.endswith('.glslc')) if os.path.isdir(cap) else []
-        if not names and img.count(b'#version ') and 'glslcCompile' in main_imports(img) and glslc_module(os.path.dirname(os.path.abspath(mainnso))):
+        if not names and glsl_sources(img) and 'glslcCompile' in main_imports(img) and glslc_module(os.path.dirname(os.path.abspath(mainnso))):
             print(f'[RED] main holds GLSL sources and imports glslcCompile, but there are no captured GLSLC outputs in {cap}: the shaders the game compiles at run time will have no translation', flush=True)
         for nm in names: found += glslc_shaders(open(os.path.join(cap, nm), 'rb').read(), f'/glslc_capture/{nm}')
         # Unreal Engine shader code archives decoded on the Mac (uepak.py): <version dir>/ue_shaders, or DM_UE_SHADERS; needed when the RomFS has Unreal paks
