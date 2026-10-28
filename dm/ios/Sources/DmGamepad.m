@@ -301,7 +301,7 @@ static __weak DmGamepad *g_view;
     CAShapeLayer *_sSym[SKIN_N];                   // drawn glyphs: the - / + bars and the eye's pupil dot (text glyphs ride high, and an eye has no letter)
     UIView *_sStick, *_sKnob;                      // the glass stick disc and its knob
     BOOL _skillOff;                                // the skill keys (grp SK_SKILL) are hidden by the eye key
-    CALayer *_skipKey, *_padKey;   // the cutscene keys (skin mode): the skin's Skip medallion at the Bind key's place, its Pad medallion at the eye key's place
+    CALayer *_skipKey, *_padKey;   // the cutscene keys: the skin's Skip medallion at the Bind key's place, its Pad medallion at the eye key's place (drawn in every skin mode, glass included)
     int _padMode; BOOL _padPeek;                   // the host's pad mode (hle_hid.c dm_pad_mode) and the player's recall of the pad for the rest of the mode
     NSTimer *_padTimer;                            // polls the pad mode while the skin is up
     BOOL _hades;                                   // DM_PAD_HADES: the glass controls below replace the drawn ones
@@ -646,14 +646,16 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 // ---- Pad mode (skin mode): the host watches the game's state (hle_hid.c dm_pad_mode) and the pad hides while a cutscene or a load runs ----
 // Mode 1 (a load) hides the pad outright; modes 2 and 3 (a cutscene) show the Pad recall key at the eye key's place, and mode 3 (the
 // cutscene can be skipped) the Skip key at the Bind key's place. Recalling brings the whole pad back for the rest of the mode. While the
-// pad is hidden every other touch goes to the game's own touch screen, as touches outside the controls always do
+// pad is hidden every other touch goes to the game's own touch screen, as touches outside the controls always do. The two cutscene keys
+// are the skin's drawn medallions whatever the skin choice is (the glass choice too): their art loads through skinImage like any skin
+// key's, and the glass controls at their places stay hidden with the rest of the glass pad while they show
 - (BOOL)padHidden { return _padMode > 0 && !_padPeek; }
 - (void)applyPadMode {
     BOOL hide = [self padHidden];
     _skinDisc.hidden = hide || !_sSkinMode; _skinKnob.hidden = hide || !_sSkinMode;
     for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = hide || !_sSkinMode || (_skillOff && k_skin[i].grp == SK_SKILL);
-    _skipKey.hidden = !(_padMode == 3 && !_padPeek) || !_sSkinMode;
-    _padKey.hidden = !(_padMode >= 2 && !_padPeek) || !_sSkinMode;
+    _skipKey.hidden = !(_padMode == 3 && !_padPeek);   // the cutscene keys are drawn medallions in every skin mode, the glass choice included: the glass pad yields their places (its box hides below, each glass key in refresh, both with padHidden)
+    _padKey.hidden = !(_padMode >= 2 && !_padPeek);
     if (_sGlassBox) _sGlassBox.hidden = hide || _sSkinMode >= 1;
     [self refresh];
 }
