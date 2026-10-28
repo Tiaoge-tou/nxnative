@@ -118,6 +118,11 @@ def header(g):
     spv = g.words('serve_patch', '')   # byte slots in a game file the file layer serves mode-dependently (hle_fs.c): "[n:|w:]<file>@<off>:<docked float bits>><handheld float bits>[@...]" per file (n: = narrow screens only, w: = wide only; a slot may name a stock pattern first, "<stock>><docked>><handheld>", and a * on the docked value marks it computed from the render width), hex; none by default
     for w in spv:
         if not re.fullmatch(r'(n:|w:)?[^@\s:]+(@[0-9a-fA-F]+:(\*?[0-9a-fA-F]{8}>){1,2}\*?[0-9a-fA-F]{8})+', w): sys.exit(f'{g.id}: serve_patch takes "[n:|w:]<file>@<off>:<docked>><handheld>" groups of hex offsets and float bits (a slot may name a stock pattern first and mark its docked value * for computed): {w}')
+    sks = g.get('shader_key_skip', '')   # control-section bytes the shader keys hash as zeros, <offset>+<length> (hle_nvn.c keys_hash, shader_split.py key_ctl; Batman: Arkham Knight: GLSLC's compile information, 0x770+0x78)
+    m = re.fullmatch(r'(0x[0-9a-fA-F]+|\d+)\+(0x[0-9a-fA-F]+|\d+)', sks) if sks else None
+    if sks and (not m or not 0x30 <= int(m[1], 0) or not 0 < int(m[2], 0) or int(m[1], 0) + int(m[2], 0) > 0x880 or (int(m[1], 0) < 0x760 and int(m[1], 0) + int(m[2], 0) > 0x700)):   # not over +0x700..+0x75f, the code area and compute fields the tools read
+        sys.exit(f'{g.id}: shader_key_skip takes <offset>+<length> within the first 0x880 bytes of the control section, past its header (+0x30) and clear of +0x700..+0x75f: {sks}')
+    sko, skl = (int(m[1], 0), int(m[2], 0)) if m else (0, 0)
     rcd = g.get('render_cond', 'off')   # NVN conditional rendering evaluated at replay, timestamp reports with counter 0 (nvn_mtl.m OP_RENDER_COND): on / off
     if rcd not in ('on', 'off'): sys.exit(f'{g.id}: render_cond must be on or off: {rcd}')
     dwd = g.get('display_wide', 'off')   # nn::oe's default display resolution reported wide while fullscreen is on (hle_oe.c h_oe_DefRes): the game renders the phone's aspect itself instead of a stretched 1920x1080: on / off
@@ -180,6 +185,7 @@ def header(g):
          f'#define DM_GAME_FEEDBACK_SNAP {q(" ".join(fbs))}',
          f'#define DM_GAME_SERVE_PATCH {q(" ".join(spv))}',
          f'#define DM_GAME_TEX_FLUSH_UPLOAD {int(tfu == "on")}',
+         f'#define DM_GAME_SHADER_KEY_SKIP_OFF {sko:#x}', f'#define DM_GAME_SHADER_KEY_SKIP_LEN {skl:#x}',
          f'#define DM_GAME_RENDER_COND {int(rcd == "on")}',
          f'#define DM_GAME_DISPLAY_WIDE {int(dwd == "on")}',
          f'#define DM_GAME_PAD_SKIN_TOGGLE {int(pst == "on")}',
