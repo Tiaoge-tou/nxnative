@@ -77,6 +77,8 @@ Game-specific findings. The general host changes they led to are listed under [F
 
 General host changes first needed here; each applies to every game:
 
+- **Display link at frame latency 2 in fullscreen (#347, a workaround; why the system misses at 16 ms is open):** [Frame latency 2 for the display link in fullscreen](../../../docs/reference/frame-rate.md#frame-latency-2-for-the-display-link-in-fullscreen). Measured from the issue #70 save on an M4 Pro's built-in ProMotion screen: a window held 60; fullscreen at latency 1 stepped to 20 fps on cheap frames in one run of three.
+
 - **RomFS folder transfer and startup deletion failures:** [RomFS images](../../../docs/reference/packing.md#romfs-folder-transfers-fail-or-leave-stale-game-files).
 
 - **Resolved in the host (#531): `DM_NVN_GPUPROF` abort when an upload flush lands in a profiled draw pass:** [GPU profiles stamp only the encoder they began](../../../docs/reference/rendering.md#gpu-profiles-stamp-only-the-encoder-they-began). Covered by `t_gpuprof`; not rerun in the game.
