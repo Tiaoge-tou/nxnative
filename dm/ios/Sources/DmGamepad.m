@@ -871,13 +871,15 @@ static void read_pad(GCExtendedGamepad *g) {
     pthread_mutex_unlock(&g_mu);
     publish();
 }
+// Home and Capture: without this iOS takes them as system gestures (Home opens the Games overlay, Capture a screenshot); the app gives them no function
+static void pad_keep_system_buttons(GCController *c) { for (NSString *b in @[GCInputButtonHome, GCInputButtonShare]) c.physicalInputProfile.buttons[b].preferredSystemGestureState = GCSystemGestureStateDisabled; }
 - (void)padsChanged:(NSNotification *)note {
     GCController *gone = [note.name isEqual:GCControllerDidDisconnectNotification] ? note.object : nil;
     if (gone) { gone.extendedGamepad.valueChangedHandler = nil; dm_motion_detach(gone, 0); }
     BOOL any = NO; int motion = 0;
     for (GCController *c in GCController.controllers) if (c != gone && c.extendedGamepad) {
         if (c.motion.hasRotationRate) motion = 1;
-        any = YES; c.extendedGamepad.valueChangedHandler = ^(GCExtendedGamepad *g, GCControllerElement *el) { (void)el; read_pad(g); };
+        any = YES; pad_keep_system_buttons(c); c.extendedGamepad.valueChangedHandler = ^(GCExtendedGamepad *g, GCControllerElement *el) { (void)el; read_pad(g); };
         dm_motion_attach(c, 0);   // all controllers are player 1 on iOS
         read_pad(c.extendedGamepad);
     }
