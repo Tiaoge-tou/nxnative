@@ -10,6 +10,7 @@ Base game v0 (the NACP's display version is 0.0.126424), SDK 19.3.9. Supergiant 
 | 4 GB layout: `mem_reserve 0x100000000`, `mem_alias 0x10000000`, `mem_stack 0x10000000`, `app_pool 0xCD500000` | `game.tsv` | no system resource; the 3.25 GB heap region holds the 3.10 GB heap the game asks for |
 | `pad_layout full` | `game.tsv` | the 3D gamepad layout: the right stick aims (the weapons with `ManualAiming` in `Game/Weapons/PlayerWeapons.sjson`) |
 | `shader_groups /Shaders/=shaders` | `game.tsv` | the shader split's group for `Shaders/NVN/bin` |
+| `romfs_patch romfs_patch.tsv` | `game.tsv` | the wide-screen Lua fix baked into the RomFS image at build time; see [Files and shaders](#files-and-shaders) |
 
 ## Memory
 
@@ -31,6 +32,7 @@ Base game v0 (the NACP's display version is 0.0.126424), SDK 19.3.9. Supergiant 
 
 - 88 BNSH files in `Shaders/NVN/bin` (`.vert` / `.frag`; the `.shader` files list each program's pair).
 - `romfs_marker` is `Audio/Switch/Music.bank`.
+- **The wide-screen Lua fix is baked into the RomFS at build time** (`romfs_patch`, applied by the NSP script after extraction, before the image's identity is taken): `Scripts/RunLogic.lua`'s `UpdateConfigOptionCache` reads its X/Y config options as 1920x1080 whatever the host reports, so its two lookups are replaced by the literals 2344 / 1080, and `Scripts/HUDData.lua` / `Scripts/TraitTrayData.lua`'s absolute anchors move 40 out so the HUD sits at the wide frame's edges (the bleed plates under `ResourceBacking` keep their stock offsets). Before this, the same three patched files had to be placed in the player's `Documents/romfs` folder by hand after every datapack extraction; baked in, the patched `RomFS.img` is the datapack, and a separate-RomFS build's `romfs.id` names it, so later IPA-only builds keep accepting the one image the player already imported.
 
 ## Mac routes
 

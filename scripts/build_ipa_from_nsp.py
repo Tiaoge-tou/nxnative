@@ -2200,6 +2200,11 @@ def main(args=None):
         say(f'derived game profile for {pkg_ver} ({disp}): {g.dir}')
     sv = versions if derived else need   # the versions whose files the shaders come from
     game = dirs[pkg_ver]
+    rp = g.get('romfs_patch', '')   # exact line replacements baked into the packed version's RomFS (dm/tools/romfs_patch.py): after extraction, before anything reads the files or the image's identity is taken, so a separate-RomFS build's romfs.id names the patched image and every later build stamps the same identity for the image the player already holds
+    if rp:
+        PROG.stage('romfs patch')
+        run([py, repo / 'dm/tools/romfs_patch.py', g.table(rp), rfs.source(game)], logs / 'romfs_patch.log')
+        PROG.end(f'{rp} applied to {rfs.source(game)}')
     # how the shaders are got follows from the packed version's files (profile_guess.py shader_sources): the graphics API, and the shaders made only at run time
     src = pg.build_sources(game / 'ExeFS', rfs.source(game), g.words('modules'))
     gfx = src['graphics'][0]   # nvn, vulkan (Hades: the host's Vulkan layer, SPIR-V shaders) or gl (Digimon Story Cyber Sleuth: the host's GL layer, GLSL sources)

@@ -23,6 +23,9 @@ shader_versions	v0
 # ---- Files ----
 modules	main sdk
 romfs_marker	Audio/Switch/Music.bank
+# Exact line replacements baked into the RomFS image at build time (the wide-screen Lua fix in romfs_patch.tsv:
+# RunLogic's X/Y lookups become the phone's 2344x1080 literals, the HUD's absolute anchors move 40 out)
+romfs_patch	romfs_patch.tsv
 zip_store	.bank:.bik:.fsb:.gpk:.nro:.pkg:.xnb:.metallib
 
 # ---- Graphics ----

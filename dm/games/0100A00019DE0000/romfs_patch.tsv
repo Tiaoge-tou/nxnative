@@ -1,0 +1,38 @@
+# Exact line replacements the build bakes into this game's RomFS image (dm/tools/romfs_patch.py, applied by the
+# NSP script after extraction, before the image's identity is taken): <path>	<stock line>	<replacement line>	<count>,
+# the lines stripped of their indentation (the replacement keeps each line's own). The counts are of the stock
+# file; a mismatch stops the build, so another version's files are never patched by this table.
+# RunLogic.lua: the wide-screen fix -- UpdateConfigOptionCache's X/Y config options still read 1920x1080, so the
+# two lookups are replaced by the literals of the phone's render size (2344x1080).
+# HUDData.lua / TraitTrayData.lua: the HUD margin fix -- the absolute anchors move 40 out, so the wide frame's
+# HUD sits at its edges (the bleed plates under ResourceBacking keep their stock offsets and are not listed).
+Scripts/RunLogic.lua	local actualHeight = GetConfigOptionValue({ Name = "Y" })	local actualHeight = 1080	1
+Scripts/RunLogic.lua	local actualWidth = GetConfigOptionValue({ Name = "X" })	local actualWidth = 2344	1
+Scripts/HUDData.lua	ActiveTraitBottomOffset = 155,	ActiveTraitBottomOffset = 195,	1
+Scripts/HUDData.lua	AmmoBottomOffset = 84,	AmmoBottomOffset = 124,	1
+Scripts/HUDData.lua	AmmoX = 643,	AmmoX = 683,	1
+Scripts/HUDData.lua	BottomOffset = 120,	BottomOffset = 160,	1
+Scripts/HUDData.lua	BottomOffset = 24,	BottomOffset = 64,	1
+Scripts/HUDData.lua	BottomOffset = 39,	BottomOffset = 79,	4
+Scripts/HUDData.lua	BottomOffset = 45,	BottomOffset = 85,	2
+Scripts/HUDData.lua	BottomOffset = 60,	BottomOffset = 100,	1
+Scripts/HUDData.lua	BottomOffset = 66,	BottomOffset = 106,	1
+Scripts/HUDData.lua	BottomOffset = 82,	BottomOffset = 122,	2
+Scripts/HUDData.lua	BottomOffset = 95,	BottomOffset = 135,	1
+Scripts/HUDData.lua	LastStandBottomOffset = 36,	LastStandBottomOffset = 76,	1
+Scripts/HUDData.lua	LastStandX = 595,	LastStandX = 635,	1
+Scripts/HUDData.lua	RightOffset = 40,	RightOffset = 80,	2
+Scripts/HUDData.lua	RightOffset = 60,	RightOffset = 100,	1
+Scripts/HUDData.lua	X = 120,	X = 160,	1
+Scripts/HUDData.lua	X = 200,	X = 240,	1
+Scripts/HUDData.lua	X = 217,	X = 257,	1
+Scripts/HUDData.lua	X = 260,	X = 300,	1
+Scripts/HUDData.lua	X = 280,	X = 320,	2
+Scripts/HUDData.lua	X = 315,	X = 355,	1
+Scripts/HUDData.lua	X = 325,	X = 365,	7
+Scripts/HUDData.lua	X = 40,	X = 80,	1
+Scripts/HUDData.lua	X = 483,	X = 523,	1
+Scripts/HUDData.lua	Y = 40,	Y = 80,	6
+Scripts/TraitTrayData.lua	RightOffset = 20,	RightOffset = 60,	1
+Scripts/TraitTrayData.lua	TraitStartX = 50,	TraitStartX = 90,	1
+Scripts/TraitTrayData.lua	Y = 60,	Y = 100,	1
