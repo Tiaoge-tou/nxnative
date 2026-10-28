@@ -40,7 +40,7 @@ private struct LauncherView: View {
                         }
                     }
                     Section {
-                        Button("Reset to tested defaults") { m.reset() }
+                        Button("重置启动器设置") { m.reset() }
                             .disabled(!m.changed)
                     } footer: {
                         Text("Brings back all settings this game was tested with.")

@@ -53,8 +53,15 @@ shader_note	Hollow Knight: Silksong shaders
 # and everything hung on it (the Hunter bars, the crest effects) keeps its stock place. Health's scale Y is NOT served: its
 # mask anchors sit +7.70 above the group origin, every state variant of every mask among them, and the first build that
 # scaled it (slim-90) pulled the whole mask row 1.1 units off its stock place in docked mode (device-checked). Bit
-# patterns from the bundle of build fc9ea4cc
-serve_patch	n:menu_title.bundle@6E3E5C:41030A3D>4129C10A@6EAA5C:00000000>401ADB34@6EAA6C:3F5B4A53>3F800000
+# patterns from the bundle of build fc9ea4cc. On wide screens (w:) the same roots are served shifted -100 canvas px in
+# BOTH modes instead (a phone presents the two modes identically, and the stock place sits too far right in the widened
+# frame); the three-value form names the stock pattern first, since neither served value is the file's own. Thread's
+# docked scale Y in the narrow group is computed (*): the handheld value (stock 1.0) scaled by DM_RENDER_WIDTH / 1920 --
+# the reciprocal of the docked present stretch on the actual screen, the 0.856603 of the iPad mini falling out of the
+# same formula -- with the written pattern kept as the fallback when no render width is published.
+serve_patch	n:menu_title.bundle@6E3E5C:41030A3D>4129C10A@6EAA5C:00000000>401ADB34@6EAA6C:*3F5B4A53>3F800000 w:menu_title.bundle@6E3E5C:41030A3D>40B8A6E1>40B8A6E1@6EAA5C:00000000>C01ADB34>C01ADB34
+# The launcher's button-skin toggle for this game (settings.tsv DM_SILK_SKIN): the pad's image skin, or its glass controls
+pad_skin_toggle	on
 # The launcher's frame-rate choice (settings.tsv SS_DISPLAY_HZ): 60, 120 at the full render size, or 120 at a lowered render size
 # (1916x882, the size the touch port measured on this class of screen). The front end drives the present, the present link and the
 # vi vsync event at the rate it measures on the screen, and falls back to 60 when the screen cannot hold 120 (hle_nvn.c)

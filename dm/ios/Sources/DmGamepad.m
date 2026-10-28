@@ -132,6 +132,7 @@ int dm_opmode(void);   // hle_oe.c: 0 = handheld
 // the session; they start hidden at each launch, the eye in its pressed state (the default the player asked
 // for, set explicitly in init).
 static BOOL padSkin(void) { const char *e = getenv("DM_PAD_SKIN"); return e && atoi(e); }
+static BOOL silkSkin(void) { const char *e = getenv("DM_SILK_SKIN"); return !e || atoi(e); }   // the launcher's button-skin toggle for this pad: the image skin unless it says 0, glass then
 enum { SK_ALWAYS, SK_SKILL, SK_TOGGLE };
 static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_skin[] = {
     {"attack",   B_Y,     SK_ALWAYS, 0.684, 0.822, 0.040},   // needle attack
@@ -145,7 +146,7 @@ static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_sk
     {"map",      B_L,     SK_ALWAYS, 0.727, 0.080, 0.023},   // quick map (the top row respaced evenly for five keys)
     {"bag",      B_MINUS, SK_ALWAYS, 0.838, 0.080, 0.023},   // inventory
     {"pause",    B_PLUS,  SK_ALWAYS, 0.893, 0.080, 0.023},
-    {"up",       B_UP,    SK_ALWAYS, 0.162, 0.675, 0.022},   // invisible (fully transparent art): the game's Up + R tool prompts read the D-pad, never the stick. Above the stick disc, small enough that its hit circle (r x 1.35) stops short of the disc centre, so a centred touch still starts the stick; skinCenter keeps it at raw fractions, anchored to the disc rather than the stacking cluster
+    {"up",       B_UP,    SK_ALWAYS, 0.162, 0.628, 0.022},   // invisible in both skins (fully transparent art, no glass disc): the game's Up + R tool prompts read the D-pad, never the stick. On the stick disc's own up-pointing rim triangle, small enough that its hit circle (r x 1.35) stops well short of the disc centre, so a centred touch still starts the stick; skinCenter keeps it at raw fractions, anchored to the disc rather than the stacking cluster
 };
 #define SKIN_N (int)(sizeof k_skin / sizeof k_skin[0])
 #define SKIN_REF_HW 0.4615   // the screen the skin layout was measured on (19.5:9): its height as a fraction of its width
@@ -154,6 +155,13 @@ static CGPoint skinCenter(int i, CGRect b) {   // the centre of skin key i, in p
     if (y > 0.2 && k_skin[i].bit != B_UP)   // an action key: the rows stack up from the bottom row (y 0.822) in width fractions, so the cluster keeps its phone shape on any screen; the top row stays a height fraction (it hugs the top edge). The D-pad Up key is exempt: it is anchored to the stick disc, which sits at raw fractions
         y = 0.822 + (y - 0.822) * SKIN_REF_HW * b.size.width / b.size.height;
     return CGPointMake(k_skin[i].x * b.size.width, y * b.size.height);
+}
+static NSString *silkGlyph(int i) {   // a skin key's glass glyph, by art name: letters for the game keys, nil for the Up key (no glass disc at all) and for the keys drawn as symbols or a dot (the - / + bars, the eye)
+    const char *a = k_skin[i].art;
+    if (!strcmp(a, "attack")) return @"Y"; if (!strcmp(a, "jump")) return @"B"; if (!strcmp(a, "dash")) return @"ZR";
+    if (!strcmp(a, "tool")) return @"R"; if (!strcmp(a, "needolin")) return @"X"; if (!strcmp(a, "bind")) return @"A";
+    if (!strcmp(a, "clawline")) return @"ZL"; if (!strcmp(a, "map")) return @"L";
+    return nil;
 }
 static UIImage *skinImage(const char *name) {   // a padskin image, loaded once and cached (nil when the file is absent)
     static NSMutableDictionary *cache;
@@ -268,6 +276,13 @@ static __weak DmGamepad *g_view;
     BOOL _skin;                                    // DM_PAD_SKIN: the image controls below replace the drawn ones
     CALayer *_skinDisc, *_skinKnob;                // the skin's stick disc and its knob (the knob follows the touch)
     CALayer *_skinBtn[SKIN_N];                     // the skin's keys, in k_skin order
+    BOOL _sSkin;                                   // DM_SILK_SKIN: the image skin over the glass controls below (the launcher's toggle; on unless it says 0)
+    UIView *_sGlassBox;                            // holds this pad's glass controls: the k_skin layout drawn as glass (Hades' arrangement, mirrored)
+    UIView *_sGlass[SKIN_N];                       // one clear disc per skin key (nil for the Up key: invisible in both skins)
+    CAShapeLayer *_sWash[SKIN_N];                  // a white wash over a glass disc, lit while its key is pressed
+    CATextLayer *_sLabel[SKIN_N];                  // the glass keys' glyphs
+    CAShapeLayer *_sSym[SKIN_N];                   // drawn glyphs: the - / + bars and the eye's pupil dot (text glyphs ride high, and an eye has no letter)
+    UIView *_sStick, *_sKnob;                      // the glass stick disc and its knob
     BOOL _skillOff;                                // the skill keys (grp SK_SKILL) are hidden by the eye key
     CALayer *_skipKey, *_padKey;   // the cutscene keys (skin mode): the skin's Skip medallion at the Bind key's place, its Pad medallion at the eye key's place
     int _padMode; BOOL _padPeek;                   // the host's pad mode (hle_hid.c dm_pad_mode) and the player's recall of the pad for the rest of the mode
@@ -335,6 +350,22 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             _skipKey = imgLayer(_controls, "skip"); _skipKey.hidden = YES;   // the cutscene keys: skin medallions from dm/padskin; applyPadMode shows them while the host reports a cutscene
             _padKey = imgLayer(_controls, "pad"); _padKey.hidden = YES;
             _padTimer = [NSTimer scheduledTimerWithTimeInterval:0.15 target:self selector:@selector(padTick) userInfo:nil repeats:YES];   // the view lives as long as the app, so the timer needs no invalidation
+            _sSkin = silkSkin();
+            _sGlassBox = [[UIView alloc] initWithFrame:self.bounds];
+            _sGlassBox.userInteractionEnabled = NO; _sGlassBox.backgroundColor = UIColor.clearColor;
+            _sGlassBox.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [_controls addSubview:_sGlassBox];   // inside _controls, so a connected controller hides it with the rest
+            for (int i = 0; i < SKIN_N; i++) if (silkGlyph(i) || k_skin[i].bit == B_MINUS || k_skin[i].bit == B_PLUS || k_skin[i].grp == SK_TOGGLE) _sGlass[i] = clearDisc(_sGlassBox, 0.30);
+            _sStick = clearDisc(_sGlassBox, 0.30); _sKnob = clearDisc(_sGlassBox, 0.30);
+            CALayer *ov = [CALayer layer]; [_sGlassBox.layer addSublayer:ov];   // washes and glyphs, above every glass disc
+            for (int i = 0; i < SKIN_N; i++) {
+                _sWash[i] = shape(ov); _sWash[i].fillColor = UIColor.whiteColor.CGColor; _sWash[i].opacity = 0;
+                _sWash[i].strokeColor = nil; _sWash[i].shadowOpacity = 0;
+                if (k_skin[i].bit == B_MINUS || k_skin[i].bit == B_PLUS || k_skin[i].grp == SK_TOGGLE) { _sSym[i] = shape(ov); _sSym[i].fillColor = k_text.CGColor; _sSym[i].strokeColor = nil; _sSym[i].shadowOpacity = 0; }
+                else if (silkGlyph(i)) _sLabel[i] = label(ov, silkGlyph(i));
+            }
+            _sGlassBox.hidden = _sSkin;   // the image skin covers the glass; with the toggle off the images stay hidden instead (applyPadMode and refresh keep them so)
+            if (!_sSkin) { _skinDisc.hidden = YES; _skinKnob.hidden = YES; for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = YES; }
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _swap.hidden = YES; _swapLabel.hidden = YES; _ring.hidden = YES; _knob.hidden = YES;
         }
@@ -602,10 +633,11 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (BOOL)padHidden { return _padMode > 0 && !_padPeek; }
 - (void)applyPadMode {
     BOOL hide = [self padHidden];
-    _skinDisc.hidden = hide; _skinKnob.hidden = hide;
-    for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = hide || (_skillOff && k_skin[i].grp == SK_SKILL);
-    _skipKey.hidden = !(_padMode == 3 && !_padPeek);
-    _padKey.hidden = !(_padMode >= 2 && !_padPeek);
+    _skinDisc.hidden = hide || !_sSkin; _skinKnob.hidden = hide || !_sSkin;
+    for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = hide || !_sSkin || (_skillOff && k_skin[i].grp == SK_SKILL);
+    _skipKey.hidden = !(_padMode == 3 && !_padPeek) || !_sSkin;
+    _padKey.hidden = !(_padMode >= 2 && !_padPeek) || !_sSkin;
+    if (_sGlassBox) _sGlassBox.hidden = hide || _sSkin;
     [self refresh];
 }
 - (void)padTick {
@@ -687,6 +719,15 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             _skinBtn[i].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
         if (_skipKey) { CGPoint c = skinCenter(5, b); CGFloat dd = k_skin[5].r * 2 * b.size.width; _skipKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Skip medallion at the Bind key's place, at its size
         if (_padKey) { CGPoint c = skinCenter(7, b); CGFloat dd = k_skin[7].r * 2 * b.size.width; _padKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Pad medallion at the eye key's place, at its size
+        if (_sGlassBox) {
+            for (int i = 0; i < SKIN_N; i++) if (_sGlass[i]) { CGFloat r = k_skin[i].r * b.size.width; CGPoint c = skinCenter(i, b);
+                _sGlass[i].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); _sGlass[i].layer.cornerRadius = r;
+                setPath(_sWash[i], circlePath(c, r));
+                if (_sLabel[i]) placeLabel(_sLabel[i], c, r * 1.02);
+                else if (_sSym[i]) setPath(_sSym[i], k_skin[i].grp == SK_TOGGLE ? circlePath(c, r * 0.20) : symPath(c, r, k_skin[i].bit == B_PLUS)); }
+            _sStick.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d); _sStick.layer.cornerRadius = d / 2;
+            CGFloat kd2 = d * 0.67; _sKnob.bounds = CGRectMake(0, 0, kd2, kd2); _sKnob.layer.cornerRadius = kd2 / 2; _sKnob.position = hc;
+        }
         [CATransaction commit]; [self refresh]; return;
     }
     if (_hades) {   // the glass discs at fractions of the whole screen (k_hades); the stick disc is placed by refresh (it floats)
@@ -737,7 +778,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     CGPoint h = self.stickHome, o = [self knobOffset:0];
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
     if (_skin) {   // pressed keys swap to their _p art and dip; the eye key shows its _p art while the skill keys are hidden (and dims instead when the skin ships no eye _p art); the medallion knob follows the touch, kept inside the disc
-        for (int i = 0; i < SKIN_N; i++) {
+        if (_sSkin) for (int i = 0; i < SKIN_N; i++) {
             if (k_skin[i].grp == SK_TOGGLE) { UIImage *p = _skillOff ? skinPressedImage(i) : nil;
                 _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
                 _skinBtn[i].opacity = p ? 1.0 : (_skillOff ? 0.45 : 1.0); _skinBtn[i].transform = CATransform3DIdentity; continue; }
@@ -750,6 +791,13 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         CGFloat ol = hypot(o.x, o.y), maxO = 0.30 * [self stickR:0];
         if (ol > maxO) { o.x *= maxO / ol; o.y *= maxO / ol; }
         _skinKnob.position = CGPointMake(h.x + o.x, h.y + o.y); _skinKnob.opacity = _stick[0] ? 1.0 : 0.95;
+        if (!_sSkin) {   // the glass controls: a key's wash lit while it is pressed (the eye's while the skill keys are hidden), the skill discs hidden with the eye off, the knob following the touch
+            for (int i = 0; i < SKIN_N; i++) { if (!_sWash[i]) continue;
+                _sWash[i].opacity = (k_skin[i].grp == SK_TOGGLE ? _skillOff : ((_btnBits >> k_skin[i].bit) & 1)) ? 0.35 : 0;
+                if (_sGlass[i]) _sGlass[i].hidden = [self padHidden] || (_skillOff && k_skin[i].grp == SK_SKILL); }
+            _sKnob.position = CGPointMake(h.x + o.x, h.y + o.y);
+            _sStick.hidden = _sKnob.hidden = [self padHidden];
+        }
         if (_skipKey && !_skipKey.hidden) { BOOL on = (_btnBits >> B_A) & 1;   // the Skip key presses like a skin key: A's bit swaps in its _p art and it dips (without _p art it only dips)
             UIImage *p = on ? namedPressedImage("skip") : nil;
             _skipKey.contents = (id)(p ? p : skinImage("skip")).CGImage;

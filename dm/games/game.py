@@ -115,13 +115,15 @@ def header(g):
     if pl not in ('simple', 'full', 'touch'): sys.exit(f'{g.id}: pad_layout must be simple, full or touch: {pl}')   # touch = Tap (no control: every touch goes to the game's touch screen)
     fbs = g.words('feedback_snap', '')   # fragment shader key prefixes whose same-pass feedback sampling gets a snapshot first (nvn_mtl.m fb_prepare); none by default
     if any(not re.fullmatch(r'[0-9a-f]{8,16}', k) for k in fbs): sys.exit(f'{g.id}: feedback_snap takes fragment shader keys (8-16 lowercase hex digits): {fbs}')
-    spv = g.words('serve_patch', '')   # byte slots in a game file the file layer serves mode-dependently (hle_fs.c): "[n:]<file>@<off>:<docked float bits>><handheld float bits>[@...]" per file (n: = narrow screens only), hex; none by default
+    spv = g.words('serve_patch', '')   # byte slots in a game file the file layer serves mode-dependently (hle_fs.c): "[n:|w:]<file>@<off>:<docked float bits>><handheld float bits>[@...]" per file (n: = narrow screens only, w: = wide only; a slot may name a stock pattern first, "<stock>><docked>><handheld>", and a * on the docked value marks it computed from the render width), hex; none by default
     for w in spv:
-        if not re.fullmatch(r'(n:)?[^@\s:]+(@[0-9a-fA-F]+:[0-9a-fA-F]{8}>[0-9a-fA-F]{8})+', w): sys.exit(f'{g.id}: serve_patch takes "[n:]<file>@<off>:<docked>><handheld>" groups of hex offsets and float bits: {w}')
+        if not re.fullmatch(r'(n:|w:)?[^@\s:]+(@[0-9a-fA-F]+:(\*?[0-9a-fA-F]{8}>){1,2}\*?[0-9a-fA-F]{8})+', w): sys.exit(f'{g.id}: serve_patch takes "[n:|w:]<file>@<off>:<docked>><handheld>" groups of hex offsets and float bits (a slot may name a stock pattern first and mark its docked value * for computed): {w}')
     rcd = g.get('render_cond', 'off')   # NVN conditional rendering evaluated at replay, timestamp reports with counter 0 (nvn_mtl.m OP_RENDER_COND): on / off
     if rcd not in ('on', 'off'): sys.exit(f'{g.id}: render_cond must be on or off: {rcd}')
     dwd = g.get('display_wide', 'off')   # nn::oe's default display resolution reported wide while fullscreen is on (hle_oe.c h_oe_DefRes): the game renders the phone's aspect itself instead of a stretched 1920x1080: on / off
     if dwd not in ('on', 'off'): sys.exit(f'{g.id}: display_wide must be on or off: {dwd}')
+    pst = g.get('pad_skin_toggle', 'off')   # the launcher shows a button-skin toggle for this game (settings.tsv DM_SILK_SKIN): its pad has an image skin and glass controls under the same layout: on / off
+    if pst not in ('on', 'off'): sys.exit(f'{g.id}: pad_skin_toggle must be on or off: {pst}')
     tfu = g.get('tex_flush_upload', 'off')   # textures written by the CPU into a pool and published with nvnMemoryPoolFlushMappedRange are uploaded like packaged ones (hle_nvn.c): on / off
     if tfu not in ('on', 'off'): sys.exit(f'{g.id}: tex_flush_upload must be on or off: {tfu}')
     tdu = g.get('tex_dirty_upload', 'off')   # with tex_flush_upload: a registered texture the CPU writes after init without any flush is uploaded too (dirty pages, hle_nvn.c nvn_ft_written): on / off
@@ -180,6 +182,7 @@ def header(g):
          f'#define DM_GAME_TEX_FLUSH_UPLOAD {int(tfu == "on")}',
          f'#define DM_GAME_RENDER_COND {int(rcd == "on")}',
          f'#define DM_GAME_DISPLAY_WIDE {int(dwd == "on")}',
+         f'#define DM_GAME_PAD_SKIN_TOGGLE {int(pst == "on")}',
          f'#define DM_GAME_TEX_DIRTY_UPLOAD {int(tdu == "on")}',
          f'#define DM_GAME_TEX_DYN_SLOTS {int(tds == "on")}',
          f'#define DM_GAME_GPU_TS_SEGMENT {int(gts == "segment")}',
