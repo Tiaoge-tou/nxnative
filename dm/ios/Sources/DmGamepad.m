@@ -354,7 +354,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             _sGlassBox = [[UIView alloc] initWithFrame:self.bounds];
             _sGlassBox.userInteractionEnabled = NO; _sGlassBox.backgroundColor = UIColor.clearColor;
             _sGlassBox.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            [_controls addSubview:_sGlassBox];   // inside _controls, so a connected controller hides it with the rest
+            [self addSubview:_sGlassBox];   // a view over the layer tree, like the Hades glass box; padsChanged hides it while a physical controller is connected
             for (int i = 0; i < SKIN_N; i++) if (silkGlyph(i) || k_skin[i].bit == B_MINUS || k_skin[i].bit == B_PLUS || k_skin[i].grp == SK_TOGGLE) _sGlass[i] = clearDisc(_sGlassBox, 0.30);
             _sStick = clearDisc(_sGlassBox, 0.30); _sKnob = clearDisc(_sGlassBox, 0.30);
             CALayer *ov = [CALayer layer]; [_sGlassBox.layer addSublayer:ov];   // washes and glyphs, above every glass disc
@@ -726,7 +726,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
                 if (_sLabel[i]) placeLabel(_sLabel[i], c, r * 1.02);
                 else if (_sSym[i]) setPath(_sSym[i], k_skin[i].grp == SK_TOGGLE ? circlePath(c, r * 0.20) : symPath(c, r, k_skin[i].bit == B_PLUS)); }
             _sStick.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d); _sStick.layer.cornerRadius = d / 2;
-            CGFloat kd2 = d * 0.67; _sKnob.bounds = CGRectMake(0, 0, kd2, kd2); _sKnob.layer.cornerRadius = kd2 / 2; _sKnob.position = hc;
+            CGFloat kd2 = d * 0.67; _sKnob.bounds = CGRectMake(0, 0, kd2, kd2); _sKnob.layer.cornerRadius = kd2 / 2; _sKnob.center = hc;
         }
         [CATransaction commit]; [self refresh]; return;
     }
@@ -795,7 +795,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             for (int i = 0; i < SKIN_N; i++) { if (!_sWash[i]) continue;
                 _sWash[i].opacity = (k_skin[i].grp == SK_TOGGLE ? _skillOff : ((_btnBits >> k_skin[i].bit) & 1)) ? 0.35 : 0;
                 if (_sGlass[i]) _sGlass[i].hidden = [self padHidden] || (_skillOff && k_skin[i].grp == SK_SKILL); }
-            _sKnob.position = CGPointMake(h.x + o.x, h.y + o.y);
+            _sKnob.center = CGPointMake(h.x + o.x, h.y + o.y);
             _sStick.hidden = _sKnob.hidden = [self padHidden];
         }
         if (_skipKey && !_skipKey.hidden) { BOOL on = (_btnBits >> B_A) & 1;   // the Skip key presses like a skin key: A's bit swaps in its _p art and it dips (without _p art it only dips)
@@ -860,7 +860,7 @@ static void read_pad(GCExtendedGamepad *g) {
     }
     if (!any || !motion) dm_motion_clear(0);   // the phone's gyro (if on) takes over from its next sample
     if (!any) { dm_haptics_apple_controller(0, nil); pthread_mutex_lock(&g_mu); g_pad_btn = 0; g_pad_lx = g_pad_ly = g_pad_rx = g_pad_ry = 0; pthread_mutex_unlock(&g_mu); publish(); }
-    dispatch_async(dispatch_get_main_queue(), ^{ self->_padOff = any; self->_controls.hidden = any; self->_glassBox.hidden = any; [self reset]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ self->_padOff = any; self->_controls.hidden = any; self->_glassBox.hidden = any; if (self->_sGlassBox) self->_sGlassBox.hidden = self->_sSkin || any; [self reset]; });
 }
 @end
 
