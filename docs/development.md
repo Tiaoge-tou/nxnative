@@ -123,6 +123,9 @@ requests, only the checker whose pinned release version increased may gain
 baseline entries or counts. Comments, dependency updates and checker downgrades
 do not allow growth.
 
+`scripts/bug_report.py` (`-h`) collects the logs, versions and settings a bug report needs into one zip ([CONTRIBUTING.md](../CONTRIBUTING.md#reporting-a-problem)); it reads an allow-list of text files only.
+For a Mac app, it reads the name, title ID and game version from `Info.plist`, lists the chain folders in `Contents/Resources/msl`, and includes both the player's and the bundle's `env.txt`. Recorded `DMCommit` and `DMChain` values take precedence; an app without a commit stamp reports its commit as unknown. The collector's checkout and chain are labeled separately. An NSP build lists available chain folders under `shader/cache` (Mac), `shader/ios` (iOS) and `shader`; old cached folders do not identify the chain that ran. The 4 MB file limit and 20 MB bundle limit include `report.md` and truncation markers; space for the report is reserved before logs are collected. Explicit `.keys` inputs are refused.
+
 ## The packing script in detail
 
 `scripts/build_ipa_from_nsp.py` (`-h` lists every option):
@@ -336,6 +339,8 @@ A full install sends the whole app, about 11 GB for Animal Crossing: New Horizon
 2. Build with `DM_COPY_ROMFS=NO` (a build setting read by `stage_resources.sh`, for example `xcodebuild ... DM_COPY_ROMFS=NO`). The shaders, add-on content and pipeline archive still go into the app.
 
 PR #368 reports Animal Crossing's app shrinking from 11 GB to 1.2 GB, with reinstalls in 30 to 60 seconds. Deleting the app deletes its `Documents`, so push the game files again after a delete. The copy needs one `devicectl` transfer at a time.
+
+`build_ipa.sh` takes the same switch for the unsigned IPA: `DM_COPY_ROMFS=NO` leaves the RomFS out of the package (add-on content stays in), which keeps a large game under the size iOS extracts; the IPA is then only useful with `Documents/romfs.img` already on the phone. The IPA's executable also gets an ad-hoc signature carrying the Increased Memory Limit entitlement (the default `DM_ENTITLEMENTS`, an empty value for none): an unsigned binary has no signature for a sideloader to read entitlements from, and the packed bundle drops `_CodeSignature`, so only the executable's own signature survives.
 
 The unsigned IPA build still uses the repository's `dm/ios/DmIOS.xcodeproj`, skips the resource phase (`DM_COPY_GAME_RESOURCES=NO`) and packs the resources straight from the drive as before.
 
