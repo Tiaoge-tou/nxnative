@@ -132,7 +132,7 @@ int dm_opmode(void);   // hle_oe.c: 0 = handheld
 // the session; they start hidden at each launch, the eye in its pressed state (the default the player asked
 // for, set explicitly in init).
 static BOOL padSkin(void) { const char *e = getenv("DM_PAD_SKIN"); return e && atoi(e); }
-static BOOL silkSkin(void) { const char *e = getenv("DM_SILK_SKIN"); return !e || atoi(e); }   // the launcher's button-skin toggle for this pad: the image skin unless it says 0, glass then
+static int silkSkinMode(void) { const char *e = getenv("DM_SILK_SKIN"); int m = e ? atoi(e) : 1; return m < 0 ? 0 : m > 2 ? 2 : m; }   // the launcher's button-skin choice for this pad: 0 glass, 1 the image skin, 2 the letter-badge skin (dm/padskin-badge); the image skin (1) when unset
 enum { SK_ALWAYS, SK_SKILL, SK_TOGGLE };
 static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_skin[] = {
     {"attack",   B_Y,     SK_ALWAYS, 0.684, 0.822, 0.040},   // needle attack
@@ -156,6 +156,15 @@ static CGPoint skinCenter(int i, CGRect b) {   // the centre of skin key i, in p
         y = 0.822 + (y - 0.822) * SKIN_REF_HW * b.size.width / b.size.height;
     return CGPointMake(k_skin[i].x * b.size.width, y * b.size.height);
 }
+#define SILK_BADGE_SCALE (1020.0 / 880.0)   // the badge set's canvas over the plain set's (the disc sits centred in the larger canvas, badge medallion below it)
+static BOOL silkBadged(const char *name) {   // the padskin keys the badge set bakes a letter medallion into: every k_skin art but the Up key (invisible in both skins, never badged); the eye carries its ON / OFF state word instead of a letter
+    static const char *const badged[] = {"attack", "jump", "dash", "tool", "needolin", "bind", "clawline", "eye", "map", "bag", "pause"};
+    for (int i = 0; i < (int)(sizeof badged / sizeof *badged); i++) if (!strcmp(name, badged[i])) return YES;
+    return NO;
+}
+static CGFloat silkArtScale(const char *name) {   // a badged key's layer grows by this in badge mode, so the disc itself lands at the plain skin's size and place; unbadged art keeps 1
+    return silkSkinMode() == 2 && silkBadged(name) ? SILK_BADGE_SCALE : 1.0;
+}
 static NSString *silkGlyph(int i) {   // a skin key's glass glyph, by art name: letters for the game keys, nil for the Up key (no glass disc at all) and for the keys drawn as symbols or a dot (the - / + bars, the eye)
     const char *a = k_skin[i].art;
     if (!strcmp(a, "attack")) return @"Y"; if (!strcmp(a, "jump")) return @"B"; if (!strcmp(a, "dash")) return @"ZR";
@@ -163,13 +172,13 @@ static NSString *silkGlyph(int i) {   // a skin key's glass glyph, by art name: 
     if (!strcmp(a, "clawline")) return @"ZL"; if (!strcmp(a, "map")) return @"L";
     return nil;
 }
-static UIImage *skinImage(const char *name) {   // a padskin image, loaded once and cached (nil when the file is absent)
+static UIImage *skinImage(const char *name) {   // a padskin image, loaded once and cached (nil when the file is absent); the badge mode reads the dm/padskin-badge set instead (same names, the mode is fixed for the process, so one cache serves both)
     static NSMutableDictionary *cache;
     if (!cache) cache = [[NSMutableDictionary alloc] init];
     NSString *key = [NSString stringWithUTF8String:name];
     UIImage *im = cache[key];
     if (!im) {
-        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"dm/padskin/%s.png", name]];
+        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:silkSkinMode() == 2 ? @"dm/padskin-badge/%s.png" : @"dm/padskin/%s.png", name]];
         im = [UIImage imageWithContentsOfFile:p];
         if (im) cache[key] = im;
     }
@@ -194,14 +203,14 @@ static CALayer *imgLayer(CALayer *parent, const char *name) {
 // (hadesCenter), so the quarter circle keeps its shape on a taller screen (an iPad's); on the phone the layout was
 // measured on, the centres come out as before.
 static BOOL padHades(void) { const char *e = getenv("DM_PAD_HADES"); return e && atoi(e); }
-static BOOL hadesSkin(void) { const char *e = getenv("DM_HADES_SKIN"); return !e || atoi(e); }   // the launcher's button-skin toggle: on unless it says 0 (default on)
-static UIImage *hadesImage(const char *name) {   // a hadesskin image, loaded once and cached (nil when the file is absent)
+static int hadesSkinMode(void) { const char *e = getenv("DM_HADES_SKIN"); int m = e ? atoi(e) : 1; return m < 0 ? 0 : m > 2 ? 2 : m; }   // the launcher's button-skin choice: 0 glass, 1 the image skin, 2 the letter-badge skin (dm/hadesskin-badge); the image skin (1) when unset
+static UIImage *hadesImage(const char *name) {   // a hadesskin image, loaded once and cached (nil when the file is absent); the badge mode reads the dm/hadesskin-badge set instead (same names, the mode is fixed for the process, so one cache serves both)
     static NSMutableDictionary *cache;
     if (!cache) cache = [[NSMutableDictionary alloc] init];
     NSString *key = [NSString stringWithUTF8String:name];
     UIImage *im = cache[key];
     if (!im) {
-        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"dm/hadesskin/%s.png", name]];
+        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:hadesSkinMode() == 2 ? @"dm/hadesskin-badge/%s.png" : @"dm/hadesskin/%s.png", name]];
         im = [UIImage imageWithContentsOfFile:p];
         if (im) cache[key] = im;
     }
@@ -230,6 +239,14 @@ static const struct { int bit; int kind; int dir; const char *label; CGFloat x, 
 #define HADES_N (int)(sizeof k_hades / sizeof k_hades[0])
 static const char *k_hadesArt[HADES_N] = {"minus", "plus", "l", "zl", "zr", "r", "a", "x", "b", "y", "left", "up", "down", "right"};   // dm/hadesskin art per k_hades key, same order
 #define HADES_ART_F 0.875   // the art's disc diameter as a fraction of its square canvas (448 of 512, keys and stick alike)
+static BOOL hadesBadged(const char *name) {   // the hadesskin keys the badge set bakes a letter medallion into: the ten letter keys (the D-pad arrows, the stick and the knob stay plain)
+    static const char *const badged[] = {"minus", "plus", "l", "zl", "zr", "r", "a", "x", "b", "y"};
+    for (int i = 0; i < (int)(sizeof badged / sizeof *badged); i++) if (!strcmp(name, badged[i])) return YES;
+    return NO;
+}
+static CGFloat hadesArtF(const char *name) {   // a key's art fraction: in badge mode a badged key's canvas is 594 for the same 448 disc, so its layer grows to keep the disc itself at the plain skin's size and place
+    return hadesSkinMode() == 2 && hadesBadged(name) ? 448.0 / 594.0 : HADES_ART_F;
+}
 static CGPoint hadesCenter(int i, CGRect b) {   // the centre of Hades key i, in points
     CGFloat y = k_hades[i].y;
     if (k_hades[i].kind == H_FACE && k_hades[i].bit != B_Y) {   // a fan key: its y is an offset from Y's centre in width fractions
@@ -276,7 +293,7 @@ static __weak DmGamepad *g_view;
     BOOL _skin;                                    // DM_PAD_SKIN: the image controls below replace the drawn ones
     CALayer *_skinDisc, *_skinKnob;                // the skin's stick disc and its knob (the knob follows the touch)
     CALayer *_skinBtn[SKIN_N];                     // the skin's keys, in k_skin order
-    BOOL _sSkin;                                   // DM_SILK_SKIN: the image skin over the glass controls below (the launcher's toggle; on unless it says 0)
+    int _sSkinMode;                                // DM_SILK_SKIN: 0 the glass controls below, 1 the image skin over them, 2 the letter-badge skin (the launcher's choice; 1 when unset)
     UIView *_sGlassBox;                            // holds this pad's glass controls: the k_skin layout drawn as glass (Hades' arrangement, mirrored)
     UIView *_sGlass[SKIN_N];                       // one clear disc per skin key (nil for the Up key: invisible in both skins)
     CAShapeLayer *_sWash[SKIN_N];                  // a white wash over a glass disc, lit while its key is pressed
@@ -295,7 +312,7 @@ static __weak DmGamepad *g_view;
     CAShapeLayer *_hSym[HADES_N];                  // drawn bars for the - / + keys, centred exactly (text glyphs ride high)
     CAShapeLayer *_hTri[4];                        // the D-pad triangles, in k_hades dir order
     UIView *_hStick, *_hKnob;          // the floating stick's clear disc and its knob
-    BOOL _hSkin;                                   // DM_HADES_SKIN: the image skin below replaces the glass controls
+    int _hSkinMode;                                // DM_HADES_SKIN: 0 the glass controls below, 1 the image skin over them, 2 the letter-badge skin (the launcher's choice; 1 when unset)
     CALayer *_hArt[HADES_N];           // one skin image per Hades key (nil while the skin is off or the art is absent: glass shows)
     CALayer *_hStickArt, *_hKnobArt;   // the skin's stick disc and knob: the pack's own art, nothing drawn behind either
     CGPoint _lCentre;                              // the floating left stick's centre: where its touch landed
@@ -350,7 +367,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             _skipKey = imgLayer(_controls, "skip"); _skipKey.hidden = YES;   // the cutscene keys: skin medallions from dm/padskin; applyPadMode shows them while the host reports a cutscene
             _padKey = imgLayer(_controls, "pad"); _padKey.hidden = YES;
             _padTimer = [NSTimer scheduledTimerWithTimeInterval:0.15 target:self selector:@selector(padTick) userInfo:nil repeats:YES];   // the view lives as long as the app, so the timer needs no invalidation
-            _sSkin = silkSkin();
+            _sSkinMode = silkSkinMode();
             _sGlassBox = [[UIView alloc] initWithFrame:self.bounds];
             _sGlassBox.userInteractionEnabled = NO; _sGlassBox.backgroundColor = UIColor.clearColor;
             _sGlassBox.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -364,8 +381,8 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
                 if (k_skin[i].bit == B_MINUS || k_skin[i].bit == B_PLUS || k_skin[i].grp == SK_TOGGLE) { _sSym[i] = shape(ov); _sSym[i].fillColor = k_text.CGColor; _sSym[i].strokeColor = nil; _sSym[i].shadowOpacity = 0; }
                 else if (silkGlyph(i)) _sLabel[i] = label(ov, silkGlyph(i));
             }
-            _sGlassBox.hidden = _sSkin;   // the image skin covers the glass; with the toggle off the images stay hidden instead (applyPadMode and refresh keep them so)
-            if (!_sSkin) { _skinDisc.hidden = YES; _skinKnob.hidden = YES; for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = YES; }
+            _sGlassBox.hidden = _sSkinMode >= 1;   // the image skin covers the glass; with the choice at 0 the images stay hidden instead (applyPadMode and refresh keep them so)
+            if (!_sSkinMode) { _skinDisc.hidden = YES; _skinKnob.hidden = YES; for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = YES; }
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _swap.hidden = YES; _swapLabel.hidden = YES; _ring.hidden = YES; _knob.hidden = YES;
         }
@@ -385,8 +402,8 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
                 else if (k_hades[i].label) _hLabel[i] = label(ov, [NSString stringWithUTF8String:k_hades[i].label]);
                 else { _hTri[k_hades[i].dir] = shape(ov); _hTri[k_hades[i].dir].fillColor = k_text.CGColor; _hTri[k_hades[i].dir].strokeColor = nil; _hTri[k_hades[i].dir].shadowOpacity = 0; }
             }
-            _hSkin = hadesSkin();
-            if (_hSkin) {   // image skin over the glass: a key whose art is absent keeps its glass disc and label
+            _hSkinMode = hadesSkinMode();
+            if (_hSkinMode) {   // image skin over the glass: a key whose art is absent keeps its glass disc and label
                 CALayer *ab = [CALayer layer]; [_glassBox.layer addSublayer:ab];   // art above the washes and labels
                 for (int i = 0; i < HADES_N; i++) if (hadesImage(k_hadesArt[i])) {
                     _hArt[i] = hadesImgLayer(ab, k_hadesArt[i]);
@@ -633,11 +650,11 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (BOOL)padHidden { return _padMode > 0 && !_padPeek; }
 - (void)applyPadMode {
     BOOL hide = [self padHidden];
-    _skinDisc.hidden = hide || !_sSkin; _skinKnob.hidden = hide || !_sSkin;
-    for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = hide || !_sSkin || (_skillOff && k_skin[i].grp == SK_SKILL);
-    _skipKey.hidden = !(_padMode == 3 && !_padPeek) || !_sSkin;
-    _padKey.hidden = !(_padMode >= 2 && !_padPeek) || !_sSkin;
-    if (_sGlassBox) _sGlassBox.hidden = hide || _sSkin;
+    _skinDisc.hidden = hide || !_sSkinMode; _skinKnob.hidden = hide || !_sSkinMode;
+    for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = hide || !_sSkinMode || (_skillOff && k_skin[i].grp == SK_SKILL);
+    _skipKey.hidden = !(_padMode == 3 && !_padPeek) || !_sSkinMode;
+    _padKey.hidden = !(_padMode >= 2 && !_padPeek) || !_sSkinMode;
+    if (_sGlassBox) _sGlassBox.hidden = hide || _sSkinMode >= 1;
     [self refresh];
 }
 - (void)padTick {
@@ -715,7 +732,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         CGRect b = self.bounds; CGFloat d = 0.148 * b.size.width; CGPoint hc = self.stickHome;
         _skinDisc.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d);
         CGFloat kd = d * 0.67; _skinKnob.bounds = CGRectMake(0, 0, kd, kd); _skinKnob.position = hc;
-        for (int i = 0; i < SKIN_N; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width; CGPoint c = skinCenter(i, b);
+        for (int i = 0; i < SKIN_N; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width * silkArtScale(k_skin[i].art); CGPoint c = skinCenter(i, b);
             _skinBtn[i].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
         if (_skipKey) { CGPoint c = skinCenter(5, b); CGFloat dd = k_skin[5].r * 2 * b.size.width; _skipKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Skip medallion at the Bind key's place, at its size
         if (_padKey) { CGPoint c = skinCenter(7, b); CGFloat dd = k_skin[7].r * 2 * b.size.width; _padKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Pad medallion at the eye key's place, at its size
@@ -741,7 +758,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             else if (_hSym[i]) setPath(_hSym[i], symPath(c, r, k_hades[i].bit == B_PLUS));
             else setPath(_hTri[k_hades[i].dir], triPath(c, r * 0.44, k_hades[i].dir)); }
         for (int i = 0; i < HADES_N; i++) if (_hArt[i]) { CGFloat r = k_hades[i].r * b.size.width;
-            CGPoint c = hadesCenter(i, b); CGFloat s = 2 * r / HADES_ART_F;
+            CGPoint c = hadesCenter(i, b); CGFloat s = 2 * r / hadesArtF(k_hadesArt[i]);
             _hArt[i].frame = CGRectMake(c.x - s / 2, c.y - s / 2, s, s); }
         [CATransaction commit]; [self refresh]; return;
     }
@@ -778,7 +795,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     CGPoint h = self.stickHome, o = [self knobOffset:0];
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
     if (_skin) {   // pressed keys swap to their _p art and dip; the eye key shows its _p art while the skill keys are hidden (and dims instead when the skin ships no eye _p art); the medallion knob follows the touch, kept inside the disc
-        if (_sSkin) for (int i = 0; i < SKIN_N; i++) {
+        if (_sSkinMode) for (int i = 0; i < SKIN_N; i++) {
             if (k_skin[i].grp == SK_TOGGLE) { UIImage *p = _skillOff ? skinPressedImage(i) : nil;
                 _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
                 _skinBtn[i].opacity = p ? 1.0 : (_skillOff ? 0.45 : 1.0); _skinBtn[i].transform = CATransform3DIdentity; continue; }
@@ -791,7 +808,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         CGFloat ol = hypot(o.x, o.y), maxO = 0.30 * [self stickR:0];
         if (ol > maxO) { o.x *= maxO / ol; o.y *= maxO / ol; }
         _skinKnob.position = CGPointMake(h.x + o.x, h.y + o.y); _skinKnob.opacity = _stick[0] ? 1.0 : 0.95;
-        if (!_sSkin) {   // the glass controls: a key's wash lit while it is pressed (the eye's while the skill keys are hidden), the skill discs hidden with the eye off, the knob following the touch
+        if (!_sSkinMode) {   // the glass controls: a key's wash lit while it is pressed (the eye's while the skill keys are hidden), the skill discs hidden with the eye off, the knob following the touch
             for (int i = 0; i < SKIN_N; i++) { if (!_sWash[i]) continue;
                 _sWash[i].opacity = (k_skin[i].grp == SK_TOGGLE ? _skillOff : ((_btnBits >> k_skin[i].bit) & 1)) ? 0.35 : 0;
                 BOOL hid = [self padHidden] || (_skillOff && k_skin[i].grp == SK_SKILL);   // the whole key hides, letter and symbol with the disc: the glyph layers live in the overlay, not in the disc view
@@ -864,7 +881,7 @@ static void read_pad(GCExtendedGamepad *g) {
     }
     if (!any || !motion) dm_motion_clear(0);   // the phone's gyro (if on) takes over from its next sample
     if (!any) { dm_haptics_apple_controller(0, nil); pthread_mutex_lock(&g_mu); g_pad_btn = 0; g_pad_lx = g_pad_ly = g_pad_rx = g_pad_ry = 0; pthread_mutex_unlock(&g_mu); publish(); }
-    dispatch_async(dispatch_get_main_queue(), ^{ self->_padOff = any; self->_controls.hidden = any; self->_glassBox.hidden = any; if (self->_sGlassBox) self->_sGlassBox.hidden = self->_sSkin || any; [self reset]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ self->_padOff = any; self->_controls.hidden = any; self->_glassBox.hidden = any; if (self->_sGlassBox) self->_sGlassBox.hidden = self->_sSkinMode >= 1 || any; [self reset]; });
 }
 @end
 
