@@ -32,6 +32,8 @@ t_perf_order_tsan
 t_perf_order_tsan.dSYM/
 t_cube_placeholder
 t_cube_placeholder.dSYM/
+t_tex_fit_root
+t_tex_fit_root.dSYM/
 t_present_crop
 t_present_crop.dSYM/
 t_present_rescue
@@ -161,3 +163,9 @@ t_geometry_primitive_id.dSYM/
 t_geometry_hazards.dSYM/
 t_unwritten_store
 t_unwritten_store.dSYM/
+t_capture
+t_capture.dSYM/
+nvn_replay
+nvn_replay.dSYM/
+t_capture_live
+t_capture_live.dSYM/

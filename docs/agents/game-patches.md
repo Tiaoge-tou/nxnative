@@ -21,7 +21,7 @@ Every piece of code that runs for one game and not the others: the rewriter's pa
 | [Hyrule Warriors: Age of Calamity](#hyrule-warriors-age-of-calamity) | 0 | 0 | 3 | 0 | 0 | yes |
 | [Luigi's Mansion 3](#luigis-mansion-3) | 0 | 0 | 0 | 0 | 1 |  |
 | [Mario + Rabbids Kingdom Battle](#mario--rabbids-kingdom-battle) | 6 | 0 | 0 | 0 | 0 | yes |
-| [Mario + Rabbids® Sparks of Hope](#mario--rabbids-sparks-of-hope) | 6 | 0 | 0 | 0 | 0 | yes |
+| [Mario + Rabbids® Sparks of Hope](#mario--rabbids-sparks-of-hope) | 7 | 0 | 0 | 0 | 0 | yes |
 | [Monster Hunter Rise](#monster-hunter-rise) | 0 | 0 | 0 | 0 | 1 |  |
 | [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](#nierautomata-the-end-of-yorha-edition-010056b015fe8000) | 8 | 0 | 0 | 0 | 1 | yes |
 | [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](#nierautomata-the-end-of-yorha-edition-0100b8e016f76000) | 8 | 0 | 0 | 0 | 1 | yes |
@@ -354,15 +354,16 @@ Every piece of code that runs for one game and not the others: the rewriter's pa
 
 [Mario + Rabbids® Sparks of Hope](../../dm/games/0100317013770000/README.md), `0100317013770000`, [patches.py](../../dm/games/0100317013770000/patches.py).
 
-**Generalize?** Partly: Mario + Rabbids Kingdom Battle and Sparks of Hope cut the same Snowdrop three-pool allocator; one function-matched rule could serve both only if their code matches (not checked). The cause, an iPhone's address space, cannot be fixed in the host
+**Generalize?** Partly: Mario + Rabbids Kingdom Battle and Sparks of Hope cut the same Snowdrop three-pool allocator; one function-matched rule could serve both only if their code matches (not checked). The unused 272-byte slot pool is Sparks of Hope's alone (Kingdom Battle's main and subsdk0 have no such init). The cause, an iPhone's address space, cannot be fixed in the host
 
-- **1.6.2225577 `main`** `5b76a43b…` ([patches.py:19](../../dm/games/0100317013770000/patches.py#L19))
+- **1.6.2225577 `main`** `5b76a43b…` ([patches.py:29](../../dm/games/0100317013770000/patches.py#L29))
   - cut `+0x1642c8`: Snowdrop allocator: initialize the three range-size fields to 512 MB (mov x8,#0x20000000); the large range is overridden to 2 GB below
   - cut `+0x1642fc`: Snowdrop allocator: combined virtual range end uses 3 GB instead of 12 GB (mov x22,#0xc0000000)
   - cut `+0x164300`: Snowdrop allocator: prepare 2 GB for the large range (mov x1,#0x80000000); AllocateAddressRegion wrapper discards incoming x1
   - cut `+0x164308`: Snowdrop allocator: reserve 3 GB instead of 12 GB (mov x0,#0xc0000000)
   - cut `+0x16430c`: Snowdrop allocator: override the large range-size field to 2 GB (str x1,[x19,#0xa8]); AllocateAddressRegion wrapper never reads x2
   - cut `+0x164338`: Snowdrop large allocator: maximum 64 KB page count 65536 -> 32768, matching its 2 GB range (mov w5,#0x8000)
+  - cut `+0x94354`: Unused 272-byte slot pool: 4,194,304 -> 65,536 slots, 1.06 GB -> 17 MB of address space (mov w1,#0x10000)
 
 ### Monster Hunter Rise
 

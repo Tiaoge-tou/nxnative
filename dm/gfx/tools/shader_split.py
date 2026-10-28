@@ -2013,7 +2013,9 @@ def unity_text_glslc(x, base):
     return out
 
 def scan_blob(d, label, out):
-    if d[:4] == b'HCPS': out.extend(hcps_shaders(d, 0, label)); return
+    if d[:4] in (b'HCPS', b'xbc1', b'DRSM') or d[:8] == b'cmp\0zlib':
+        monolith_shaders(d, label, out)
+        return
     for m in re.finditer(b'SLCT\x03\x10\0\0', d): out.extend(slct_shaders(d, m.start(), label))
     if d[:4] == b'Yaz0': d = yaz0(d)
     if d[:4] == b'SARC':
@@ -2183,7 +2185,15 @@ def scan_file_in(args):
                 if '.fx' in entry[0] or '/shaders/' in entry[0] or entry[0].endswith(('.vs.bin', '.ps.bin', '.fs.bin')):
                     found += phyre_shaders(vbf.read(f, entry), f'/{rel}/{entry[0]}')
         return rel, uniq_keys(found), var_pairs(found), trees
-    d = unzs(path) if head[:4] == ZSTD_MAGIC else open(path, 'rb').read()   # by the magic: Paper Mario: The Thousand-Year Door names its zstd files .zst (8,726, its shaders among them)
+    if head[:4] == ZSTD_MAGIC: d = unzs(path)   # by the magic: Paper Mario: The Thousand-Year Door names its zstd files .zst (8,726, its shaders among them)
+    else:
+        with open(path, 'rb') as f: d = f.read()
+    # Monolith also ships these containers loose, without an ARH/ARD archive
+    # (Xenoblade DE). The generic prefilter below otherwise drops even HCPS.
+    # DRSM model streams contain several embedded XBC1 resources.
+    if d[:4] in (b'HCPS', b'xbc1', b'DRSM') or d[:8] == b'cmp\0zlib':
+        scan_blob(d, '/' + rel, found)
+        return rel, uniq_keys(found), var_pairs(found), trees
     if d[:4] == b'RYHP' or d[8:12] == GFX_MAGIC:
         found += phyre_shaders(d, '/' + rel)
         return rel, uniq_keys(found), var_pairs(found), trees
