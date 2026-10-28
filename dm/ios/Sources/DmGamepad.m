@@ -226,9 +226,9 @@ static const struct { int bit; int kind; int dir; const char *label; CGFloat x, 
     {B_L,     H_TOP,  0, "L",  0.817, 0.086, 0.020},
     {B_ZL,    H_TOP,  0, "ZL", 0.880, 0.086, 0.020},
     {B_ZR,    H_TOP,  0, "ZR", 0.943, 0.086, 0.020},
-    {B_R,     H_FACE, 0, "R",  0.903, -0.1451, 0.031},   // fan keys: y = offset from Y's centre, in width fractions
-    {B_A,     H_FACE, 0, "A",  0.831, -0.1257, 0.031},
-    {B_X,     H_FACE, 0, "X",  0.778, -0.0723, 0.031},
+    {B_R,     H_FACE, 0, "R",  0.903, -0.1451, 0.031},   // fan keys: y = offset from Y's centre, in width fractions; the four centres sit on a radius of 0.1451 about Y's centre, at 0/30/60/90 degrees from straight above Y
+    {B_A,     H_FACE, 0, "A",  0.8305, -0.1257, 0.031},
+    {B_X,     H_FACE, 0, "X",  0.7773, -0.0726, 0.031},
     {B_B,     H_FACE, 0, "B",  0.758,  0.0,    0.031},
     {B_Y,     H_FACE, 0, "Y",  0.903,  0.715,  0.038},
     {B_LEFT,  H_DPAD, 0, NULL, 0.645, 0.896, 0.019},
