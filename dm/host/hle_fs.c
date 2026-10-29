@@ -718,7 +718,10 @@ HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; the mount table is permanent, unmou
 // neither served value is the file's own: recognition is by the stock pattern, then. A docked value
 // prefixed with * is computed instead: the handheld value scaled by DM_RENDER_WIDTH / 1920 (the
 // front end publishes the render width, which follows the screen), the written pattern kept as the
-// fallback when no render width is published. The file on disk is never touched: ReadFile
+// fallback when no render width is published. A value prefixed with # is served as the mode's
+// render width (DM_RENDER_WIDTH docked, DM_RENDER_WIDTH_HD handheld) written as four ASCII decimal
+// digits -- a text literal a datapack patch froze to one device's size; it is served only when that
+// width has four digits, and recognition still goes by the named stock pattern. The file on disk is never touched: ReadFile
 // substitutes the mode's value in the buffer it returns, and only when the bytes read are one of
 // the known values, so a file from another build is served exactly as it lies. The decision is
 // taken per read from dm_opmode(), so it follows the mode the session runs in; a file already read
@@ -729,7 +732,7 @@ HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; the mount table is permanent, unmou
 // patch, made mode-conditional and kept off the disk. The same roots' local scale Y is served the
 // reciprocal of the docked present stretch in docked mode (pre-squashed, so the front end's
 // anisotropic scale lands it round) and stock in handheld mode, whose frame is the screen's aspect.
-typedef struct { uint32_t off, dock, hand, stock; uint8_t has_stock, computed; } serve_slot_t;
+typedef struct { uint32_t off, dock, hand, stock; uint8_t has_stock, computed, ascii_dock, ascii_hand; } serve_slot_t;
 typedef struct { char name[64]; serve_slot_t slot[4]; int n, narrow, wide; } serve_patch_t;
 static serve_patch_t g_serve[4]; static int g_nserve;
 static pthread_once_t g_serve_once = PTHREAD_ONCE_INIT;
@@ -747,16 +750,17 @@ static void serve_parse(void) {
             serve_slot_t *sl = &p->slot[p->n]; char *end;
             sl->off = (uint32_t)strtoul(s + 1, &end, 16); if (end == s + 1 || *end != ':') return;
             s = end + 1;
-            uint32_t v[3]; int star[3] = {0, 0, 0}, nv = 0;
+            uint32_t v[3]; int star[3] = {0, 0, 0}, hash[3] = {0, 0, 0}, nv = 0;
             while (nv < 3) {
                 if (*s == '*') { star[nv] = 1; s++; }
+                else if (*s == '#') { hash[nv] = 1; s++; }
                 v[nv] = (uint32_t)strtoul(s, &end, 16); if (end == s) return;
                 nv++; s = end;
                 if (*s != '>') break;
                 s++;
             }
-            if (nv == 2) { sl->dock = v[0]; sl->hand = v[1]; sl->computed = (uint8_t)star[0]; }
-            else if (nv == 3) { sl->stock = v[0]; sl->has_stock = 1; sl->dock = v[1]; sl->hand = v[2]; sl->computed = (uint8_t)star[1]; }
+            if (nv == 2) { sl->dock = v[0]; sl->hand = v[1]; sl->computed = (uint8_t)star[0]; sl->ascii_dock = (uint8_t)hash[0]; sl->ascii_hand = (uint8_t)hash[1]; }
+            else if (nv == 3) { sl->stock = v[0]; sl->has_stock = 1; sl->dock = v[1]; sl->hand = v[2]; sl->computed = (uint8_t)star[1]; sl->ascii_dock = (uint8_t)hash[1]; sl->ascii_hand = (uint8_t)hash[2]; }
             else return;
             p->n++;
         }
@@ -794,14 +798,25 @@ static uint32_t serve_dock_computed(const serve_slot_t *sl) {   // a * docked va
     float hv, out; memcpy(&hv, &sl->hand, 4); out = hv * ((float)rw / 1920.0f);
     uint32_t bits; memcpy(&bits, &out, 4); return bits;
 }
+static int serve_ascii_width(int hand, uint32_t *out) {   // a # value: the mode's render width as four ASCII decimal digits
+    const char *e = getenv(hand ? "DM_RENDER_WIDTH_HD" : "DM_RENDER_WIDTH");
+    long v = e ? strtol(e, NULL, 10) : 0;
+    if (v < 1000 || v > 9999) return 0;   // not a four-digit width: serve the file as it lies
+    char b[8]; snprintf(b, sizeof b, "%ld", v);
+    memcpy(out, b, 4);
+    return 1;
+}
 static void serve_apply(const serve_patch_t *sp, uint64_t h, int64_t off, void *buf, size_t got) {
     int hand = dm_opmode() == 0;   // handheld serves the second value of each slot, docked the first
     int applied = 0;
     for (int i = 0; i < sp->n; i++) { const serve_slot_t *sl = &sp->slot[i];
         if (sl->off >= (uint64_t)off && sl->off + 4 <= (uint64_t)off + got) {
             uint32_t cur; memcpy(&cur, (const uint8_t *)buf + (sl->off - (uint64_t)off), 4);
-            if (cur == sl->dock || cur == sl->hand || (sl->has_stock && cur == sl->stock)) { uint32_t want = hand ? sl->hand : (sl->computed ? serve_dock_computed(sl) : sl->dock);
-                if (cur != want) { memcpy((uint8_t *)buf + (sl->off - (uint64_t)off), &want, 4); applied = 1; } }
+            if (cur == sl->dock || cur == sl->hand || (sl->has_stock && cur == sl->stock)) { uint32_t want = 0; int have = 1;
+                if (hand) { if (sl->ascii_hand) have = serve_ascii_width(1, &want); else want = sl->hand; }
+                else if (sl->ascii_dock) have = serve_ascii_width(0, &want);
+                else want = sl->computed ? serve_dock_computed(sl) : sl->dock;
+                if (have && cur != want) { memcpy((uint8_t *)buf + (sl->off - (uint64_t)off), &want, 4); applied = 1; } }
         } }
     if (applied) { static _Atomic int logged[2]; if (!logged[hand]++) LOG("[fs] serve patch %s: values served %s (handle %llx)", sp->name, hand ? "handheld" : "docked", (unsigned long long)h); }
 }

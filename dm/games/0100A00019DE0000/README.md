@@ -46,6 +46,7 @@ General host changes first needed here; each applies to every game:
 
 - **Combined texture slots past 31** (the combined table up to 0x168, 41 slots, sharing words with the image table; a bound texture written there when the image slot is unbound): [04, Find the binding layout by census](../../../docs/agents/04-graphics.md#3-find-the-binding-layout-by-census).
 - **The SDK 19 `nn::ro::LoadModule` form** and `ro::Finalize` hooked (`hle_ro.c`): [`nn::ro` and its port](../../../docs/reference/services.md#nnro-and-its-port).
+- **A baked frame literal served per device**: the RomFS patch froze RunLogic's cached frame size to one phone's 2344x1080, so on an iPad mini (1640x1080) the engine laid its UI out for the wider frame (HUD lifted, margins pushed out; an overlay copy of the file with the width set to 1640 confirmed the cause on device, 2026-10-29). The profile's `serve_patch` now serves the two literals from the mode's render size instead (the `#` value kind in `hle_fs.c`: the render width as four ASCII digits; the height as the mode's frame height), so one image serves every screen and its identity is untouched.
 
 ## Open
 

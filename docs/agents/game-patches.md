@@ -762,6 +762,7 @@ Profile keys (`game.tsv`) whose value changes what the host does, set away from 
 | `pad_skin_toggle on` | [Hollow Knight: Silksong](../../dm/games/010013C00E930000/README.md) |
 | `present_snap on` | [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md) |
 | `pso_mtl4 on` | [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md) |
+| `serve_patch RunLogic.lua@1782a:34343332>#00000000>#00000000@17846:30383031>30383031>30323730` | [Hades II](../../dm/games/0100A00019DE0000/README.md) |
 | `serve_patch n:menu_title.bundle@6E3E5C:41030A3D>4129C10A@6EAA5C:00000000>401ADB34@6EAA6C:*3F5B4A53>3F800000 w:menu_title.bundle@6E3E5C:41030A3D>40B8A6E1>40B8A6E1@6EAA5C:00000000>C01ADB34>C01ADB34` | [Hollow Knight: Silksong](../../dm/games/010013C00E930000/README.md) |
 | `shader_key_skip 0x770+0x78` | [Batman: Arkham Knight](../../dm/games/0100ACD0163D0000/README.md) |
 | `stdalloc_cap 0xa0000000` | [Absolum](../../dm/games/0100A83022A22000/README.md) |
