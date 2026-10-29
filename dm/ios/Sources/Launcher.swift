@@ -54,7 +54,7 @@ private struct LauncherView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
-                .contentMargins(.horizontal, 12, for: .scrollContent)
+                .launcherScrollMargins()
                 .frame(width: geometry.size.width * 2 / 3)
             }
         }
@@ -77,6 +77,13 @@ private struct LauncherView: View {
         guard let icons = info("CFBundleIcons") as? [String: Any], let primary = icons["CFBundlePrimaryIcon"] as? [String: Any],
               let files = primary["CFBundleIconFiles"] as? [String], let last = files.last else { return nil }
         return UIImage(named: last)
+    }
+}
+
+private extension View {
+    // contentMargins(_:_:for:) is iOS 17+; on 16 the inset-grouped list keeps its default margins
+    @ViewBuilder func launcherScrollMargins() -> some View {
+        if #available(iOS 17.0, *) { self.contentMargins(.horizontal, 12, for: .scrollContent) } else { self }
     }
 }
 
