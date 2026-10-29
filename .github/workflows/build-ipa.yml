@@ -72,9 +72,13 @@ on:
         required: false
         default: "hades2.zip"
       parts_tag:
-        description: "Parts only: tag of the DRAFT release in this repo holding the zip parts as assets"
+        description: "Parts only: tag of the DRAFT release in this repo holding the zip parts as assets (log label only; drafts are fetched by ID, the by-tag endpoint never returns a draft)"
         required: false
         default: "dsr-parts"
+      parts_release_id:
+        description: "Parts only: numeric ID of that DRAFT release"
+        required: false
+        default: "427424478"
       parts_sha256:
         description: "Parts only: expected SHA-256 of the joined zip (empty = verify part sizes only)"
         required: false
@@ -139,6 +143,7 @@ jobs:
           HF_FILE: ${{ inputs.hf_file }}
           GH_TOKEN: ${{ github.token }}
           PARTS_TAG: ${{ inputs.parts_tag }}
+          PARTS_RELEASE_ID: ${{ inputs.parts_release_id }}
           PARTS_SHA256: ${{ inputs.parts_sha256 }}
         run: |
           set -eu
@@ -321,11 +326,16 @@ jobs:
             # to Drive/HF in one shot from the maintainer's side; the parts
             # are joined in name order and verified before the unzip.
             TAG="${PARTS_TAG:-dsr-parts}"
-            echo "Fetching parts from draft release $TAG in $GITHUB_REPOSITORY"
+            RID="${PARTS_RELEASE_ID:-}"
+            if [ -z "$RID" ]; then
+              echo "::error::Set the parts_release_id input (a draft release is fetched by ID; the by-tag endpoint never returns one)."
+              exit 1
+            fi
+            echo "Fetching parts from draft release $TAG (id $RID) in $GITHUB_REPOSITORY"
             mkdir -p "$RUNNER_TEMP/parts"
-            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets | sort_by(.name)[] | "\(.id)\t\(.name)\t\(.size)"' > "$RUNNER_TEMP/parts/list.tsv"
+            gh api "repos/$GITHUB_REPOSITORY/releases/$RID" --jq '.assets | sort_by(.name)[] | "\(.id)\t\(.name)\t\(.size)"' > "$RUNNER_TEMP/parts/list.tsv"
             if [ ! -s "$RUNNER_TEMP/parts/list.tsv" ]; then
-              echo "::error::No assets found on release $TAG."
+              echo "::error::No assets found on release $TAG (id $RID)."
               exit 1
             fi
             : > "$RUNNER_TEMP/game.zip"
