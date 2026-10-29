@@ -132,7 +132,7 @@ int dm_opmode(void);   // hle_oe.c: 0 = handheld
 // Drawn controls are replaced by image controls in the layout of the fan Android port of Silksong: a fixed stick disc
 // bottom-left (its medallion knob follows the touch), the action keys bottom-right in two rows, quick map / inventory / pause
 // small at the top-right. Centres are fractions of the whole screen, radii a fraction of its width. Keys follow the game's
-// Switch defaults. Two skill keys (grp SK_SKILL: Needolin, Clawline) do nothing until the skill is earned and
+// Switch defaults. Two skill keys (grp SK_SKILL: tool, Clawline) do nothing until the skill is earned and
 // the pad cannot know the game's progress, so the eye key (grp SK_TOGGLE, not a game key) shows or hides them for
 // the session; they start hidden at each launch, the eye in its pressed state (the default the player asked
 // for, set explicitly in init).
@@ -143,8 +143,8 @@ static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_sk
     {"attack",   B_Y,     SK_ALWAYS, 0.684, 0.822, 0.040},   // needle attack
     {"jump",     B_B,     SK_ALWAYS, 0.781, 0.822, 0.040},
     {"dash",     B_ZR,    SK_ALWAYS, 0.876, 0.822, 0.040},   // Swift Step: tap dashes, hold sprints
-    {"tool",     B_R,     SK_ALWAYS, 0.783, 0.080, 0.023},   // the equipped tool: the top row, between map and bag, always shown (the frame is the top row's double-horn frame)
-    {"needolin", B_X,     SK_SKILL,  0.877, 0.410, 0.040},   // Needolin (swapped with Clawline)
+    {"tool",     B_R,     SK_SKILL,  0.877, 0.410, 0.040},   // the equipped tool: the cluster's top right (Needolin's old seat), in its original round frame; an eye-key skill key
+    {"needolin", B_X,     SK_ALWAYS, 0.783, 0.080, 0.023},   // Needolin: the top row, between map and bag, in the double-horn frame; always shown (not an eye-key skill key)
     {"bind",     B_A,     SK_ALWAYS, 0.877, 0.616, 0.040},   // Bind (heal)
     {"clawline", B_ZL,    SK_SKILL,  0.781, 0.616, 0.040},   // Clawline (swapped with Needolin)
     {"eye",      0,       SK_TOGGLE, 0.672, 0.080, 0.023},   // show / hide the skill keys
