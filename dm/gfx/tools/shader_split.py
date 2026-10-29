@@ -1835,7 +1835,9 @@ def monolith_cmp_data(d, off):
     if off + 16 > len(d) or d[off:off + 8] != b'cmp\0zlib': return None
     size, raw = struct.unpack_from('<2I', d, off + 8)
     if not size or size > len(d) - off - 16: return None
-    z = zlib.decompressobj(); data = z.decompress(d[off + 16:off + 16 + size]) + z.flush()
+    z = zlib.decompressobj()
+    try: data = z.decompress(d[off + 16:off + 16 + size]) + z.flush()
+    except zlib.error as e: red(f'cmp zlib @{off:#x}: damaged payload ({e})')
     if not z.eof or z.unused_data or len(data) != raw: red(f'cmp zlib @{off:#x}: payload does not match stored/raw sizes')
     return data, off + 16 + size
 

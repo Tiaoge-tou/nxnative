@@ -766,6 +766,7 @@ Profile keys (`game.tsv`) whose value changes what the host does, set away from 
 | `serve_patch n:menu_title.bundle@6E3E5C:41030A3D>4129C10A@6EAA5C:00000000>401ADB34@6EAA6C:*3F5B4A53>3F800000 w:menu_title.bundle@6E3E5C:41030A3D>40B8A6E1>40B8A6E1@6EAA5C:00000000>C01ADB34>C01ADB34` | [Hollow Knight: Silksong](../../dm/games/010013C00E930000/README.md) |
 | `shader_key_skip 0x770+0x78` | [Batman: Arkham Knight](../../dm/games/0100ACD0163D0000/README.md) |
 | `stdalloc_cap 0xa0000000` | [Absolum](../../dm/games/0100A83022A22000/README.md) |
+| `ue_texture_pool 1000` | [DRAGON QUEST VII Reimagined](../../dm/games/0100A9D01C446000/README.md) |
 | `vconv_range on` | [Hyrule Warriors: Age of Calamity](../../dm/games/01002B00111A2000/README.md) |
 | `display_hz 120` | [Hades II](../../dm/games/0100A00019DE0000/README.md), [Hollow Knight: Silksong](../../dm/games/010013C00E930000/README.md) |
 | `fps_hold off` | [Hyrule Warriors: Age of Calamity](../../dm/games/01002B00111A2000/README.md), [Paper Mario: The Thousand-Year Door](../../dm/games/0100ECD018EBE000/README.md) |
