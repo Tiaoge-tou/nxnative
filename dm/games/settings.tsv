@@ -32,6 +32,6 @@ DM_SILK_SKIN	choice	0=默认,1=黑荆棘,2=黑荆棘（角标）	1	DM_GAME_PAD_S
 DM_PRESENT_SNAP	toggle	-	DM_GAME_PRESENT_SNAP	gfxapi:nvn	Performance	帧缓冲	可能减少卡顿；会增加显示延迟。	
 DM_PSO_MTL4	toggle	-	DM_GAME_PSO_MTL4|1	gfxapi:nvn	Performance	Metal 4 管线	保留管线档案；占用更多内存。	
 DM_PSO_PREBUILD	toggle	-	1	gfxapi:nvn	Performance	管线预构建	首次启动需等待几分钟，仅一次。	
-DM_NVN_ENC_THREAD	toggle	-	1|0	gfxapi:nvn	Performance	编码线程		
+DM_NVN_ENC_THREAD	toggle	-	1|DM_GAME_ENC_THREAD	gfxapi:nvn	Performance	编码线程		
 DM_FPS_HOLD	toggle	on/off	DM_GAME_FPS_HOLD	DM_GAME_FPS_TARGET!=0	Performance	迟帧保持		
 DM_METAL_HUD	toggle	-	0	always	Performance	性能面板	苹果开发者性能浮层（GPU、帧时间等），一般保持关闭	

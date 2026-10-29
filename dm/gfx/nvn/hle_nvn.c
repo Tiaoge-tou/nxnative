@@ -509,6 +509,9 @@ NVN(nvnTextureCompare, NVNboolean, const NVNtexture *a, const NVNtexture *b) {
 }
 // No prototype in the header; call sites such as main 0x174899c compare the return value with 1 and set some status bit 0x100 if not equal. Meaning unverified; return 1 for now
 NVN_NOPROTO(nvnTextureGetRawStorageClass, int, const NVNtexture *t) { (void)t; return 1; }
+// The class a texture from this builder would report, so the two agree: EA SPORTS FC 27's Frostbite renderer asks the builder (the class names the page kind a virtual pool maps,
+// NVNmappingRequest.storageClass, which the host's virtual pools do not distinguish)
+NVN_NOPROTO(nvnTextureBuilderGetRawStorageClass, int, const NVNtextureBuilder *b) { (void)b; return 1; }
 #define VW(v) ((view_t *)(v))
 NVN(nvnTextureViewSetDefaults, void, NVNtextureView *v) { memset(v, 0, sizeof(view_t)); }
 NVN(nvnTextureViewSetLevels, void, NVNtextureView *v, int base, int n) { VW(v)->set_levels = 1; VW(v)->base_level = base; VW(v)->nlevels = n; }
@@ -1001,7 +1004,10 @@ NVN(nvnCommandBufferBindStorageBuffers, void, NVNcommandBuffer *c, NVNshaderStag
 }
 static p_bind_handles *bind_handles(NVNcommandBuffer *c, int op, int st, int first, int n, const uint64_t *h) {
     if (n < 0 || n > 32) { LOG("[RED] bind handle count %d", n); return NULL; }
-    p_bind_handles *r = RECN(c, op, p_bind_handles, h, n); r->stage = st; r->first = first; r->n = n; r->defer = 0; r->src = 0; memcpy(r->h, h, 8 * n);
+    p_bind_handles *r = RECN(c, op, p_bind_handles, h, n); r->stage = st; r->first = first; r->n = n; r->defer = 0; r->src = 0;
+    // The driver writes each handle into the c2 table as a 32-bit word (texture ID in bits 0-19, sampler ID in bits 20-31), so the GPU never sees the upper half of the 64-bit handle.
+    // EA SPORTS FC 27 binds separate textures with bit 32 set (0x1000001d1): read whole, its sampler ID was 4096, beyond any pool, where the GPU reads sampler 0
+    for (int i = 0; i < n; i++) r->h[i] = (uint32_t)h[i];
     {   // this command buffer may have bound a pool other than the first: move its IDs to that pool's part of the table (handle: texture ID in bits 0-19, sampler ID from bit 20)
         int tb = CB(c)->tex_base, sb = CB(c)->samp_base;
         for (int i = 0; i < n && (tb || sb); i++) {
@@ -2013,7 +2019,10 @@ NVN(nvnBufferInitialize, NVNboolean, NVNbuffer *buf, const NVNbufferBuilder *b) 
 NVN(nvnBufferFinalize, void, NVNbuffer *buf) { ((buf_t *)buf)->magic = 0; }
 NVN(nvnBufferSetDebugLabel, void, NVNbuffer *buf, const char *s) { (void)buf; (void)s; }
 NVN(nvnBufferGetAddress, NVNbufferAddress, const NVNbuffer *buf) { return (NVNbufferAddress)(BF(buf)->pool->mem + BF(buf)->off); }
-NVN(nvnBufferMap, void *, const NVNbuffer *buf) { return BF(buf)->pool->mem + BF(buf)->off; }
+// A buffer or pool the CPU has no access to (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) maps to NULL, as in NVN, though the host's storage is CPU memory: EA SPORTS FC 27's Frostbite
+// renderer takes a buffer's GPU address as GetAddress + (its data pointer − Map), with a null data pointer for such a buffer (OpcodeCopySubresource), so a real pointer made the
+// copy's destination address 0 (FATAL buffer copy address is in no memory pool)
+NVN(nvnBufferMap, void *, const NVNbuffer *buf) { return BF(buf)->pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS ? NULL : BF(buf)->pool->mem + BF(buf)->off; }
 NVN(nvnBufferGetSize, size_t, const NVNbuffer *buf) { return (size_t)BF(buf)->size; }
 NVN(nvnBufferGetMemoryPool, NVNmemoryPool *, const NVNbuffer *buf) { return (NVNmemoryPool *)BF(buf)->pool; }
 NVN(nvnBufferGetMemoryOffset, ptrdiff_t, const NVNbuffer *buf) { return (ptrdiff_t)BF(buf)->off; }
@@ -2022,7 +2031,7 @@ NVN(nvnBufferInvalidateMappedRange, void, const NVNbuffer *buf, ptrdiff_t off, s
 
 // Memory pool queries
 NVN(nvnMemoryPoolGetFlags, NVNmemoryPoolFlags, const NVNmemoryPool *p) { return (NVNmemoryPoolFlags)((const pool_t *)p)->flags; }
-NVN(nvnMemoryPoolMap, void *, const NVNmemoryPool *p) { return ((const pool_t *)p)->mem; }
+NVN(nvnMemoryPoolMap, void *, const NVNmemoryPool *p) { return ((const pool_t *)p)->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS ? NULL : ((const pool_t *)p)->mem; }   // NULL without CPU access (nvnBufferMap)
 NVN(nvnMemoryPoolGetSize, size_t, const NVNmemoryPool *p) { return (size_t)((const pool_t *)p)->size; }
 NVN(nvnMemoryPoolInvalidateMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) { (void)p; (void)off; (void)n; }
 NVN(nvnMemoryPoolSetDebugLabel, void, NVNmemoryPool *p, const char *s) { (void)p; (void)s; }
@@ -2276,6 +2285,13 @@ NVN(nvnMultisampleStateGetSampleLocationsGridEnable, NVNboolean, const NVNmultis
 // Builder and pool queries
 NVN(nvnBufferBuilderGetSize, size_t, const NVNbufferBuilder *b) { return (size_t)((const buf_builder_t *)b)->size; }
 NVN(nvnBufferBuilderGetMemoryOffset, ptrdiff_t, const NVNbufferBuilder *b) { return (ptrdiff_t)((const buf_builder_t *)b)->off; }
+// The storage set with SetStorage (EA SPORTS FC 27's Frostbite renderer reads it back from its texture builders before it initializes the textures). The pool getters return the
+// pool's address, as nvnTextureGetMemoryPool does; the header the prototypes come from declares the builders' by value, so they get no signature check
+NVN_NOPROTO(nvnBufferBuilderGetMemoryPool, NVNmemoryPool *, const NVNbufferBuilder *b) { return (NVNmemoryPool *)((const buf_builder_t *)b)->pool; }
+NVN_NOPROTO(nvnTextureBuilderGetMemoryPool, NVNmemoryPool *, const NVNtextureBuilder *b) { return (NVNmemoryPool *)((const tex_builder_t *)b)->pool; }
+NVN(nvnTextureBuilderGetMemoryOffset, ptrdiff_t, const NVNtextureBuilder *b) { return (ptrdiff_t)((const tex_builder_t *)b)->off; }
+NVN_NOPROTO(nvnEventBuilderGetMemoryPool, NVNmemoryPool *, const NVNeventBuilder *b) { return (NVNmemoryPool *)((const ev_builder_t *)b)->pool; }
+NVN_NOPROTO(nvnEventBuilderGetMemoryOffset, int64_t, const NVNeventBuilder *b) { return ((const ev_builder_t *)b)->off; }
 NVN(nvnTextureBuilderGetTarget, NVNtextureTarget, const NVNtextureBuilder *b) { return (NVNtextureTarget)((const tex_builder_t *)b)->d.target; }
 NVN(nvnTextureBuilderGetWidth, int, const NVNtextureBuilder *b) { return (int)((const tex_builder_t *)b)->d.width; }
 NVN(nvnTextureBuilderGetHeight, int, const NVNtextureBuilder *b) { return (int)((const tex_builder_t *)b)->d.height; }
