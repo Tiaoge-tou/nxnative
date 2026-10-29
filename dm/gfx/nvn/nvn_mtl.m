@@ -407,15 +407,19 @@ void mtl_init(void) {
     if (getenv("DM_TEST_NO_METAL4")) no4 = "DM_TEST_NO_METAL4";   // test switch: as on a virtual Mac; not set in the product
     else if (![g_dev supportsFamily:MTLGPUFamilyMetal4]) no4 = "no Metal 4 GPU family";
     else {
-        MTLResidencySetDescriptor *rd = [MTLResidencySetDescriptor new];
+        MTLResidencySetDescriptor *rd = [NSClassFromString(@"MTLResidencySetDescriptor") new];   // by name, like the MTL4 classes below: the class is iOS 18+, the binary must still load before it
         rd.initialCapacity = 4096;
-        g_res = [g_dev newResidencySetWithDescriptor:rd error:&re];
+        g_res = rd ? [g_dev newResidencySetWithDescriptor:rd error:&re] : nil;
         if (!g_res) no4 = "failed to create the MTLResidencySet";
     }
     if (!no4) {
         dispatch_queue_attr_t feedback_attr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
         g_feedback_q = dispatch_queue_create("dm.nvn.mtl4-feedback", feedback_attr);
-        MTL4CommandQueueDescriptor *q4d = [MTL4CommandQueueDescriptor new]; q4d.feedbackQueue = g_feedback_q;
+        // The MTL4 classes are fetched by name (NSClassFromString) everywhere in this file: a direct
+        // class reference is a strong symbol, and the binary would not load at all on a system before
+        // iOS 26, where the classes do not exist -- even though this path is only entered behind the
+        // supportsFamily:MTLGPUFamilyMetal4 check above (and pso_mtl4_on on the pipeline side).
+        MTL4CommandQueueDescriptor *q4d = [NSClassFromString(@"MTL4CommandQueueDescriptor") new]; q4d.feedbackQueue = g_feedback_q;
         g_q4 = [g_dev newMTL4CommandQueueWithDescriptor:q4d error:&re];
         if (!g_q4) no4 = "failed to create the MTL4CommandQueue";
     }
@@ -433,21 +437,21 @@ void mtl_init(void) {
     { void crash_set_wait_dump(void (*fn)(void)); void mtl_wait_state_dump(void); crash_set_wait_dump(mtl_wait_state_dump); }
     g_alloc_n = 3;
     for (int i = 0; i < 3; i++) {
-        MTL4CommandAllocatorDescriptor *ad = [MTL4CommandAllocatorDescriptor new];
+        MTL4CommandAllocatorDescriptor *ad = [NSClassFromString(@"MTL4CommandAllocatorDescriptor") new];
         ad.label = [NSString stringWithFormat:@"nvn-mtl allocator %d", i];
         NSError *ae = nil;
         g_alloc4[i] = [g_dev newCommandAllocatorWithDescriptor:ad error:&ae];
         if (!g_alloc4[i]) MDIE("failed to create MTL4CommandAllocator[%d]: %s", i, ae.localizedDescription.UTF8String);
         g_up_alloc4[i] = [g_dev newCommandAllocatorWithDescriptor:ad error:&ae];
         if (!g_up_alloc4[i]) MDIE("failed to create upload MTL4CommandAllocator[%d]: %s", i, ae.localizedDescription.UTF8String);
-        MTL4CommandAllocatorDescriptor *pad = [MTL4CommandAllocatorDescriptor new];
+        MTL4CommandAllocatorDescriptor *pad = [NSClassFromString(@"MTL4CommandAllocatorDescriptor") new];
         pad.label = [NSString stringWithFormat:@"nvn-mtl present allocator %d", i];
         g_present_alloc4[i] = [g_dev newCommandAllocatorWithDescriptor:pad error:&ae];
         if (!g_present_alloc4[i]) MDIE("failed to create present MTL4CommandAllocator[%d]: %s", i, ae.localizedDescription.UTF8String);
         g_present_cb[i] = [g_dev newCommandBuffer];
         if (!g_present_cb[i]) MDIE("failed to create present MTL4CommandBuffer[%d]", i);
     }
-    MTL4ArgumentTableDescriptor *atd = [MTL4ArgumentTableDescriptor new];
+    MTL4ArgumentTableDescriptor *atd = [NSClassFromString(@"MTL4ArgumentTableDescriptor") new];
     atd.maxBufferBindCount = 31; atd.maxTextureBindCount = 1;
     NSError *ate = nil;
     g_vt = rec_table([g_dev newArgumentTableWithDescriptor:atd error:&ate]); if (!g_vt) MDIE("failed to create the vertex argument table: %s", ate.localizedDescription.UTF8String);
@@ -455,7 +459,7 @@ void mtl_init(void) {
     g_ft = rec_table([g_dev newArgumentTableWithDescriptor:atd error:&ate]); if (!g_ft) MDIE("failed to create the fragment argument table: %s", ate.localizedDescription.UTF8String);
     g_ct = rec_table([g_dev newArgumentTableWithDescriptor:atd error:&ate]); if (!g_ct) MDIE("failed to create the compute argument table: %s", ate.localizedDescription.UTF8String);
     g_up_ct = [g_dev newArgumentTableWithDescriptor:atd error:&ate]; if (!g_up_ct) MDIE("failed to create the upload compute argument table: %s", ate.localizedDescription.UTF8String);
-    MTL4ArgumentTableDescriptor *pad = [MTL4ArgumentTableDescriptor new];
+    MTL4ArgumentTableDescriptor *pad = [NSClassFromString(@"MTL4ArgumentTableDescriptor") new];
     pad.maxTextureBindCount = 1; pad.maxSamplerStateBindCount = 1; pad.maxBufferBindCount = 1;
     g_present_args = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
     if (!g_present_args) MDIE("failed to create the present argument table: %s", ate.localizedDescription.UTF8String);
@@ -801,7 +805,7 @@ void mtl_sub_begin(void) {
     // pick an allocator the GPU has finished with; if all are in use create a new one; only at the cap wait for the oldest one. How far ahead it runs is bounded by the wait where the game acquires the swapchain texture, same as the old interface.
     int alloc_i = -1; uint64_t done = g_done;
     for (int i = 0; i < g_alloc_n; i++) if (g_alloc_fence[i] <= done) { alloc_i = i; break; }
-    if (alloc_i < 0 && g_alloc_n < ALLOC_MAX) { NSError *ae = nil; MTL4CommandAllocatorDescriptor *ad = [MTL4CommandAllocatorDescriptor new];
+    if (alloc_i < 0 && g_alloc_n < ALLOC_MAX) { NSError *ae = nil; MTL4CommandAllocatorDescriptor *ad = [NSClassFromString(@"MTL4CommandAllocatorDescriptor") new];
         g_alloc4[g_alloc_n] = [g_dev newCommandAllocatorWithDescriptor:ad error:&ae]; if (!g_alloc4[g_alloc_n]) MDIE("failed to create a new MTL4CommandAllocator: %s", ae.localizedDescription.UTF8String);
         alloc_i = g_alloc_n++; g_alloc_grown++; }
     if (alloc_i < 0) { alloc_i = 0; for (int i = 1; i < g_alloc_n; i++) if (g_alloc_fence[i] < g_alloc_fence[alloc_i]) alloc_i = i; g_alloc_waits++; mtl_wait_at(g_alloc_fence[alloc_i], UINT64_MAX, WS_ALLOC); }
@@ -843,7 +847,7 @@ static void gp_end(id e);
 static inline void m4_end(id e) {
     gp_end(e);
     MTL4VisibilityOptions vis = e == g_blit ? blit_vis() : resource_vis(); if (e == g_blit) g_blit_alias = 0;
-    if ([e conformsToProtocol:@protocol(MTL4CommandEncoder)]) [(id<MTL4CommandEncoder>)e barrierAfterStages:MTLStageAll beforeQueueStages:MTLStageAll visibilityOptions:vis];
+    if ([e conformsToProtocol:NSProtocolFromString(@"MTL4CommandEncoder")]) [(id<MTL4CommandEncoder>)e barrierAfterStages:MTLStageAll beforeQueueStages:MTLStageAll visibilityOptions:vis];
     [e endEncoding]; g_last_end_relaxed = 0;
 }
 // DM_NVN_BARRIER=game (default full): draw passes are ordered by the game's own barriers. A draw pass ends with a barrier from its vertex and fragment stages to the fragment, compute and copy stages of
@@ -892,7 +896,7 @@ static void gp_begin(id e, char kind, MTL4RenderPassDescriptor *d) {   // right 
     gp_periodic_finish();
     if (g_gp_every > 0 && g_gp_state == 2 && !atomic_load(&g_gp_busy)) g_gp_state = 0;   // the previous periodic profile has been reported
     if (!gp_active() || g_gp_state == 2) return;
-    if (!g_gp_heap) { MTL4CounterHeapDescriptor *hd = [MTL4CounterHeapDescriptor new]; hd.type = MTL4CounterHeapTypeTimestamp; hd.count = GP_MAX; NSError *er = nil;
+    if (!g_gp_heap) { MTL4CounterHeapDescriptor *hd = [NSClassFromString(@"MTL4CounterHeapDescriptor") new]; hd.type = MTL4CounterHeapTypeTimestamp; hd.count = GP_MAX; NSError *er = nil;
         g_gp_heap = [g_dev newCounterHeapWithDescriptor:hd error:&er]; if (!g_gp_heap) { MLOG("[RED] GPUPROF: no counter heap: %s", er.description.UTF8String); g_gp_f0 = -1; return; } }
     if (!g_gp_state) { g_gp_state = 1; g_gp_n = 0; g_gp_frame = atomic_load(&g_cur_frame); [g_gp_heap invalidateCounterRange:NSMakeRange(0, GP_MAX)]; }
     if (2 * g_gp_n + 2 > GP_MAX) return;
@@ -1504,7 +1508,7 @@ uint64_t mtl_sub_commit(void) {
     if (ws_on()) for (int i = 0; i < n; i++) { int k = g_post[i].kind == 2 ? (g_post[i].type == 0 || g_post[i].type == 0x10 ? 3 : 4) : g_post[i].kind == 3 ? 2 : 1; atomic_fetch_add(&g_ws_post[k], 1); }   // 1 event, 2 samples passed, 3 timestamp, 4 other counter
     if (n) memcpy(ops, g_post, n * sizeof *ops);
     NSArray<dispatch_block_t> *commit_blocks = [g_commit_blocks copy];
-    MTL4CommitOptions *o = [MTL4CommitOptions new];
+    MTL4CommitOptions *o = [NSClassFromString(@"MTL4CommitOptions") new];
     [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) { (void)f; for (dispatch_block_t block in commit_blocks) block(); }];
     uint64_t gpu_f = atomic_load(&g_cur_frame); gpu_tag_begin(gpu_f);
     NSString *cctx = @(cctx_snap());
@@ -2021,7 +2025,7 @@ static void up_flush(void) {
     NSMutableSet *targets = [NSMutableSet setWithArray:g_up_texs]; for (int i = 0; i < g_nup_blits; i++) if (g_up_blits[i].dst) [targets addObject:g_up_blits[i].dst];
     NSArray *dsts = targets.allObjects;
     static int lost_at = -2; static uint64_t batch_n; if (lost_at == -2) { const char *e = getenv("DM_TEST_UP_LOST"); lost_at = e ? atoi(e) : -1; } int fake_lost = dsts.count && lost_at > 0 && (int)++batch_n == lost_at;
-    MTL4CommitOptions *o = [MTL4CommitOptions new];
+    MTL4CommitOptions *o = [NSClassFromString(@"MTL4CommitOptions") new];
     atomic_fetch_add(&g_up_pending, 1);
     [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) {
         if (f.error) MLOG("[RED] upload command buffer execution error: %s", f.error.description.UTF8String);
@@ -2429,7 +2433,7 @@ static void tex_zero_fill(id<MTLTexture> mt) {
         if (g_up_ce) { m4_end(g_up_ce); g_up_ce = nil; }
         NSUInteger slices = mt.arrayLength * (tt == MTLTextureTypeCube || tt == MTLTextureTypeCubeArray ? 6 : 1);
         for (NSUInteger l = 0; l < mt.mipmapLevelCount; l++) for (NSUInteger y = 0; y < slices; y++) {
-            MTL4RenderPassDescriptor *pd = [MTL4RenderPassDescriptor new];
+            MTL4RenderPassDescriptor *pd = [NSClassFromString(@"MTL4RenderPassDescriptor") new];
             if (depth) { pd.depthAttachment.texture = mt; pd.depthAttachment.level = l; pd.depthAttachment.slice = y;
                 pd.depthAttachment.loadAction = MTLLoadActionClear; pd.depthAttachment.storeAction = MTLStoreActionStore; pd.depthAttachment.clearDepth = 0; }
             if (stencil) { pd.stencilAttachment.texture = mt; pd.stencilAttachment.level = l; pd.stencilAttachment.slice = y;
@@ -3371,7 +3375,7 @@ static id<MTL4RenderCommandEncoder> rp_begin_ex_(int clear_only) {
     if (rt_range_on()) { reg0 = g_reg_gen; ser0 = g_ser_gen; }
     if (rt_range_on()) dirty0=nvn_dirty_now();
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
-    MTL4RenderPassDescriptor *pd = [MTL4RenderPassDescriptor new];
+    MTL4RenderPassDescriptor *pd = [NSClassFromString(@"MTL4RenderPassDescriptor") new];
     int any = 0;
     for (int i = 0; i < R.rt.n; i++) {
         if (!R.rt.color[i] || (clear_only == 1 && !R.clear_c[i]) || (g_geo_omit_colors && !R.clear_c[i])) continue;
@@ -3463,7 +3467,7 @@ static id<MTL4RenderCommandEncoder> rp_begin_ex_(int clear_only) {
             MTLRenderPassAttachmentDescriptor *a = i < (NSUInteger)R.rt.n ? pd.colorAttachments[i] : pd.depthAttachment.texture ? pd.depthAttachment : pd.stencilAttachment;
             int ds = i == (NSUInteger)R.rt.n, cd = ds && pd.depthAttachment.texture && pd.depthAttachment.loadAction == MTLLoadActionClear, cs = ds && pd.stencilAttachment.texture && pd.stencilAttachment.loadAction == MTLLoadActionClear;
             if (!a.texture || (ds ? !cd && !cs : a.loadAction != MTLLoadActionClear) || (mip_extent(a.texture.width, a.level) <= pw && mip_extent(a.texture.height, a.level) <= ph)) continue;
-            MTL4RenderPassDescriptor *cp = [MTL4RenderPassDescriptor new];
+            MTL4RenderPassDescriptor *cp = [NSClassFromString(@"MTL4RenderPassDescriptor") new];
             if (!ds) { MTLRenderPassColorAttachmentDescriptor *c = cp.colorAttachments[0], *o = pd.colorAttachments[i];
                 c.texture = o.texture; c.level = o.level; c.slice = o.slice; c.depthPlane = o.depthPlane; c.clearColor = o.clearColor; c.loadAction = MTLLoadActionClear; c.storeAction = MTLStoreActionStore;
                 o.loadAction = MTLLoadActionLoad; }
@@ -3812,9 +3816,9 @@ static os_unfair_lock g_fn4_lock = OS_UNFAIR_LOCK_INIT;
 static NSMapTable *g_fn4;   // id<MTLFunction> → MTL4FunctionDescriptor
 static id<MTLFunction> fn4_note(id<MTLFunction> f, id<MTLLibrary> lib, NSString *name, MTLFunctionConstantValues *cv) {
     if (!f || !lib || !name) return f;
-    MTL4LibraryFunctionDescriptor *ld = [MTL4LibraryFunctionDescriptor new]; ld.library = lib; ld.name = name;
+    MTL4LibraryFunctionDescriptor *ld = [NSClassFromString(@"MTL4LibraryFunctionDescriptor") new]; ld.library = lib; ld.name = name;
     MTL4FunctionDescriptor *d = ld;
-    if (cv) { MTL4SpecializedFunctionDescriptor *sd = [MTL4SpecializedFunctionDescriptor new]; sd.functionDescriptor = ld; sd.constantValues = cv; d = sd; }
+    if (cv) { MTL4SpecializedFunctionDescriptor *sd = [NSClassFromString(@"MTL4SpecializedFunctionDescriptor") new]; sd.functionDescriptor = ld; sd.constantValues = cv; d = sd; }
     os_unfair_lock_lock(&g_fn4_lock);
     if (!g_fn4) g_fn4 = [[NSMapTable alloc] initWithKeyOptions:NSPointerFunctionsStrongMemory | NSPointerFunctionsObjectPointerPersonality valueOptions:NSPointerFunctionsStrongMemory capacity:0];   // by identity: a function made again from the same library and name (other constants: bf_fn) is another function
     [g_fn4 setObject:d forKey:f];
@@ -5604,10 +5608,10 @@ static NSSet<NSString *> *ga_list(void) {
     return [NSSet setWithArray:[a filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"self BEGINSWITH 'gpuarchiver-'"]] ?: @[]];
 }
 static ArchEpoch *ep_new(void) {   // a flush period: its compiler and serializer, nil when Metal makes none
-    MTL4PipelineDataSetSerializerDescriptor *sd = [MTL4PipelineDataSetSerializerDescriptor new]; sd.configuration = MTL4PipelineDataSetSerializerConfigurationCaptureBinaries;
+    MTL4PipelineDataSetSerializerDescriptor *sd = [NSClassFromString(@"MTL4PipelineDataSetSerializerDescriptor") new]; sd.configuration = MTL4PipelineDataSetSerializerConfigurationCaptureBinaries;
     ArchEpoch *ep = [ArchEpoch new]; ep->ser = [g_dev newPipelineDataSetSerializerWithDescriptor:sd];
     if (!ep->ser) return nil;
-    MTL4CompilerDescriptor *cd = [MTL4CompilerDescriptor new]; cd.pipelineDataSetSerializer = ep->ser;
+    MTL4CompilerDescriptor *cd = [NSClassFromString(@"MTL4CompilerDescriptor") new]; cd.pipelineDataSetSerializer = ep->ser;
     ep->comp = [g_dev newCompilerWithDescriptor:cd error:nil];
     if (!ep->comp) return nil;
     ep->busy = dispatch_group_create();
@@ -5665,7 +5669,7 @@ static void pso4_init(void) {
                  (unsigned long)archp.count - (g_arch_bundle != nil), bytes / 1048576.0, (bp_now() - t0) / 1e6);
         }
         g_arch4 = arch; g_arch4p = archp;
-        NSError *ce = nil; g_comp4 = [g_dev newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&ce];
+        NSError *ce = nil; g_comp4 = [g_dev newCompilerWithDescriptor:[NSClassFromString(@"MTL4CompilerDescriptor") new] error:&ce];
         if (!g_comp4) MLOG("[RED] no Metal 4 compiler (%s): render pipelines are built through the MTLDevice", ce.localizedDescription.UTF8String);
         else if (g_arch_dir) {
             g_ep = ep_new(); g_arch_cap = g_ep != nil;
@@ -5740,7 +5744,7 @@ static MTL4RenderPipelineDescriptor *pso_desc4(MTLRenderPipelineDescriptor *d, i
     if (d.rasterizationEnabled && !d.fragmentFunction) return nil;
     MTL4FunctionDescriptor *vf = fn4_of(d.vertexFunction), *ff = d.fragmentFunction ? fn4_of(d.fragmentFunction) : nil;
     if (!vf || (d.fragmentFunction && !ff)) return nil;
-    MTL4RenderPipelineDescriptor *m = [MTL4RenderPipelineDescriptor new];
+    MTL4RenderPipelineDescriptor *m = [NSClassFromString(@"MTL4RenderPipelineDescriptor") new];
     m.vertexFunctionDescriptor = vf; m.fragmentFunctionDescriptor = ff; m.vertexDescriptor = d.vertexDescriptor;
     m.rasterSampleCount = d.rasterSampleCount; m.alphaToCoverageState = d.alphaToCoverageEnabled ? MTL4AlphaToCoverageStateEnabled : MTL4AlphaToCoverageStateDisabled;
     m.rasterizationEnabled = d.rasterizationEnabled; m.inputPrimitiveTopology = d.inputPrimitiveTopology;
@@ -6022,9 +6026,9 @@ static NSDictionary<NSString *, NSString *> *pre_fail_load(NSString *path, NSStr
 }
 static MTL4FunctionDescriptor *pre_fn(id<MTLLibrary> lib, NSString *name) {   // as shader_load notes them (fn4_note): constants specialized with an empty set
     id<MTLFunction> f = [lib newFunctionWithName:name]; if (!f) return nil;
-    MTL4LibraryFunctionDescriptor *ld = [MTL4LibraryFunctionDescriptor new]; ld.library = lib; ld.name = name;
+    MTL4LibraryFunctionDescriptor *ld = [NSClassFromString(@"MTL4LibraryFunctionDescriptor") new]; ld.library = lib; ld.name = name;
     if (!f.functionConstantsDictionary.count) return ld;
-    MTL4SpecializedFunctionDescriptor *sd = [MTL4SpecializedFunctionDescriptor new]; sd.functionDescriptor = ld; sd.constantValues = [MTLFunctionConstantValues new]; return sd;
+    MTL4SpecializedFunctionDescriptor *sd = [NSClassFromString(@"MTL4SpecializedFunctionDescriptor") new]; sd.functionDescriptor = ld; sd.constantValues = [MTLFunctionConstantValues new]; return sd;
 }
 static NSDictionary *pre_json(NSString *key) { NSData *d = [NSData dataWithContentsOfFile:[NSString stringWithFormat:@"%@/%@_b.json", g_msl_dir, key]]; return d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil; }
 // The base of one pair as the draws make it (pso_desc_pull / pso_desc), or nil when the pair is left to the draws. Call inside an autorelease pool
@@ -6040,7 +6044,7 @@ static MTL4RenderPipelineDescriptor *pre_desc(NSString *vk, NSString *fk, int ze
     id<MTLLibrary> fl = lib_from_file([NSString stringWithFormat:@"%@/%@_b.metallib", g_msl_dir, fk], &e);
     MTL4FunctionDescriptor *vf = pre_fn(vl, ventry), *ff = fl ? pre_fn(fl, fentry) : nil;
     if (!vf || !ff) return nil;
-    MTL4RenderPipelineDescriptor *m = [MTL4RenderPipelineDescriptor new];
+    MTL4RenderPipelineDescriptor *m = [NSClassFromString(@"MTL4RenderPipelineDescriptor") new];
     m.vertexFunctionDescriptor = vf; m.fragmentFunctionDescriptor = ff; m.vertexDescriptor = [MTLVertexDescriptor vertexDescriptor]; m.rasterSampleCount = 1;
     for (int i = 0; i < 8; i++) { MTL4RenderPipelineColorAttachmentDescriptor *a = m.colorAttachments[i];
         a.pixelFormat = MTLPixelFormatUnspecialized; a.writeMask = MTLColorWriteMaskUnspecialized; a.blendingState = MTL4BlendStateUnspecialized;
@@ -8589,7 +8593,7 @@ void ms_after(void) {
     if (failed) return;
     if (!ps) { NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_ms_msl) options:nil error:&e]; id<MTLFunction> fn = lib ? [lib newFunctionWithName:@"ms"] : nil;
         ps = fn ? [g_dev newComputePipelineStateWithFunction:fn error:&e] : nil;
-        MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 1; ad.maxBufferBindCount = 1; at = rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]);
+        MTL4ArgumentTableDescriptor *ad = [NSClassFromString(@"MTL4ArgumentTableDescriptor") new]; ad.maxTextureBindCount = 1; ad.maxBufferBindCount = 1; at = rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]);
         if (!ps || !at) { failed = 1; MLOG("[RED] DM_NVN_MAGSCAN: cannot create the compute pipeline %s", e.localizedDescription.UTF8String); return; } }
     ms_scan *s = &g_ms_s[g_ms_cur]; int pdist = g_ms_pframe == s->frame && g_ms_ppass != ~0ull ? (int)((int64_t)g_stat_pass - (int64_t)g_ms_ppass) : 9999;
     for (int i = 0; i < na; i++) { id<MTLTexture> t = g_ms_att[i]; g_ms_att[i] = nil;
@@ -8721,7 +8725,7 @@ static void ixc_run(const p_draw *dw, const p_draw_idx *di) {
     if (failed) return;
     if (!at) { NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_ixc_msl) options:nil error:&e];
         for (int k = 0; k < 2 && lib; k++) { id<MTLFunction> f = [lib newFunctionWithName:k ? @"ixc_expand" : @"ixc_arrays"]; ps[k] = f ? [g_dev newComputePipelineStateWithFunction:f error:&e] : nil; }
-        MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 1; at = ps[0] && ps[1] ? rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]) : nil;
+        MTL4ArgumentTableDescriptor *ad = [NSClassFromString(@"MTL4ArgumentTableDescriptor") new]; ad.maxBufferBindCount = 1; at = ps[0] && ps[1] ? rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]) : nil;
         if (!at) { failed = 1; MLOG("[RED] indirect draw conversion: cannot create the compute pipeline %s (indirect draws of quads / fans / 8-bit indices are skipped)", e.localizedDescription.UTF8String); return; } }
     if (g_ixc_epoch != g_wr_epoch || g_ixc_sub != g_sub_serial || g_ixc_n > IXC_MAX - 8) { g_ixc_n = 0; g_ixc_epoch = g_wr_epoch; g_ixc_sub = g_sub_serial; }
     int n0 = g_ixc_n; ixc_take(dw, di);
@@ -8799,7 +8803,7 @@ static void wide_run(const p_draw_idx *di) {
     if (failed) return;
     if (!at) { NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_wide_msl) options:nil error:&e]; id<MTLFunction> f = lib ? [lib newFunctionWithName:@"wide_u8"] : nil;
         ps = f ? [g_dev newComputePipelineStateWithFunction:f error:&e] : nil;
-        MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 1; at = ps ? rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]) : nil;
+        MTL4ArgumentTableDescriptor *ad = [NSClassFromString(@"MTL4ArgumentTableDescriptor") new]; ad.maxBufferBindCount = 1; at = ps ? rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]) : nil;
         if (!at) { failed = 1; MLOG("[RED] 8-bit index GPU expansion: cannot create the compute pipeline %s (the CPU expands them as before)", e.localizedDescription.UTF8String); return; } }
     if (g_wide_epoch != g_wr_epoch || g_wide_sub != g_sub_serial || g_wide_n > WIDE_MAX - 8) { g_wide_n = 0; g_wide_epoch = g_wr_epoch; g_wide_sub = g_sub_serial; }
     int n0 = g_wide_n; wide_take(di);
@@ -8935,7 +8939,7 @@ static void mdx_run(const p_draw *dw, const p_draw_idx *di) {
     if (failed) return;
     if (!at) { NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_mdx_msl) options:nil error:&e]; id<MTLFunction> f = [lib newFunctionWithName:@"mdx_mask"];
         ps = f ? [g_dev newComputePipelineStateWithFunction:f error:&e] : nil;
-        MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 1; at = ps ? rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]) : nil;
+        MTL4ArgumentTableDescriptor *ad = [NSClassFromString(@"MTL4ArgumentTableDescriptor") new]; ad.maxBufferBindCount = 1; at = ps ? rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]) : nil;
         if (!at) { failed = 1; MLOG("[RED] indirect-count multi-draw masking: cannot create the compute pipeline %s (those draws wait for the GPU)", e.localizedDescription.UTF8String); return; } }
     if (g_mdx_ep != g_mdx_epoch || g_mdx_sub != g_sub_serial || g_mdx_n > MDX_SLOTS / 4) { g_mdx_tag++; g_mdx_n = 0; g_mdx_ep = g_mdx_epoch; g_mdx_sub = g_sub_serial; }
     enum { QMAX = MDX_SLOTS / 4 };
@@ -9885,7 +9889,7 @@ static int copy_t2t_draw(id<MTLTexture> s, id<MTLTexture> d, unsigned sl, unsign
         MTLDepthStencilDescriptor *dd = [MTLDepthStencilDescriptor new]; dd.depthCompareFunction = MTLCompareFunctionAlways; dd.depthWriteEnabled = YES; dss = [g_dev newDepthStencilStateWithDescriptor:dd];
         MTLStencilDescriptor *sd_ = [MTLStencilDescriptor new]; sd_.stencilCompareFunction = MTLCompareFunctionAlways; sd_.depthStencilPassOperation = MTLStencilOperationReplace;   // Replace writes the [[stencil]] output
         dd.frontFaceStencil = dd.backFaceStencil = sd_; dss_s = [g_dev newDepthStencilStateWithDescriptor:dd];
-        MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxSamplerStateBindCount = 1; ad.maxBufferBindCount = 1; at = rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]);
+        MTL4ArgumentTableDescriptor *ad = [NSClassFromString(@"MTL4ArgumentTableDescriptor") new]; ad.maxTextureBindCount = 2; ad.maxSamplerStateBindCount = 1; ad.maxBufferBindCount = 1; at = rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]);
         for (int i = 0; i < 2; i++) { MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = i ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
             sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge; sd.supportArgumentBuffers = YES; samp[i] = [g_dev newSamplerStateWithDescriptor:sd]; }
         if (!vf || !ff || !fd || !fds || !dss || !dss_s || !at || !samp[0] || !samp[1]) { failed = 1; MLOG("[RED] cannot create the pipelines for format-converting / scaling texture copies: %s", e.localizedDescription.UTF8String); return 0; }
@@ -9915,7 +9919,7 @@ static int copy_t2t_draw(id<MTLTexture> s, id<MTLTexture> d, unsigned sl, unsign
         if (mirror & NVN_COPY_FLAGS_MIRROR_X_BIT) { p[0] += sr->width; p[2] = -p[2]; }   // mirrored: walk the source region from its far edge
         if (mirror & NVN_COPY_FLAGS_MIRROR_Y_BIT) { p[1] += sr->height; p[3] = -p[3]; }
         p[4] = dr->xoffset; p[5] = dr->yoffset; p[6] = sw; p[7] = sh;
-        MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
+        MTL4RenderPassDescriptor *rp = [NSClassFromString(@"MTL4RenderPassDescriptor") new];
         MTLRenderPassAttachmentDescriptor *a = depth ? (MTLRenderPassAttachmentDescriptor *)rp.depthAttachment : (MTLRenderPassAttachmentDescriptor *)rp.colorAttachments[0];
         int whole = !dr->xoffset && !dr->yoffset && (unsigned)dr->width == dw && (unsigned)dr->height == dh;   // the copy draws every pixel of the level (no blending, no discard): its old content is not loaded (Link's Awakening copies its scene this way every frame)
         a.texture = d; a.level = dl; a.slice = ds + dr->zoffset + z; a.loadAction = whole ? MTLLoadActionDontCare : MTLLoadActionLoad; a.storeAction = MTLStoreActionStore;
@@ -9955,7 +9959,7 @@ static void draw_tex(const p_draw_tex *c) {
             "  float2 st = p[1].xy + (in.p.xy - p[0].xy) * p[0].zw; return t.sample(s, st / p[1].zw); }\n";
         NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(src) options:nil error:&e];
         vf = [lib newFunctionWithName:@"vs"]; ff = [lib newFunctionWithName:@"fs"];
-        MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 1; ad.maxSamplerStateBindCount = 1; ad.maxBufferBindCount = 1; at = rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]);
+        MTL4ArgumentTableDescriptor *ad = [NSClassFromString(@"MTL4ArgumentTableDescriptor") new]; ad.maxTextureBindCount = 1; ad.maxSamplerStateBindCount = 1; ad.maxBufferBindCount = 1; at = rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]);
         if (!vf || !ff || !at) { failed = 1; MLOG("[RED] cannot create the pipeline for nvnCommandBufferDrawTexture: %s", e.localizedDescription.UTF8String); return; }
         pso = [NSMutableDictionary dictionary];
     }
@@ -9992,7 +9996,7 @@ static void draw_tex(const p_draw_tex *c) {
         float *q = (float *)((uint8_t *)pb.contents + po);
         q[0] = c->d.x0; q[1] = c->d.y0; q[2] = (c->s.x1 - c->s.x0) / dw; q[3] = (c->s.y1 - c->s.y0) / dh;
         q[4] = c->s.x0; q[5] = c->s.y0; q[6] = (float)t.width; q[7] = (float)t.height;
-        MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new]; MTLRenderPassColorAttachmentDescriptor *a = rp.colorAttachments[0];
+        MTL4RenderPassDescriptor *rp = [NSClassFromString(@"MTL4RenderPassDescriptor") new]; MTLRenderPassColorAttachmentDescriptor *a = rp.colorAttachments[0];
         a.texture = d; a.level = lv; a.slice = sl; a.loadAction = MTLLoadActionLoad; a.storeAction = MTLStoreActionStore;
         ser_gate(); id<MTL4RenderCommandEncoder> en = enc_r_begin(rp);
         [en setArgumentTable:at atStages:MTLRenderStageFragment];
@@ -10042,7 +10046,7 @@ static void copy_t2t(const p_copy_t2t *c) {
             return;
         }
         rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
-        MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
+        MTL4RenderPassDescriptor *rp = [NSClassFromString(@"MTL4RenderPassDescriptor") new];
         MTLPixelFormat pf = s.pixelFormat;
         int depth = pf == MTLPixelFormatDepth32Float || pf == MTLPixelFormatDepth16Unorm || pf == MTLPixelFormatDepth32Float_Stencil8;
         MTLRenderPassAttachmentDescriptor *a = depth ? rp.depthAttachment : rp.colorAttachments[0];
@@ -10150,7 +10154,7 @@ static void clear_tex(const p_clear_tex *c) {
     }
     rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     for (int z = 0; z < nz; z++) {
-        MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
+        MTL4RenderPassDescriptor *rp = [NSClassFromString(@"MTL4RenderPassDescriptor") new];
         MTLRenderPassAttachmentDescriptor *a = depth ? rp.depthAttachment : stencil ? rp.stencilAttachment : rp.colorAttachments[0];
         a.texture = t; a.level = lv; a.loadAction = MTLLoadActionClear; a.storeAction = MTLStoreActionStore;
         if (is3d) a.depthPlane = c->r.zoffset + z; else a.slice = l0 + c->r.zoffset + z;
@@ -10197,7 +10201,7 @@ static void sub_cut(void) {
     uint64_t f = atomic_load(&g_cur_frame); gpu_tag_begin(f);
     uint32_t k = g_seg++; seg_clk *sc = NULL;   // reports encoded so far keep this segment's GPU times (seg_ts)
     if (seg_ts()) { if (!g_sclk) { g_sclk = calloc(1, sizeof *g_sclk); atomic_store(&g_sclk->refs, 1); } sc = g_sclk; atomic_fetch_add(&sc->refs, 1); }
-    MTL4CommitOptions *o = [MTL4CommitOptions new];
+    MTL4CommitOptions *o = [NSClassFromString(@"MTL4CommitOptions") new];
     [o addFeedbackHandler:^(id<MTL4CommitFeedback> cb) {
         gpu_tag_done(f, cb.GPUStartTime, cb.GPUEndTime);
         if (sc) { if (k < SEG_CLK_N) { atomic_store(&sc->t[k][0], gpu_s_guest_ns(cb.GPUStartTime)); atomic_store(&sc->t[k][1], gpu_s_guest_ns(cb.GPUEndTime)); } seg_clk_put(sc); }
@@ -10273,7 +10277,7 @@ static int clr_scissor(MTLScissorRect *sc) {   // the clear's scissor in the ope
 }
 static void clr_tri(id<MTL4RenderCommandEncoder> en, id<MTLRenderPipelineState> ps, id<MTLDepthStencilState> ds, MTLScissorRect sc, const uint32_t val[4], float z, uint32_t sref, NSUInteger tw, NSUInteger th) {
     static id<MTL4ArgumentTable> vt, ft;
-    if (!ft) { NSError *e = nil; MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 1;
+    if (!ft) { NSError *e = nil; MTL4ArgumentTableDescriptor *ad = [NSClassFromString(@"MTL4ArgumentTableDescriptor") new]; ad.maxBufferBindCount = 1;
         vt = rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]); ft = vt ? rec_table([g_dev newArgumentTableWithDescriptor:ad error:&e]) : nil;
         if (!ft) { vt = nil; static int n; if (!n++) MLOG("[RED] cannot create the clear-triangle argument table: %s; this clear is skipped", e.localizedDescription.UTF8String); return; } }
     id<MTLBuffer> b; size_t o = arena_alloc(32, &b); uint8_t *p = (uint8_t *)b.contents + o; memcpy(p, val, 16); memcpy(p + 16, &z, 4);   // colour at 0, depth at 16
@@ -10305,7 +10309,7 @@ static void clear_tex_tri(id<MTLTexture> t, unsigned lv, unsigned l0, const p_cl
     }
     rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     for (int z = 0, nz = c->r.depth ? c->r.depth : 1; z < nz; z++) {
-        MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
+        MTL4RenderPassDescriptor *rp = [NSClassFromString(@"MTL4RenderPassDescriptor") new];
         rp.colorAttachments[0].texture = t; rp.colorAttachments[0].level = lv;
         if (t.textureType == MTLTextureType3D) rp.colorAttachments[0].depthPlane = c->r.zoffset + z;
         else rp.colorAttachments[0].slice = l0 + c->r.zoffset + z;
@@ -11003,7 +11007,7 @@ static id<MTLTexture> fx_encode(fx_state *fx, id<MTL4CommandBuffer> cb, id<MTLTe
         if (remake_wait) { pthread_mutex_lock(&g_pq_mu); while (g_pq_inflight) pthread_cond_wait(&g_pq_cv, &g_pq_mu); pthread_mutex_unlock(&g_pq_mu); }
         res_remove(fx->in); res_remove(fx->out); fx->sc = nil; fx->in = fx->out = nil;
         uint64_t t0 = now_ns(); NSError *e = nil;
-        if (!g_fx_comp) g_fx_comp = [g_dev newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&e];
+        if (!g_fx_comp) g_fx_comp = [g_dev newCompilerWithDescriptor:[NSClassFromString(@"MTL4CompilerDescriptor") new] error:&e];
         MTLFXSpatialScalerDescriptor *d = [MTLFXSpatialScalerDescriptor new];
         d.colorTextureFormat = raw.pixelFormat; d.outputTextureFormat = out_pf; d.inputWidth = cw; d.inputHeight = ch; d.outputWidth = ow; d.outputHeight = oh;
         d.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
@@ -11046,7 +11050,7 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
         MLOG("[diag] present crop %lu,%lu %lux%lu into target %.0fx%.0f, viewport %.0f,%.0f %.0fx%.0f (fullscreen %d)", r[0], r[1], r[2], r[3], dw, dh, vp.originX, vp.originY, vp.width, vp.height, present_fullscreen()); } }
     id<MTLTexture> tex = present_raw_src(src), up = fx ? fx_encode(fx, cb, tex, r, vp, dst.pixelFormat, fx == &g_fx_present) : nil;
     if (up) { tex = up; r[0] = r[1] = 0; r[2] = up.width; r[3] = up.height; }   // the scaled picture, the viewport's size: drawn 1:1
-    MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
+    MTL4RenderPassDescriptor *rp = [NSClassFromString(@"MTL4RenderPassDescriptor") new];
     rp.colorAttachments[0].texture = dst;
     rp.colorAttachments[0].loadAction = full ? MTLLoadActionDontCare : MTLLoadActionClear;
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
@@ -11080,7 +11084,7 @@ static int present_offscreen_m4(id<MTLTexture> src, const int crop[4], id<MTLTex
     int kind = present_encode_m4(cb, raw, out, crop, uvb, &fx);
     [cb endCommandBuffer];
     if (!kind) { res_remove(out); res_remove(uvb); res_remove(fx.in); res_remove(fx.out); return 0; }
-    MTL4CommitOptions *options = [MTL4CommitOptions new];
+    MTL4CommitOptions *options = [NSClassFromString(@"MTL4CommitOptions") new];
     [options addFeedbackHandler:^(id<MTL4CommitFeedback> f) {
         (void)al; (void)cb; (void)raw; (void)fx.sc;   // keep the Metal 4 commands, source view and scaler alive too
         res_remove(out); res_remove(uvb); res_remove(fx.in); res_remove(fx.out);
@@ -11187,7 +11191,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     if (!kind) { [cb endCommandBuffer]; [g_q4 signalDrawable:dr]; return 0; }
     int fx_kind = kind == PRESENT_METALFX;
     [cb endCommandBuffer];
-    MTL4CommitOptions *o = [MTL4CommitOptions new];
+    MTL4CommitOptions *o = [NSClassFromString(@"MTL4CommitOptions") new];
     [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) {
         if (f.error) MLOG("[RED] display command buffer error: %s", f.error.description.UTF8String);
         pthread_mutex_lock(&g_pq_mu); if (ticket > g_pq_done) g_pq_done = ticket; if (ticket > g_present_alloc_done[alloc_i]) g_present_alloc_done[alloc_i] = ticket; g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv);
