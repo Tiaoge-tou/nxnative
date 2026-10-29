@@ -442,7 +442,7 @@ jobs:
           # first match in ls order is not necessarily the game itself.
           GAME_ID=$(ls "$GAME_DIR" | grep -oiE '01[0-9a-f]{14}' | tr 'a-f' 'A-F' | sort -u | head -1)
           echo "Registering shader chain lock for game: $GAME_ID"
-          DM_GAME="$GAME_ID" python3 dm/gfx/tools/dmsh_chain.py --update-lock
+          DM_GAME="$GAME_ID" python3 dm/gfx/tools/tool_lock.py --update-lock
           # The new lock changes the chain version; re-stamp the profile header to match.
           DM_GAME="$GAME_ID" python3 dm/gfx/tools/dmsh_chain.py --header
           mkdir -p "$GITHUB_WORKSPACE/out"
