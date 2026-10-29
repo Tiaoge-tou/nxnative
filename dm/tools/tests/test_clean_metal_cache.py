@@ -5,7 +5,9 @@ from pathlib import Path
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[3]
-spec = importlib.util.spec_from_file_location('clean_metal_cache', REPO / 'scripts/clean_metal_cache.py'); cmc = importlib.util.module_from_spec(spec); spec.loader.exec_module(cmc)
+spec = importlib.util.spec_from_file_location('clean_metal_cache', REPO / 'scripts/clean_metal_cache.py')
+assert spec is not None and spec.loader is not None
+cmc = importlib.util.module_from_spec(spec); spec.loader.exec_module(cmc)
 
 NOW = 2_000_000_000.0
 

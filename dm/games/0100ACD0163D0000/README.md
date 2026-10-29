@@ -22,7 +22,7 @@ No frame-rate key: the game asks for present interval 2 and runs at 30 fps, as o
 - RomFS: 5,294 files, 26.7 GB: 4,093 cooked packages (`BmGame/CookedSwitch/*.xxx`, chunks of Oodle Mermaid, 19 GB), the texture caches (`*.tfc`), 1,030 Sofdec movies (`BmGame/Movies/*.usm`, 7.6 GB) and a voice pack per language (`<language>/*.wad`).
 - 21,923 shaders (2,564 vertex, 19,233 pixel, 124 compute, 2 geometry), all built for the Mac with no failure: [Unreal Engine 3 shader caches (Oodle packages)](../../../docs/reference/shaders.md#unreal-engine-3-shader-caches-oodle-packages). The global cache (`GlobalShaderCache-Switch.bin`) holds 1,847 records, the combined one (`CombinedShaderCache-Switch.xxx`) 22,874; none of 68 other packages sampled holds a shader.
 - **Resolved: 40 of the first shaders the game used were not in the shader map.** Each was one record's control section with another record's code area: the shader loader (`main+0xb7948c`) shares control sections that differ only in GLSLC's compile information, and the host's key hashed those bytes: [Control sections shared among shaders that differ only in their compile information](../../../docs/reference/shaders.md#control-sections-shared-among-shaders-that-differ-only-in-their-compile-information). In the files only +0x7d0..+0x7e7 seemed to matter, but the opening cutscene met a pair that differed at +0x778, as #340 had found; with `0x770+0x78` no shader was missing through the diner.
-- **Current:** four pixel shaders sample a 2D texture through a slot they declare as a 2D array (`[RED] texture type mismatch`, `fad24ea404d1bbac`, `e4bd7b26b4a2dc5b`, `553c51835a24a36a`, `26ccc3148f457613`), as #340 saw; nothing wrong was seen on screen. Not looked into.
+- **Resolved: four shaders sampled 2D render targets as 3D textures** (`[RED] texture type mismatch … declares slot 129–132 as Metal type 7, texture … is type 2`, `553c51835a24a36a`, `fad24ea404d1bbac`, `26ccc3148f457613` and the compute shader `e4bd7b26b4a2dc5b`; #340 read them as 2D arrays). They sample a volume at world coordinates (`fad24ea404d1bbac`: position × 1/20480 + 0.5) through separate texture slots 1–4, and from the first frames of New Story on the game leaves 2D textures bound there, mostly its half-resolution targets (a BC1 texture for `26ccc3148f457613`): the pass dump of `553c51835a24a36a` (frame 5121 from `save_diner`) shows separate slot 2 holding texture ID 283, a 720x406 RGBA16F target, beside the R32F, RG11B10F and depth targets and two 64x64 textures; the game does create 3D textures (2x2x2 at boot, 32x32x32, 71x40x64), but binds none there. Metal has no 3D view of a 2D texture, so they were bound as is with undefined reads; the host now binds the zero 3D texture: [A 2D texture in a 3D slot binds the zero 3D texture](../../../docs/reference/rendering.md#a-2d-texture-in-a-3d-slot-binds-the-zero-3d-texture). What the Switch reads there is not known.
 
 ## Memory
 
@@ -47,6 +47,7 @@ No frame-rate key: the game asks for present interval 2 and runs at 30 fps, as o
 ## Testing
 
 - 2026-10-29, Mac (headless): the route above from an empty save into Pauli's Diner, a few steps and turns there, with no crash and no shader missing from the map (the four texture-type red lines only).
+- 2026-10-29, Mac (headless), with the zero 3D texture: from `save_diner` (it resumes at the cremation) through the cremation into the diner, no texture type mismatch left (`texture type mismatches no view bridges 0`), the cremation and the diner drawn as before; the only red line is `stage 0 cb0 has no uniform buffer bound`, once.
 - Not checked: Gotham beyond the diner, a save and continue, the iPhone or iPad.
 
 ## Open
@@ -54,9 +55,11 @@ No frame-rate key: the game asks for present interval 2 and runs at 30 fps, as o
 - iOS: no IPA built yet; untested on a device (the 2 GB block comes from #384's iPad run).
 - 60 fps, picture settings (render scale, the engine's SMAA): #384 has both; not taken here.
 - Only update 1.0.5 is registered.
+- `[RED] stage 0 cb0 has no uniform buffer bound`, once per run (also before the zero 3D texture); not looked into.
 
 ## Found on this game
 
 - [Unreal Engine 3 shader caches (Oodle packages)](../../../docs/reference/shaders.md#unreal-engine-3-shader-caches-oodle-packages) and [Control sections shared among shaders that differ only in their compile information](../../../docs/reference/shaders.md#control-sections-shared-among-shaders-that-differ-only-in-their-compile-information) (the profile key `shader_key_skip`).
 - The `UE3` layout of [Unreal's FMallocBinned3 replaced by the host allocator](../../../docs/reference/memory.md#unreals-fmallocbinned3-replaced-by-the-host-allocator), and an SDK 14.3.0 instance of [the SDK's address-region node area](../../../docs/reference/memory.md#the-sdks-address-region-node-area).
+- [A 2D texture in a 3D slot binds the zero 3D texture](../../../docs/reference/rendering.md#a-2d-texture-in-a-3d-slot-binds-the-zero-3d-texture).
 - [A same-core handoff holds only a waker pinned to that core](../../../docs/reference/threads.md#a-same-core-handoff-holds-only-a-waker-pinned-to-that-core) and [Lock-free queues published without barriers](../../../docs/reference/threads.md#lock-free-queues-published-without-barriers).
