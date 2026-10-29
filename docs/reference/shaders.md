@@ -100,7 +100,7 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Symptom:** the split found no shader in the game (0 shaders).
 - **Cause:** an output may hold several stages compiled together as one program (Baba Is You: the 120 outputs in `Assets.dat`, each a pixel and a vertex shader, then a reflection section), which the single-stage reader does not take.
 - **Fix:** such an output is read by its section headers (+0x4c section count, section *i*'s header at +0x90 + 0x90 *i*, type 0 = GPU code; `glslc_program`; the same headers SDK 4's outputs are read through, [GLSLC outputs read through their section headers](#glslc-outputs-read-through-their-section-headers)), and its stages are paired with each other, not as single-stage programs. The NSP script now stops at the split when it finds none.
-- **Found on:** Baba Is You (no profile).
+- **Found on:** [Baba Is You](../../dm/games/01002CD00A51C000/README.md#shaders).
 
 ### GLSLC outputs in a zip archive, and those NROs compile at run time
 
