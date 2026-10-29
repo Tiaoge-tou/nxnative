@@ -174,8 +174,18 @@ def disk_free_gb(path='/System/Volumes/Data'):
     st = os.statvfs(path); return st.f_bavail * st.f_frsize / 1e9
 
 
-def check_disk(min_gb):
+def clean_metal_cache():   # Metal's idle build folders, which every host run adds to the internal disk (scripts/clean_metal_cache.py)
+    spec = importlib.util.spec_from_file_location('clean_metal_cache', Path(__file__).resolve().parent / 'clean_metal_cache.py')
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    try: n, size, _, _ = m.clean(say=say)
+    except OSError as e: say(f'[RED] Metal build folders not cleaned: {e}'); return
+    if n: say(f'Metal build folders: {n} idle ones removed, {size / 1e9:.1f} GB')
+
+
+def check_disk(min_gb, clean=False):
+    """clean: remove Metal's idle build folders first (at the start of a run); they are removed anyway when the disk is under the limit"""
     free = disk_free_gb()
+    if clean or free < min_gb: clean_metal_cache(); free = disk_free_gb()
     if free < min_gb: raise HarnessError(f'the internal disk has {free:.1f} GB free, under {min_gb} GB (Metal caches land there): stopped')
     return free
 
@@ -1267,7 +1277,7 @@ def main():
         p.add_argument('--games', help='title IDs, comma-separated (default: every game with a Mac build, and for the runs a smoke route)')
         p.add_argument('--jobs', type=int, help='workers for the shader builds (default: the cores; a build pauses while another process holds the measuring lock)')
         p.add_argument('--out', help='the report folder (default <root>/reports/<date-time>-<command>)')
-        p.add_argument('--min-free-gb', type=float, default=3.0, help='stop when the internal disk has less free (default 3)')
+        p.add_argument('--min-free-gb', type=float, default=3.0, help='stop when the internal disk has less free once Metal\'s idle build folders are removed (scripts/clean_metal_cache.py; default 3)')
         p.add_argument('--lock', default=os.environ.get('DM_MEASURE_LOCK', ''), help='the measuring lock shared with bench.py --lock (DM_MEASURE_LOCK): held while a game runs; shader builds pause while another process holds it')
         if smoke:
             p.add_argument('--quick', action='store_true', help='the chain checks and a short boot (the route\'s quick seconds, no prebuild)')
@@ -1303,7 +1313,7 @@ def main():
         a.lock = a.pause_lock = Path(a.lock) if a.lock else None
         a.jobs = a.jobs or os.cpu_count() or 8
         a.tools_fp = toolchain_fp()
-        free = check_disk(a.min_free_gb); say(f'internal disk: {free:.1f} GB free; root {ROOT}; {a.jobs} workers')
+        free = check_disk(a.min_free_gb, clean=True); say(f'internal disk: {free:.1f} GB free; root {ROOT}; {a.jobs} workers')
         return {'baseline': cmd_baseline, 'check': cmd_check, 'usage': cmd_usage, 'chain': lambda a: cmd_check(a, smoke=False)}[a.cmd](a)
     except HarnessError as e:
         print(f'[RED] regress.py: {e}', file=sys.stderr); return 2
