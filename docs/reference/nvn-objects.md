@@ -182,8 +182,16 @@ Games read this count as a position in their own command memory and size their h
 
 - **Symptom:** `FATAL submit re-entered` in the first frames.
 - **Cause:** the game initializes two NVN queues and submits on both from two threads, while the Metal replay keeps one command buffer for the submission in progress.
-- **Fix:** `nvnQueueSubmitCommands` now holds a lock across the replay (`g_sub_mu` in `hle_nvn.c`).
+- **Fix:** `nvnQueueSubmitCommands` now holds a lock across the replay (`g_sub_mu` in `hle_nvn.c`). It takes the lock before the graphics gate ([Going to the background during the prepare step](#going-to-the-background-during-the-prepare-step)).
 - **Found on:** [Fire Emblem: Three Houses](../../dm/games/010055D009F78000/README.md).
+
+### Going to the background during the prepare step
+
+- **Symptom:** going to the background (iOS `sceneDidEnterBackground`, minimizing the Mac window) while the "Preparing shaders" or "Preparing pipelines" screen is up blocks the main thread until the step ends: minutes on a first start, long enough for iOS to end the app. The log's `[nvn] graphics suspended` line comes only after the `pipeline prepare:` line.
+- **Cause:** the prepare step (the prewarm and the pipeline prebuild, `mtl_prepare` in `nvn_mtl.m`) runs in the game's first `nvnQueueSubmitCommands`, which held the graphics gate across it. `dm_gfx_suspend(1)` closes the gate and waits for every submit and present inside it to leave. The step loads shaders and builds pipelines and submits no GPU work, so it never needed the gate.
+- **Fix:** the submit entry runs the prepare step under the submit lock (`g_sub_mu`) but before it enters the gate, marked as host work for the guest scheduler (`dm_host_work`). If the app went to the background meanwhile, the submission waits at the gate for the foreground like any other. The lock now comes before the gate, taken with `dm_host_mutex_lock`: with the gate first, a second submission waiting for the lock counted as in flight, so the suspend waited for it while the first, done preparing, waited at the closed gate holding the lock. `mtl_sub_begin` still calls `mtl_prepare`, a no-op by then, for the replay tool (`nvn_replay`), which has no gate.
+- **Check:** the CPU-only `t_gfx_suspend` runs the real submit entry on two threads with a prepare step held by semaphores. It checks that the step runs outside the gate as host work, that the queued second submission is not in flight, that the suspend returns while the step holds the lock, that nothing commits in the background, and that both submissions finish after resume. With the gate taken before the lock it fails before suspending.
+- **Found on:** no game named in the source (general: every NVN game with a prewarm list; a first start without the Metal cache takes longest). **Open:** not yet run by going to the background during a real game's prepare step on an iPhone.
 
 ### A GPU command buffer that never completes
 
