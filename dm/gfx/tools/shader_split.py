@@ -2204,22 +2204,30 @@ def unity_text_glslc(x, base):
     return out
 
 NEST = 16   # archives in archives scan_blob opens (SARC, PlatinumGames' DAT): real files nest a few. A damaged or crafted one could nest one per header's length, or have every
-            # member point at the same inner archive, its work doubling with each level: the members a file's archives open may add up to at most NEST times the file
+            # member point at the same inner archive, its work doubling with each level. Two budgets of NEST times the file bound the work: left[0], the members a file's archives open,
+            # each counted by what it takes up in its archive, and left[1], what its Yaz0 members expand to. Counting a Yaz0 member by what it expands to in the first budget paid twice
+            # for the same bytes, once for the member and once for its members (GitHub issue #640: Mario Kart 8 Deluxe's UI/<lang>/race.sarc, 204 KB, holds one layout archive
+            # that expands 9 times, which then added up to 18 times the file)
 def scan_blob(d, label, out, depth=0, left=None):
     if depth > NEST: red(f'{label}: archives nested more than {NEST} deep')
     if d[:8] == SUMO_MUX:
         members = list(sumo_members(d, label))
-        if left is None: left = [NEST * sum(len(member) for _, member in members)]   # as with Yaz0, count decoded bytes, not compressed bytes
+        if left is None: left = [NEST * sum(len(member) for _, member in members)] * 2   # as with Yaz0, count decoded bytes, not compressed bytes
         for nm, member in members: scan_blob(member, label + nm, out, depth + 1, left)
         return
     if d[:4] in (b'HCPS', b'xbc1', b'DRSM') or d[:8] == b'cmp\0zlib':
         monolith_shaders(d, label, out)
         return
     for m in re.finditer(b'SLCT\x03\x10\0\0', d): out.extend(slct_shaders(d, m.start(), label))
-    if d[:4] == b'Yaz0': d = yaz0(d, label)
-    if left is None: left = [NEST * len(d)]   # the file itself: what its archives' members may add up to
+    stored = len(d)   # what the member takes up in its archive
+    if d[:4] == b'Yaz0':
+        if left is not None:   # charged by its header before it is decoded
+            left[1] -= int.from_bytes(d[4:8], 'big')
+            if left[1] < 0: red(f'{label}: the Yaz0 archive members expand to more than {NEST} times the file')
+        d = yaz0(d, label)
+    if left is None: left = [NEST * len(d)] * 2   # the file itself: what its archives' members may add up to, and what their Yaz0 may expand to
     else:
-        left[0] -= len(d)
+        left[0] -= stored
         if left[0] < 0: red(f'{label}: the archive members add up to more than {NEST} times the file (members that overlap)')
     if d[:4] == b'SARC':
         for nm, m in sarc_members(d, label): scan_blob(m, f'{label}/{nm}', out, depth + 1, left)
