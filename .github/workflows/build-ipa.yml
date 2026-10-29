@@ -54,12 +54,13 @@ on:
         required: false
         default: false
       source:
-        description: "Where the game files come from: drive = the zip at NSP_ZIP_URL; quark = pull the .nsp/.nsz files straight from your Quark drive (needs the QUARK_COOKIE secret); hf = the zip named by hf_file from the Hugging Face dataset repo (needs the HF_TOKEN secret)"
+        description: "Where the game files come from: drive = the zip at NSP_ZIP_URL; quark = pull the .nsp/.nsz files straight from your Quark drive (needs the QUARK_COOKIE secret); hf = the zip named by hf_file from the Hugging Face dataset repo (needs the HF_TOKEN secret); parts = a zip split into <2 GB parts held as assets of a DRAFT release in this repo (parts_tag names the release, parts_sha256 optionally verifies the joined zip; no secret needed)"
         type: choice
         options:
           - drive
           - quark
           - hf
+          - parts
         required: false
         default: drive
       quark_dir:
@@ -70,6 +71,14 @@ on:
         description: "HF only: zip file name in the dataset repo Tiaoge-tou/game-archives (hades2.zip or silksong.zip)"
         required: false
         default: "hades2.zip"
+      parts_tag:
+        description: "Parts only: tag of the DRAFT release in this repo holding the zip parts as assets"
+        required: false
+        default: "dsr-parts"
+      parts_sha256:
+        description: "Parts only: expected SHA-256 of the joined zip (empty = verify part sizes only)"
+        required: false
+        default: ""
       fetch_only:
         description: "Only fetch and verify the game files, then stop (no build)"
         type: boolean
@@ -128,6 +137,9 @@ jobs:
           SOURCE: ${{ inputs.source }}
           QUARK_DIR: ${{ inputs.quark_dir }}
           HF_FILE: ${{ inputs.hf_file }}
+          GH_TOKEN: ${{ github.token }}
+          PARTS_TAG: ${{ inputs.parts_tag }}
+          PARTS_SHA256: ${{ inputs.parts_sha256 }}
         run: |
           set -eu
           if [ -z "${PROD_KEYS_B64:-}" ]; then
@@ -298,6 +310,41 @@ jobs:
               HF_ACTUAL=$(stat -f%z "$RUNNER_TEMP/game.zip")
               [ "$HF_ACTUAL" = "$HF_WANT" ] || { echo "::error::Size mismatch for $HF_NAME: got $HF_ACTUAL, want $HF_WANT"; exit 1; }
               echo "Size verified: $HF_NAME ($HF_ACTUAL bytes)"
+            fi
+            unzip -q "$RUNNER_TEMP/game.zip" -d "$RUNNER_TEMP/game"
+            rm -f "$RUNNER_TEMP/game.zip"
+          elif [ "$SOURCE" = "parts" ]; then
+            # ---- Release-parts route: one zip split into <2 GB parts held as
+            # assets of a DRAFT release in this same repo. A draft is not
+            # public, and this repo's own workflow token can read it, so the
+            # route needs no secret. For a game archive that cannot be pushed
+            # to Drive/HF in one shot from the maintainer's side; the parts
+            # are joined in name order and verified before the unzip.
+            TAG="${PARTS_TAG:-dsr-parts}"
+            echo "Fetching parts from draft release $TAG in $GITHUB_REPOSITORY"
+            mkdir -p "$RUNNER_TEMP/parts"
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets | sort_by(.name)[] | "\(.id)\t\(.name)\t\(.size)"' > "$RUNNER_TEMP/parts/list.tsv"
+            if [ ! -s "$RUNNER_TEMP/parts/list.tsv" ]; then
+              echo "::error::No assets found on release $TAG."
+              exit 1
+            fi
+            : > "$RUNNER_TEMP/game.zip"
+            WANT_TOTAL=0
+            while IFS=$'\t' read -r AID ANAME ASIZE; do
+              echo "Part $ANAME ($ASIZE bytes)"
+              gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$AID" > "$RUNNER_TEMP/parts/part.bin"
+              ACTUAL=$(stat -f%z "$RUNNER_TEMP/parts/part.bin")
+              [ "$ACTUAL" = "$ASIZE" ] || { echo "::error::Size mismatch for part $ANAME: got $ACTUAL, want $ASIZE"; exit 1; }
+              cat "$RUNNER_TEMP/parts/part.bin" >> "$RUNNER_TEMP/game.zip"
+              rm -f "$RUNNER_TEMP/parts/part.bin"
+              WANT_TOTAL=$((WANT_TOTAL + ASIZE))
+            done < "$RUNNER_TEMP/parts/list.tsv"
+            TOTAL=$(stat -f%z "$RUNNER_TEMP/game.zip")
+            [ "$TOTAL" = "$WANT_TOTAL" ] || { echo "::error::Joined size mismatch: got $TOTAL, want $WANT_TOTAL"; exit 1; }
+            echo "Joined $TOTAL bytes from $(wc -l < "$RUNNER_TEMP/parts/list.tsv" | tr -d ' ') parts"
+            if [ -n "${PARTS_SHA256:-}" ]; then
+              echo "$PARTS_SHA256  $RUNNER_TEMP/game.zip" | shasum -a 256 -c - || { echo "::error::SHA-256 mismatch for the joined zip"; exit 1; }
+              echo "SHA-256 verified"
             fi
             unzip -q "$RUNNER_TEMP/game.zip" -d "$RUNNER_TEMP/game"
             rm -f "$RUNNER_TEMP/game.zip"
