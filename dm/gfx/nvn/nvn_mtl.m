@@ -4589,31 +4589,38 @@ static void ubd_dirty(uint64_t lo, uint64_t hi) {
 // NVN permits byte-aligned vertex streams; Metal drops the low two address bits. Keep an aligned copy in the submission arena.
 // A CPU copy is safe only without GPU writers (including earlier submissions and sparse aliases). Otherwise copy on the GPU before
 // opening the draw's encoder. Guest writes and pool remaps invalidate reuse; scratch copies themselves do not change guest memory.
+// The same copy bounds a stream the draw reads past: Maxwell's fetch stops at the size the stream was bound with and reads zeros beyond it, Metal's reads on into
+// whatever follows. Such a stream (vbuf_need) gets the bound bytes followed by zeros up to the last byte the draw reads. Super Mario Odyssey's agl mist composite
+// draws 9 vertices from a 36-byte stream holding one full-screen triangle: the 6 vertices past it read the pool's next bytes, which drew a second triangle of the
+// mist over the scene (hard-edged white slabs in the Cascade Kingdom)
 #define VBUF_COPY_MAX (64u << 20)
 typedef struct { uint64_t gpu, epoch, writes; uint32_t sbw; int npend; } vbuf_copy;
-static nvn_hmap g_vbuf_unaligned = {.klen = 16};
+static nvn_hmap g_vbuf_unaligned = {.klen = 24};
 static uint64_t g_vbuf_write_epoch;   // shader writes invalidate snapshots without disturbing indirect conversions of the same draw
-static uint64_t vbuf_unaligned(uint64_t addr, uint64_t size, int prepare) {
-    uint64_t key[2] = {addr, size}; vbuf_copy *c = nvn_hm_get(&g_vbuf_unaligned, key);
+static uint64_t g_vbuf_need[16];   // per stream: the bytes the draw reads when that is more than the bound size, else 0
+static uint64_t vbuf_unaligned(uint64_t addr, uint64_t size, uint64_t need, int prepare) {   // need: 0, or the copy's length (more than size; zeros past size)
+    uint64_t key[3] = {addr, size, need}, len = need > size ? need : size; vbuf_copy *c = nvn_hm_get(&g_vbuf_unaligned, key);
     if (c && !prepare) return c->gpu;
     if (c) {
         int changed = c->epoch != g_wr_epoch || c->writes != g_vbuf_write_epoch || c->sbw != g_sbw_gen || c->npend != g_npend;
-        int dirty = g_pend_over || g_sbw_over || (changed && nvn_sparse_gen())   // aliases may write through another guest address
+        int dirty = size && (g_pend_over || g_sbw_over || (changed && nvn_sparse_gen())   // aliases may write through another guest address
             || (changed && sbw_hits(addr, addr + size))
-            || (c->npend != g_npend && pend_last(addr, size) >= c->npend);
+            || (c->npend != g_npend && pend_last(addr, size) >= c->npend));
         if (!dirty) { c->epoch = g_wr_epoch; c->writes = g_vbuf_write_epoch; c->sbw = g_sbw_gen; c->npend = g_npend; return c->gpu; }
     }
-    void *mb; uint64_t mo;
-    if (!size || size > VBUF_COPY_MAX || !mtl_addr(addr, size, &mb, &mo)) {
-        RED_ONCE(120, "vertex stream at an address not 4-byte aligned (%#llx, %llu bytes) could not be copied: bound as it is, which Metal reads from the aligned address below", (unsigned long long)addr, (unsigned long long)size);
+    void *mb = NULL; uint64_t mo = 0;
+    if (!len || len > VBUF_COPY_MAX || (size && !mtl_addr(addr, size, &mb, &mo))) {
+        if (need) RED_ONCE(121, "a draw reads %llu bytes of the vertex stream at %#llx, bound with %llu: no copy padded with zeros, so Metal reads past the bound range", (unsigned long long)need, (unsigned long long)addr, (unsigned long long)size);
+        else RED_ONCE(120, "vertex stream at an address not 4-byte aligned (%#llx, %llu bytes) could not be copied: bound as it is, which Metal reads from the aligned address below", (unsigned long long)addr, (unsigned long long)size);
         return 0;
     }
     id<MTLBuffer> src = (__bridge id<MTLBuffer>)mb;
-    int cpu = !pend_hits(addr, size) && !g_sbw_over && !sbw_hits(addr, addr + size) && !gw_live(addr, addr + size)
-        && !nvn_sparse_gen() && nvn_host_readable(addr, size) && src.contents;   // a sparse mapping may alias this physical range
+    int cpu = !size || (!pend_hits(addr, size) && !g_sbw_over && !sbw_hits(addr, addr + size) && !gw_live(addr, addr + size)
+        && !nvn_sparse_gen() && nvn_host_readable(addr, size) && src.contents);   // a sparse mapping may alias this physical range
     if (!cpu && !prepare) MDIE("unaligned vertex stream was not prepared before its render encoder");
-    id<MTLBuffer> ab; size_t off = arena_alloc((size_t)size, &ab);
-    if (cpu) memcpy((uint8_t *)ab.contents + off, (const uint8_t *)src.contents + mo, (size_t)size);
+    id<MTLBuffer> ab; size_t off = arena_alloc((size_t)len, &ab);
+    if (len > size) memset((uint8_t *)ab.contents + off + size, 0, (size_t)(len - size));   // the bytes past the bound range read as zeros
+    if (cpu) { if (size) memcpy((uint8_t *)ab.contents + off, (const uint8_t *)src.contents + mo, (size_t)size); }
     else {
         g_blit_alias = 1;
         id<MTL4ComputeCommandEncoder> e = blit();   // lands deferred updates and orders all preceding GPU writes, including aliases
@@ -4624,11 +4631,41 @@ static uint64_t vbuf_unaligned(uint64_t addr, uint64_t size, int prepare) {
     if (!c) { c = malloc(sizeof *c); if (!c) MDIE("cannot allocate vertex copy cache entry"); nvn_hm_put(&g_vbuf_unaligned, key, c); }
     *c = (vbuf_copy){ab.gpuAddress + off, g_wr_epoch, g_vbuf_write_epoch, g_sbw_gen, g_npend}; return c->gpu;
 }
-static void vbuf_prepare(void) {
+static int vattr_bytes(int f) {   // bytes of one element of NVN vertex format f; 0 = not a vertex format
+    static const uint8_t c[12] = {1, 1, 1, 1, 2, 2, 2, 2, 2, 4, 4, 4};   // per component of 0x01-0x30 (one to four components): UNORM8 SNORM8 UINT8 SINT8, F16 UNORM16 SNORM16 UINT16 SINT16, F32 UINT32 SINT32
+    if (f >= 0x01 && f <= 0x30) return c[(f - 1) % 12] * ((f - 1) / 12 + 1);
+    if (f == 0x3D || f == 0x69 || f == 0x3F || f == 0x9A) return 4;   // 10:10:10:2, 11:11:10 float, BGRA8
+    if (f >= 0x51 && f <= 0x68) { int i = (f - 0x51) >> 1; return (i / 3 + 1) * (1 << (i % 3)); }   // integers read as floats (vconv_i2f): 8 / 16 / 32-bit components
+    return 0;
+}
+// The last element a draw reads from stream st: [*last]; 0 = not known on the CPU (indirect, multi-draw, or a per-vertex stream of an indexed draw, whose indices are not scanned here)
+static int vstream_last(int st, const p_draw *dw, const p_draw_idx *di, uint64_t *last) {
+    if ((dw && (dw->ind || dw->mdi_cnt)) || (di && (di->ind || di->mdi_cnt)) || (!dw && !di)) return 0;
+    uint32_t stride = S.stream[st].stride, div = S.stream[st].divisor;
+    if (!stride) { *last = 0; return 1; }
+    if (div) { int32_t n = dw ? dw->instances : di->instances, b = dw ? dw->base_instance : di->base_instance; if (n < 1) n = 1; if (b < 0) return 0; *last = (uint64_t)b + (uint64_t)(n - 1) / div; return 1; }
+    if (!dw || dw->first < 0 || dw->count <= 0) return 0;
+    *last = (uint64_t)dw->first + (uint64_t)dw->count - 1; return 1;
+}
+static void vbuf_need(const nvn_refl *rf, const p_draw *dw, const p_draw_idx *di) {   // fills g_vbuf_need for the inputs the vertex shader reads
+    memset(g_vbuf_need, 0, sizeof g_vbuf_need);
+    for (int v = 0; rf && v < rf->nv; v++) {
+        int a = rf->v[v].nvn; if (a >= 16 || a >= S.nattr || !S.attr[a].fmt) continue;
+        int st = S.attr[a].stream, eb = vattr_bytes(S.attr[a].fmt); uint64_t last;
+        if (st >= 16 || !eb || !S.vbuf[st].address || !vstream_last(st, dw, di, &last)) continue;
+        uint64_t end = last * S.stream[st].stride + S.attr[a].offset + (uint64_t)eb;
+        if (end > S.vbuf[st].size && end > g_vbuf_need[st]) g_vbuf_need[st] = end;
+    }
+}
+static void vbuf_prepare(const nvn_refl *rf, const p_draw *dw, const p_draw_idx *di) {   // before the draw's render encoder: rf, dw / di the draw's vertex shader and record (NULL: no bounds)
     static uint64_t sub, gen, sparse;
     uint64_t pool_gen = atomic_load_explicit(&g_pool_gen, memory_order_acquire), sparse_gen = nvn_sparse_gen();
     if (sub != g_sub_serial || gen != pool_gen || sparse != sparse_gen) nvn_hm_clear(&g_vbuf_unaligned, free);
-    for (int s = 0; s < 16; s++) if (S.vbuf[s].address & 3) vbuf_unaligned(S.vbuf[s].address, S.vbuf[s].size, 1);
+    vbuf_need(rf, dw, di);
+    for (int s = 0; s < 16; s++) if ((S.vbuf[s].address & 3) || g_vbuf_need[s]) {
+        if (g_vbuf_need[s]) { static int once; if (!once++) MLOG("a draw reads %llu bytes of vertex stream %d, bound with %llu: bound as a copy with zeros past the bound range, as Maxwell's fetch reads them", (unsigned long long)g_vbuf_need[s], s, (unsigned long long)S.vbuf[s].size); }
+        vbuf_unaligned(S.vbuf[s].address, S.vbuf[s].size, g_vbuf_need[s], 1);
+    }
     sub = g_sub_serial; gen = pool_gen; sparse = sparse_gen;
 }
 // Resolved guest streams are separate from the table cache: vconv_bind may overwrite a stream's table slot.
@@ -4639,7 +4676,7 @@ static void bind_vbufs(id<MTL4RenderCommandEncoder> en) {
     for (int s = 0; s < 16; s++) {
         uint64_t addr = S.vbuf[s].address, gpu;
         if (!addr) continue;
-        if (addr & 3) { uint64_t c = vbuf_unaligned(addr, S.vbuf[s].size, 0); if (c) { cache[s].addr = 0; enc_r_vbuf(en, VB_SLOT(s), c); continue; } }   // not cached: the copy is per submission
+        if ((addr & 3) || g_vbuf_need[s]) { uint64_t c = vbuf_unaligned(addr, S.vbuf[s].size, g_vbuf_need[s], 0); if (c) { cache[s].addr = 0; enc_r_vbuf(en, VB_SLOT(s), c); continue; } }   // not cached: the copy is per submission
         if (g_vbuf_cache && cache[s].addr == addr && cache[s].gen == gen) { gpu = cache[s].gpu; g_vbuf_reuse++; }
         else {
             void *mb; uint64_t mo; g_vbuf_resolve++;
@@ -4664,7 +4701,9 @@ static void pull_layout_fill(pull_layout *Lp) {
     pull_layout L; memset(&L, 0, sizeof L); uint32_t lo[16] = {0};
     for (int st = 0; st < 16; st++) {
         uint64_t addr = S.vbuf[st].address, gpu; void *mb; uint64_t mo;
-        if (!addr || !mtl_gpu_addr(addr, 1, &mb, &mo, &gpu)) continue;
+        if (!addr) continue;
+        if (!g_vbuf_need[st] || !(gpu = vbuf_unaligned(addr, S.vbuf[st].size, g_vbuf_need[st], 0)))   // a stream the draw reads past: its copy padded with zeros (vbuf_need)
+            if (!mtl_gpu_addr(addr, 1, &mb, &mo, &gpu)) continue;
         L.s[st].base = gpu & ~3ull; lo[st] = (uint32_t)(gpu & 3); L.s[st].stride = S.stream[st].stride; L.s[st].divisor = S.stream[st].divisor;
     }
     for (int a = 0; a < 16 && a < S.nattr; a++) {
@@ -5073,7 +5112,7 @@ static void vc_stat(void) {   // every 3600 submissions
     g_vc_stat = g_sub_serial; g_vc_conv = g_vc_whole = 0;
 }
 // Per submission, one conversion per (range, format, layout): KTGL draws the same mesh several times a frame (depth, shadow, G-buffer)
-static struct { uint64_t addr, size, serial, v0, nv; uint32_t fmt, off, stride; uint64_t gpu; } g_vconv[64]; static int g_vconv_next;
+static struct { uint64_t addr, size, serial, v0, nv, nt; uint32_t fmt, off, stride; uint64_t gpu; } g_vconv[64]; static int g_vconv_next;
 static void vconv_bind(id<MTL4RenderCommandEncoder> en, NvShader *vs, int tf, const p_draw *dw, const p_draw_idx *di) {   // tf: a transform feedback capture (no shadow inputs)
     const nvn_refl *rf = &vs->rf; int slot = VCONV_SLOT0, vc = vc_on(), rk = -1, on = vin_on(vs, NULL, tf); int64_t rlo = 0, rhi = 0;   // rk: the draw's vertex range is known (-1 = not looked up yet)
     vc_stat();
@@ -5081,24 +5120,31 @@ static void vconv_bind(id<MTL4RenderCommandEncoder> en, NvShader *vs, int tf, co
         if (!vconv_wanted(rf, v, NULL, on) || rf->v[v].nvn >= S.nattr) continue;
         int a = rf->v[v].nvn, st = S.attr[a].stream, f = S.attr[a].fmt; uint32_t off = S.attr[a].offset, stride = st < 16 ? S.stream[st].stride : 0;
         uint64_t addr = st < 16 ? S.vbuf[st].address : 0, size = st < 16 ? S.vbuf[st].size : 0, gpu = 0;
-        uint64_t es = (uint64_t)vconv_size(f), v0 = 0, nv = stride == 0 ? 1 : size >= off + es ? (size - off - es) / stride + 1 : 0, whole = nv;
+        uint64_t es = (uint64_t)vconv_size(f), v0 = 0, nv = size >= off + es ? stride == 0 ? 1 : (size - off - es) / stride + 1 : 0, whole = nv;
         if (vc && nv && stride && !S.stream[st].divisor) {   // per-vertex stream: only the vertices the draw reads
             if (rk < 0) rk = vc_draw_range(dw, di, &rlo, &rhi);
             int64_t a0 = rlo < 0 ? 0 : rlo, a1 = rhi < (int64_t)nv - 1 ? rhi : (int64_t)nv - 1;
             if (rk && a0 <= a1) { v0 = (uint64_t)a0; nv = (uint64_t)(a1 - a0 + 1); }
         }
-        for (int i = 0; i < 64 && !gpu; i++) if (g_vconv[i].serial == g_sub_serial && g_vconv[i].addr == addr && g_vconv[i].size == size && g_vconv[i].v0 == v0 && g_vconv[i].nv == nv && g_vconv[i].fmt == (uint32_t)f && g_vconv[i].off == off && g_vconv[i].stride == stride) gpu = g_vconv[i].gpu;
+        // Elements past the bound range read as zeros on Maxwell (vbuf_need): the conversion goes on to the last one the draw reads with the conversion of zero bytes
+        uint64_t last, nt = nv; int lk = vstream_last(st, dw, di, &last);
+        if (!lk && rk > 0 && stride && !S.stream[st].divisor && rhi >= 0) { last = (uint64_t)rhi; lk = 1; }
+        if (lk && last + 1 > v0 + nv) nt = last + 1 - v0;
+        for (int i = 0; i < 64 && !gpu; i++) if (g_vconv[i].serial == g_sub_serial && g_vconv[i].addr == addr && g_vconv[i].size == size && g_vconv[i].v0 == v0 && g_vconv[i].nv == nv && g_vconv[i].nt == nt && g_vconv[i].fmt == (uint32_t)f && g_vconv[i].off == off && g_vconv[i].stride == stride) gpu = g_vconv[i].gpu;
         if (!gpu && addr) {
-            if (nv && nv * 16 <= (4u << 20)) {
-                id<MTLBuffer> b; size_t o = arena_alloc((size_t)nv * 16, &b); vconv_fill(f, addr + off + v0 * stride, stride, nv, (float *)((uint8_t *)b.contents + o)); gpu = b.gpuAddress + o;
+            if (nt && nt * 16 <= (4u << 20)) {
+                id<MTLBuffer> b; size_t o = arena_alloc((size_t)nt * 16, &b); float *d = (float *)((uint8_t *)b.contents + o);
+                if (nv) vconv_fill(f, addr + off + v0 * stride, stride, nv, d);
+                if (nt > nv) { static const uint8_t zeros[16]; vconv_fill(f, (uint64_t)(uintptr_t)zeros, 0, nt - nv, d + 4 * nv); }
+                gpu = b.gpuAddress + o;
                 g_vc_conv += nv; g_vc_whole += whole;
-                int c = g_vconv_next++ % 64; g_vconv[c].addr = addr; g_vconv[c].size = size; g_vconv[c].v0 = v0; g_vconv[c].nv = nv; g_vconv[c].serial = g_sub_serial; g_vconv[c].fmt = (uint32_t)f; g_vconv[c].off = off; g_vconv[c].stride = stride; g_vconv[c].gpu = gpu;
+                int c = g_vconv_next++ % 64; g_vconv[c].addr = addr; g_vconv[c].size = size; g_vconv[c].v0 = v0; g_vconv[c].nv = nv; g_vconv[c].nt = nt; g_vconv[c].serial = g_sub_serial; g_vconv[c].fmt = (uint32_t)f; g_vconv[c].off = off; g_vconv[c].stride = stride; g_vconv[c].gpu = gpu;
                 int ib, is;
                 if (vconv_i2f(f, &ib, &is)) { static int once; if (!once++) MLOG("vertex attribute format %#x (integers read as floats, which Metal has no vertex format for): converted on the CPU at replay and bound separately", f); }
                 else if (rf->v[v].ct == NVN_CT_FLOAT) RED_ONCE(99, "vertex attribute format %#x (8 / 16-bit integer) feeds a float input: the 32-bit register values Maxwell's fetch makes are bound as float bit patterns, converted on the CPU at replay", f);
                 else if (vconv_ncomp(f)) RED_ONCE(89, "vertex attribute format %#x feeds an integer input: converted to float32 bit patterns on the CPU at replay and bound separately (the conversion Maxwell does on vertex fetch)", f);
                 else RED_ONCE(96, "vertex attribute format %#x (8 / 16-bit integer) feeds an integer input of the opposite signedness: extended to 32 bits with the format's own signedness on the CPU at replay and bound separately", f);
-            } else if (nv) RED_ONCE(90, "vertex attribute conversion: a range of %llu vertices exceeds the per-frame staging (format %#x)", (unsigned long long)nv, f);
+            } else if (nt) RED_ONCE(90, "vertex attribute conversion: a range of %llu vertices exceeds the per-frame staging (format %#x)", (unsigned long long)nt, f);
         }
         if (gpu) enc_r_vbuf(en, (NSUInteger)slot, gpu - v0 * 16);   // vertex id v0 reads the first converted element
         slot++;
@@ -9242,7 +9288,7 @@ static void draw_(const p_draw *dw, const p_draw_idx *di) {
     if (g_enc && g_pass.layered != g_rp_layered) rp_end();   // a layered pass only for layer-writing vertex shaders (see rp_begin_ex)
     if (g_enc && g_sm_pass && draw_samples_rt(pr)) { PD("M %llu a draw in the slice-merged pass samples its attachment; split here", g_stat_pass); rp_end(); }
     if (!g_enc && mode == 0 && !g_rp_layered && !defer_q_draw && g_exec_next && !tbdr_on() && !g_geo_program && sm_on()) sm_plan(pr);
-    vbuf_prepare();   // an unaligned GPU-written stream needs its ordered copy before the render encoder
+    vbuf_prepare(pr->sh[0] ? &pr->sh[0]->rf : NULL, dw, di);   // an unaligned GPU-written stream, or one the draw reads past, needs its ordered copy before the render encoder
     id<MTLRenderCommandEncoder> en = rp_begin_ex(mode);
     g_rp_layered = 0; g_sm_plan.on = 0;
     g_fd_dw = NULL; g_fd_di = NULL;
@@ -9252,7 +9298,7 @@ static void draw_(const p_draw *dw, const p_draw_idx *di) {
         // A replayed draw may have ended Q's encoder to align a GPU-written stream. Restore this draw's streams and encoder.
         g_rp_layered = pr->sh[0] && pr->sh[0]->layer_out;
         if (g_enc && g_pass.layered != g_rp_layered) rp_end();
-        vbuf_prepare(); g_fd_dw = dw; g_fd_di = di; en = rp_begin_ex(mode); g_fd_dw = NULL; g_fd_di = NULL; g_rp_layered = 0;
+        vbuf_prepare(pr->sh[0] ? &pr->sh[0]->rf : NULL, dw, di); g_fd_dw = dw; g_fd_di = di; en = rp_begin_ex(mode); g_fd_dw = NULL; g_fd_di = NULL; g_rp_layered = 0;
         if (!en) return;
     }
     if (skip_d) { g_stat_ds_omit++; if (mode == 3) g_stat_s_only++; else if (mode == 4) g_stat_d_only++; }
