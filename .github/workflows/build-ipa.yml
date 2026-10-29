@@ -54,7 +54,7 @@ on:
         required: false
         default: false
       source:
-        description: "Where the game files come from: drive = the zip at NSP_ZIP_URL; quark = pull the .nsp/.nsz files straight from your Quark drive (needs the QUARK_COOKIE secret); hf = the zip named by hf_file from the Hugging Face dataset repo (needs the HF_TOKEN secret); parts = a zip split into <2 GB parts held as assets of a DRAFT release in this repo (parts_tag names the release, parts_sha256 optionally verifies the joined zip; no secret needed)"
+        description: "Where the game files come from: drive = the zip at NSP_ZIP_URL; quark = pull the .nsp/.nsz files straight from your Quark drive (needs the QUARK_COOKIE secret); hf = the zip named by hf_file from the Hugging Face dataset repo (needs the HF_TOKEN secret); parts = a zip split into <2 GB parts held as release assets in the private parts repo (parts_repo/parts_tag name the release, parts_sha256 optionally verifies the joined zip; needs the PARTS_TOKEN secret, a read-only token for that repo only)"
         type: choice
         options:
           - drive
@@ -71,14 +71,14 @@ on:
         description: "HF only: zip file name in the dataset repo Tiaoge-tou/game-archives (hades2.zip or silksong.zip)"
         required: false
         default: "hades2.zip"
+      parts_repo:
+        description: "Parts only: private repository holding the zip parts as release assets"
+        required: false
+        default: "Tiaoge-tou/game-parts"
       parts_tag:
-        description: "Parts only: tag of the DRAFT release in this repo holding the zip parts as assets (log label only; drafts are fetched by ID, the by-tag endpoint never returns a draft)"
+        description: "Parts only: release tag in parts_repo holding the zip parts as assets"
         required: false
         default: "dsr-parts"
-      parts_release_id:
-        description: "Parts only: numeric ID of that DRAFT release"
-        required: false
-        default: "427424478"
       parts_sha256:
         description: "Parts only: expected SHA-256 of the joined zip (empty = verify part sizes only)"
         required: false
@@ -141,9 +141,9 @@ jobs:
           SOURCE: ${{ inputs.source }}
           QUARK_DIR: ${{ inputs.quark_dir }}
           HF_FILE: ${{ inputs.hf_file }}
-          GH_TOKEN: ${{ github.token }}
+          PARTS_GH_TOKEN: ${{ secrets.PARTS_TOKEN }}
+          PARTS_REPO: ${{ inputs.parts_repo }}
           PARTS_TAG: ${{ inputs.parts_tag }}
-          PARTS_RELEASE_ID: ${{ inputs.parts_release_id }}
           PARTS_SHA256: ${{ inputs.parts_sha256 }}
         run: |
           set -eu
@@ -320,29 +320,32 @@ jobs:
             rm -f "$RUNNER_TEMP/game.zip"
           elif [ "$SOURCE" = "parts" ]; then
             # ---- Release-parts route: one zip split into <2 GB parts held as
-            # assets of a DRAFT release in this same repo. A draft is not
-            # public, and this repo's own workflow token can read it, so the
-            # route needs no secret. For a game archive that cannot be pushed
-            # to Drive/HF in one shot from the maintainer's side; the parts
-            # are joined in name order and verified before the unzip.
-            TAG="${PARTS_TAG:-dsr-parts}"
-            RID="${PARTS_RELEASE_ID:-}"
-            if [ -z "$RID" ]; then
-              echo "::error::Set the parts_release_id input (a draft release is fetched by ID; the by-tag endpoint never returns one)."
+            # assets of a release in a PRIVATE parts repo. (A draft release in
+            # this repo was tried first and does not work: the Actions token
+            # gets a 403 on drafts, and the by-tag endpoint hides them from
+            # everyone.) PARTS_TOKEN is a fine-grained token with read-only
+            # Contents access to the parts repo and nothing else. For a game
+            # archive that cannot be pushed to Drive/HF in one shot from the
+            # maintainer's side; the parts are joined in name order and
+            # verified before the unzip.
+            if [ -z "${PARTS_GH_TOKEN:-}" ]; then
+              echo "::error::Set the repository secret PARTS_TOKEN first (a read-only token for the parts repo)."
               exit 1
             fi
-            echo "Fetching parts from draft release $TAG (id $RID) in $GITHUB_REPOSITORY"
+            PREPO="${PARTS_REPO:-Tiaoge-tou/game-parts}"
+            TAG="${PARTS_TAG:-dsr-parts}"
+            echo "Fetching parts from release $TAG in $PREPO"
             mkdir -p "$RUNNER_TEMP/parts"
-            gh api "repos/$GITHUB_REPOSITORY/releases/$RID" --jq '.assets | sort_by(.name)[] | "\(.id)\t\(.name)\t\(.size)"' > "$RUNNER_TEMP/parts/list.tsv"
+            GH_TOKEN="$PARTS_GH_TOKEN" gh api "repos/$PREPO/releases/tags/$TAG" --jq '.assets | sort_by(.name)[] | "\(.id)\t\(.name)\t\(.size)"' > "$RUNNER_TEMP/parts/list.tsv"
             if [ ! -s "$RUNNER_TEMP/parts/list.tsv" ]; then
-              echo "::error::No assets found on release $TAG (id $RID)."
+              echo "::error::No assets found on release $TAG in $PREPO."
               exit 1
             fi
             : > "$RUNNER_TEMP/game.zip"
             WANT_TOTAL=0
             while IFS=$'\t' read -r AID ANAME ASIZE; do
               echo "Part $ANAME ($ASIZE bytes)"
-              gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$AID" > "$RUNNER_TEMP/parts/part.bin"
+              GH_TOKEN="$PARTS_GH_TOKEN" gh api -H "Accept: application/octet-stream" "repos/$PREPO/releases/assets/$AID" > "$RUNNER_TEMP/parts/part.bin"
               ACTUAL=$(stat -f%z "$RUNNER_TEMP/parts/part.bin")
               [ "$ACTUAL" = "$ASIZE" ] || { echo "::error::Size mismatch for part $ANAME: got $ACTUAL, want $ASIZE"; exit 1; }
               cat "$RUNNER_TEMP/parts/part.bin" >> "$RUNNER_TEMP/game.zip"
