@@ -91,7 +91,7 @@ static void phone_motion_start(UIView *body) {
     if (!g_motion.deviceMotionAvailable) { LOG("front end: no device motion, the phone's gyro is not used"); return; }
     LOG("front end: the phone's gyro drives the controller's six-axis sensor %s", mode < 0 ? "while no controller supplies fresh motion" : "always (DM_PHONE_MOTION=1)");
     g_motion.deviceMotionUpdateInterval = 1.0 / 100;
-    if (@available(iOS 27.0, *)) { g_motion.deviceMotionBody = body; g_motion_body = YES; LOG("front end: the phone's motion comes in the pad view's frame (deviceMotionBody)"); }
+    if (@available(iOS 27.0, *)) { if ([g_motion respondsToSelector:NSSelectorFromString(@"setDeviceMotionBody:")]) { [g_motion setValue:body forKey:@"deviceMotionBody"]; g_motion_body = YES; LOG("front end: the phone's motion comes in the pad view's frame (deviceMotionBody)"); } }
     NSOperationQueue *q = [NSOperationQueue new]; q.maxConcurrentOperationCount = 1;
     [g_motion startDeviceMotionUpdatesToQueue:q withHandler:^(CMDeviceMotion *d, NSError *err) {
         (void)err; if (!d) return;
