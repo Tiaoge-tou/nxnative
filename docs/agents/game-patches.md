@@ -39,7 +39,7 @@ Every piece of code that runs for one game and not the others: the rewriter's pa
 | [Taiko Risshiden V DX](#taiko-risshiden-v-dx) | 1 | 0 | 0 | 2 | 0 | yes |
 | [The Legend of Zelda: Breath of the Wild](#the-legend-of-zelda-breath-of-the-wild) | 7 | 0 | 5 | 0 | 0 | yes |
 | [The Legend of Zelda: Link's Awakening](#the-legend-of-zelda-links-awakening) | 1 | 0 | 0 | 0 | 0 | yes |
-| [The Legend of Zelda: Tears of the Kingdom](#the-legend-of-zelda-tears-of-the-kingdom) | 0 | 0 | 11 | 0 | 0 | yes |
+| [The Legend of Zelda: Tears of the Kingdom](#the-legend-of-zelda-tears-of-the-kingdom) | 0 | 0 | 9 | 0 | 0 | yes |
 | [Xenoblade Chronicles 3](#xenoblade-chronicles-3) | 6 | 0 | 0 | 0 | 0 | yes |
 
 ## Games
@@ -590,7 +590,7 @@ Every piece of code that runs for one game and not the others: the rewriter's pa
 
 **Generalize?** No for the hook sites (the game's own timing object). The translator's rule for one of its vertex shaders (Program.cs VertexCounterLowering) might become a general lowering of subgroup ballots in vertex shaders
 
-- **1.4.3 `main`** `277178b7…` ([patches.py:142](../../dm/games/0100F2C0115B6000/patches.py#L142))
+- **1.4.3 `main`** `277178b7…` ([patches.py:136](../../dm/games/0100F2C0115B6000/patches.py#L136))
   - frame step `+0xd5cc0`: view render size x the host render scale (1.0 = original)
   - frame step `+0xd5d80`: dynamic resolution only at render scale 1.0
   - frame step `+0x1fbc80`: D-pad menu fade starts at full rate under fractional steps (FPSLocker)
@@ -600,8 +600,6 @@ Every piece of code that runs for one game and not the others: the rewriter's pa
   - frame step `+0x3e562c`: game step reads the float fps (original integer fps and scvtf when off)
   - frame step `+0x3e5638`: scvtf moved into the stub at the load
   - frame step `+0xbe14a8`: swapchain argument 1 when on (FPSLocker)
-  - frame step `+0x2b33918`: movie ends
-  - frame step `+0x2b36100`: movie starts: 30 fps cap
   - render scale stub (the launcher offers DM_RENDER_SCALE)
 
 ### Xenoblade Chronicles 3
