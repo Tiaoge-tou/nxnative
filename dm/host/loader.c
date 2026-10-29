@@ -261,10 +261,17 @@ void dm_fps_state_apply(void) {
     // the guest letterboxed its 16:9 composition inside the frame with the ghost strip back (device-checked
     // 2026-10-27) -- its docked composition fits inside the frame rather than cropping into it, so there is
     // no docked exception; serve_narrow below covers the handheld channels only
+    // The stock pair is a stock-frame guest's treatment, though, and the floor below is scoped to
+    // that class -- a guest whose display-mode sizes the host fills (g_fill_mod). A guest that
+    // only reads this render pair (Hades II) composes for the reported size itself: floored to
+    // 1920 on an iPad (measured 1552 or 1640) it rendered 1920x1080 and the front end scaled
+    // that wider picture onto the narrower screen, stretching it vertically (device-reported
+    // 2026-10-29). Such a guest is served the measured width on any screen, as builds before
+    // the floor did
     const char *rh0 = getenv("DM_RENDER_WIDTH_HD"); long hw0 = rh0 ? strtol(rh0, NULL, 10) : 0;
     if (rh0 && (hw0 < 320 || hw0 > 16384 || hw0 % 8)) hw0 = 0;
     int serve_narrow = hw0 && hw0 < 1280 && g_fill_mod && g_fill_mod->fill_w_off;
-    long deff = (!ht && w && w < 1920) ? 1920 : (w ? w : 2344);
+    long deff = (!ht && w && w < 1920 && g_fill_mod) ? 1920 : (w ? w : 2344);
     uint64_t rpair = (uint64_t)(uint32_t)deff | (uint64_t)(uint32_t)(ht ? ht : 1080) << 32; memcpy(dm_fps_state + 0x38, &rpair, sizeof rpair);
     if (rw || rht) LOG("%s: render size %ldx%ld (DM_RENDER_WIDTH / DM_RENDER_HEIGHT)", g_fps_mod, deff, ht ? ht : 1080);
     // Render size at the handheld height (state +0x40, a packed u64 width | 720 << 32): the same routing for a build whose
