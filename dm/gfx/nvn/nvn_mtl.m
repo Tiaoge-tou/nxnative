@@ -470,9 +470,12 @@ void mtl_init(void) {
     }
     g_ev = [g_dev newSharedEvent];
     g_keep = [NSMutableArray array];
-    g_nvn_deswz_gpu = nvn_deswz_gpu_init(g_dev) == 0;
+    const char *deswz_env = getenv("DM_NVN_DESWZ_GPU");
+    int deswz_env_off = deswz_env && !strcmp(deswz_env, "0");
+    g_nvn_deswz_gpu = !deswz_env_off && nvn_deswz_gpu_init(g_dev) == 0;
     dm_res_report_register(mtl_res_counts);
-    if (!g_nvn_deswz_gpu) MLOG("[RED] GPU deswizzle init failed; swizzled textures fall back to the CPU");
+    if (deswz_env_off) MLOG("[nvn-mtl] GPU deswizzle off (DM_NVN_DESWZ_GPU=0); swizzled textures take the CPU path");
+    else if (!g_nvn_deswz_gpu) MLOG("[RED] GPU deswizzle init failed; swizzled textures fall back to the CPU");
     MLOG("Metal device %s", g_dev.name.UTF8String);
     udc_selftest();
 }
