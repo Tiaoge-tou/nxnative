@@ -6,6 +6,12 @@
 # two lookups are replaced by the literals of the phone's render size (2344x1080).
 # HUDData.lua / TraitTrayData.lua: the HUD margin fix -- the absolute anchors move 40 out, so the wide frame's
 # HUD sits at its edges (the bleed plates under ResourceBacking keep their stock offsets and are not listed).
+# ObjectiveData.lua: the weapon tutorial objective sets (StaffTutorial, DaggerTutorial, SuitTutorial,
+# TorchTutorial, AxeTutorial, LobTutorial and their aspect variants) each carry their own StartY of 45, the
+# one value CreateObjectiveUI (ObjectiveLogic.lua) starts their rows from; at 45 the strip's first rows land
+# under the top-left resource row the margin fix moved to the edge, so the strip moves 60 down to 105. No
+# other objective set uses 45 (the rest fall back to the HUD screen's 150) and nothing else reads the value,
+# so only the weapon move lists move.
 Scripts/RunLogic.lua	local actualHeight = GetConfigOptionValue({ Name = "Y" })	local actualHeight = 1080	1
 Scripts/RunLogic.lua	local actualWidth = GetConfigOptionValue({ Name = "X" })	local actualWidth = 2344	1
 Scripts/HUDData.lua	ActiveTraitBottomOffset = 155,	ActiveTraitBottomOffset = 195,	1
@@ -36,3 +42,4 @@ Scripts/HUDData.lua	Y = 40,	Y = 80,	6
 Scripts/TraitTrayData.lua	RightOffset = 20,	RightOffset = 60,	1
 Scripts/TraitTrayData.lua	TraitStartX = 50,	TraitStartX = 90,	1
 Scripts/TraitTrayData.lua	Y = 60,	Y = 100,	1
+Scripts/ObjectiveData.lua	StartY = 45,	StartY = 105,	11
