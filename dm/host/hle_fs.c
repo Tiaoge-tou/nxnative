@@ -223,6 +223,8 @@ static Result mount_ex(const char *name, const char *dir, int ro, int txn) {
     struct stat ist;
     if (ro && !txn && !stat(dir, &ist) && S_ISREG(ist.st_mode)) {   // a RomFS image file in place of a folder
         if (!(g_mnt[g_nmnt].img = img_open(dir))) die("the game files %s are not a complete RomFS image", dir);
+        if (getenv("DM_ROMFS_OVERLAY"))   // an overlay folder shadows image entries by path on any mount of the image, not only "rom" (a game may mount its files as "system")
+            strlcpy(g_mnt[g_nmnt].overlay, getenv("DM_ROMFS_OVERLAY"), sizeof g_mnt[0].overlay);
     }
     g_nmnt++;
     pthread_mutex_unlock(&g_lock);
