@@ -63,14 +63,15 @@ static void script_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int
     shake_note();
 }
 uint64_t dm_input_samples(void) { return (uint64_t)atomic_load(&g_sampling); }
-// ---- Pad mode from the game's own state (the touch gamepad hides in cutscenes and loads; DmGamepad.m polls dm_pad_mode) ----
+// ---- Pad mode from the game's own state (the touch gamepad hides in cutscenes and loads and switches to its bag layout in the inventory; DmGamepad.m polls dm_pad_mode) ----
 // The class objects of an IL2CPP game sit in slots in main's image, one per class the runtime has loaded: slot -> class object ->
 // (once its ready flag at +0xe4 is set) its static fields at +0xb8 -> the singleton instance at a per-class offset in the statics.
 // The layout below is per build, like every fixed guest offset in this host, and follows the offsets the touch port of this same
 // build uses (MZhao-ouo/Touchable, MIT): GameManager's instance at statics +0x8, its game state at +0x20 (7 = a cutscene; 2, 3 and
 // 6 = loading states), its input handler at +0xa8, whose skip mode at +0x84 is 0 or 1 while the cutscene can be skipped;
 // UIManager's instance at statics +0x10, its UI state at +0x64 (3 = a cutscene, 2 = loading); the hero's instance at its own
-// class's statics +0x8, with the byte at +0x8ac set while the inventory is open (the two state enums do not change for it). An instance counts only while the
+// class's statics +0x8, with the byte at +0x8ac set while the inventory is open (the two state enums do not change for it), which
+// with game state 4 (playing) is mode 4, the bag. An instance counts only while the
 // native object behind it lives (the pointer at +0x10). Fail-safe throughout: a class not ready, a null link, or a state value
 // outside its range reads as mode 0 (play), so a layout that does not fit the build can never hide the pad
 typedef struct { const char *build; uint64_t game_class, ui_class, player_class; } pad_layout_t;
@@ -88,27 +89,6 @@ static const void *pad_static(const uint8_t *base, uint64_t slot, uint64_t inst_
     if (!inst || !*(const void *const *)((const uint8_t *)inst + 0x10)) return NULL;   // no live object behind it
     return inst;
 }
-static void pad_dump_obj(const uint8_t *base, const pad_layout_t *lay, int which, const char *tag, int n, int phase) {
-    // which: 0 = GameManager, 1 = UIManager (both dumped whole, +0x0 to +0x800); 2 = the hero (only +0x800 to +0x900, around the inventory byte)
-    const void *inst = which == 0 ? pad_static(base, lay->game_class, 0x8) : which == 1 ? pad_static(base, lay->ui_class, 0x10) : pad_static(base, lay->player_class, 0x8);
-    const char *obj = which == 0 ? "gm" : which == 1 ? "um" : "pl";
-    if (!inst) { LOG("[pad] dump skipped %s", obj); return; }
-    LOG("[pad] dump tag=%s n=%d phase=%d obj=%s", tag, n, phase, obj);
-    const uint8_t *p = (const uint8_t *)inst;
-    const int from = which == 2 ? 0x800 : 0, to = which == 2 ? 0x900 : 0x800;
-    for (int off = from; off < to; off += 32) {
-        char line[128]; int w = snprintf(line, sizeof line, "[pad] +0x%03x: ", off);
-        for (int i = 0; i < 32; i++) w += snprintf(line + w, sizeof line - (size_t)w, "%s%02x", i ? " " : "", p[off + i]);
-        LOG("%s", line);
-    }
-}
-// Memory-diff probe (temporary): a player 1 press of Minus, B, L, R or Plus starts a burst of dumps of the three
-// instances (at the press and about 200, 500 and 1000 ms later, on the 100 ms poll), so the fields that flip when the
-// inventory opens or closes can be found by diffing bursts offline — the hero's dump covers the +0x8ac inventory byte
-// the poll logs on change. Read-only; at most 60 bursts, then the state logging goes on alone
-static const struct { uint64_t bit; const char *tag; } k_dump_keys[] = {
-    { DM_BTN_MINUS, "MINUS" }, { DM_BTN_B, "B" }, { DM_BTN_L, "L" }, { DM_BTN_R, "R" }, { DM_BTN_PLUS, "PLUS" },
-};
 static void *pad_mode_main(void *arg) {
     (void)arg;
     const pad_layout_t *lay = NULL; const uint8_t *base = NULL;
@@ -121,9 +101,6 @@ static void *pad_mode_main(void *arg) {
     if (!lay || !base) { LOG("[pad] no game-state layout for this build; the pad stays as it is"); return NULL; }
     LOG("[pad] watching the game state for cutscenes and loads (build %s)", lay->build);
     int cur = -1;
-    uint64_t dump_prev = 0, dump_poll = 0;   // memory-diff probe state: the last poll's watched buttons, the poll count
-    int dump_started = 0, dump_phase = -1, dump_start = 0, dump_limit_logged = 0;   // dump_phase < 0: no burst running
-    const char *dump_tag = NULL, *dump_pending = NULL;
     for (;;) {
         int mode = 0;
         const void *gm = pad_static(base, lay->game_class, 0x8);
@@ -132,41 +109,17 @@ static void *pad_mode_main(void *arg) {
         int us = um ? *(const int32_t *)((const uint8_t *)um + 0x64) : -1;
         static int pgs = -2, pus = -2;   // state probe: log the raw game/UI states whenever either changes (read-only)
         if (gs != pgs || us != pus) { pgs = gs; pus = us; LOG("[pad] state gs=%d us=%d", gs, us); }
-        const void *pl = pad_static(base, lay->player_class, 0x8);   // inventory probe: the hero's byte at +0x8ac (Touchable's PLAYER_INVENTORY_OPEN)
-        static int pinv = -2;
-        if (pl) { int inv = *(const uint8_t *)((const uint8_t *)pl + 0x8ac); if (inv != pinv) { pinv = inv; LOG("[pad] inv=%d (gs=%d us=%d)", inv, gs, us); } }
+        const void *pl = pad_static(base, lay->player_class, 0x8);   // the hero: the byte at +0x8ac is set while the inventory is open
+        int inv = pl ? *(const uint8_t *)((const uint8_t *)pl + 0x8ac) : -1;   // -1 when the hero does not resolve: no bag, never a bag by accident
         if (gs >= 0 && gs <= 7 && us >= 0 && us <= 6) {   // a state outside its range means the layout does not fit: never hide
             if (gs == 7 || us == 3) {
                 mode = 2;
                 const void *ih = gm ? *(const void *const *)((const uint8_t *)gm + 0xa8) : NULL;
                 if (ih && *(const void *const *)((const uint8_t *)ih + 0x10)) { int sm = *(const int32_t *)((const uint8_t *)ih + 0x84); if (sm == 0 || sm == 1) mode = 3; }
             } else if (gs == 2 || gs == 3 || gs == 6 || us == 2) mode = 1;
+            else if (gs == 4 && inv == 1) mode = 4;   // the inventory: both enums stay at play while it is open, only the hero's byte tells
         }
-        if (mode != cur) { cur = mode; atomic_store(&g_pad_mode, mode); LOG("[pad] mode %d (%s)", mode, mode == 3 ? "cutscene, skippable" : mode == 2 ? "cutscene" : mode == 1 ? "loading" : "play"); }
-        {   // memory-diff probe: watch player 1's buttons (the touch path publishes through g_btn, a controller through g_pad_btn[0])
-            static const int dump_off[4] = { 0, 2, 5, 10 };   // burst phases in polls of 100 ms: the press, +200, +500, +1000 ms
-            uint64_t btn = atomic_load(&g_btn) | atomic_load(&g_sc_btn) | atomic_load(&g_pad_btn[0]);
-            uint64_t edges = btn & ~dump_prev; dump_prev = btn;
-            const char *edge_tag = NULL;
-            for (unsigned k = 0; k < sizeof k_dump_keys / sizeof *k_dump_keys && !edge_tag; k++) if (edges & k_dump_keys[k].bit) edge_tag = k_dump_keys[k].tag;
-            if (edge_tag) {
-                if (dump_started >= 60) { if (!dump_limit_logged) { dump_limit_logged = 1; LOG("[pad] dump limit reached"); } }
-                else if (dump_phase < 0) { dump_tag = edge_tag; dump_phase = 0; dump_start = (int)dump_poll; }
-                else dump_pending = edge_tag;
-            }
-            if (dump_phase >= 0 && (int)dump_poll >= dump_start + dump_off[dump_phase]) {
-                if (!dump_phase) dump_started++;
-                pad_dump_obj(base, lay, 0, dump_tag, dump_started, dump_phase);
-                pad_dump_obj(base, lay, 1, dump_tag, dump_started, dump_phase);
-                pad_dump_obj(base, lay, 2, dump_tag, dump_started, dump_phase);
-                if (++dump_phase > 3) {
-                    dump_phase = -1;
-                    if (dump_pending && dump_started < 60) { dump_tag = dump_pending; dump_pending = NULL; dump_phase = 0; dump_start = (int)dump_poll + 1; }
-                    else dump_pending = NULL;
-                }
-            }
-            dump_poll++;
-        }
+        if (mode != cur) { cur = mode; atomic_store(&g_pad_mode, mode); LOG("[pad] mode %d (%s)", mode, mode == 4 ? "bag" : mode == 3 ? "cutscene, skippable" : mode == 2 ? "cutscene" : mode == 1 ? "loading" : "play"); }
         struct timespec ts = { 0, 100000000 }; nanosleep(&ts, NULL);
     }
     return NULL;
