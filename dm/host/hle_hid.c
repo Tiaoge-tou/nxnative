@@ -74,26 +74,22 @@ uint64_t dm_input_samples(void) { return (uint64_t)atomic_load(&g_sampling); }
 // with game state 4 (playing) is mode 4, the bag. The hero also carries the inventory's current tab as a u32 at +0x278 (0 items,
 // 1 crests, 2 quests, 3 journal, 4 map; its neighbours sit still while only it steps with the tab, found by a wide dump across
 // all five tabs; it keeps its last value while the inventory is closed), published through dm_pad_tab for the bag layout's X
-// key, which shows on the crests tab only. An instance counts only while the
-// native object behind it lives (the pointer at +0x10). Fail-safe throughout: a class not ready, a null link, or a state value
-// outside its range reads as mode 0 (play), so a layout that does not fit the build can never hide the pad
+// key, which shows on the crests tab only. The UI manager also carries its current page as a u32 at +0x68 (1 = the title
+// screen, 2 = options, 3 = the controller page, 20 = the key-binding page; the two state enums sit at 1/1 across all four
+// pages, so only this field tells them apart, found by a wide dump across the pages in the memory-diff probe's format, every
+// one of its twelve dumps fitting), published through dm_pad_page: at game state 1, page 1 is mode 5 (the title screen) and
+// pages 3 and 20 are mode 6 (the controller pages). An instance counts only while the
+// native object behind it lives (the pointer at +0x10). The mode starts unpublished (dm_pad_mode reads -1) until the watcher
+// first derives it from a state inside its range, so the pad stays hidden while the game loads to its title screen; a build
+// with no layout publishes 0 at once, and once the watcher is running, fail-safe throughout: a class not ready, a null link,
+// or a state value outside its range reads as mode 0 (play), so a layout that does not fit the build can never hide the pad
 typedef struct { const char *build; uint64_t game_class, ui_class, player_class; } pad_layout_t;
 static const pad_layout_t k_pad_layouts[] = {
     { "fc9ea4ccc955d5799f37752b2d730b31", 0x7e14880, 0x7e195b8, 0x7e176b0 },   // Hollow Knight: Silksong, the build in its game.tsv
 };
 static _Atomic int g_pad_mode;
 static _Atomic int g_pad_tab;   // the inventory's current tab (dm_pad_tab): -1 until the watcher first reads the hero
-// TEMPORARY page probe (delete in the next build): dump one instance's bytes
-// to the log in the memory-diff probe's format, 32 bytes a line
-static void pad_probe_dump(int n, const char *obj, const uint8_t *inst, uint32_t size, int gs, int us, int tab) {
-    LOG("[pad] dump n=%d obj=%s gs=%d us=%d tab=%d", n, obj, gs, us, tab);
-    char line[160];
-    for (uint32_t off = 0; off < size; off += 32) {
-        int w = snprintf(line, sizeof line, "[pad] +0x%03x:", off);
-        for (int i = 0; i < 32; i++) w += snprintf(line + w, (size_t)((int)sizeof line - w), " %02x", inst[off + i]);
-        LOG("%s", line);
-    }
-}
+static _Atomic int g_pad_page;   // the UI manager's current page (dm_pad_page): -1 until the watcher first reads the UI manager
 static const void *pad_static(const uint8_t *base, uint64_t slot, uint64_t inst_off) {
     const void *klass = *(const void *const *)(base + slot);
     if (!klass || ((uintptr_t)klass & 7)) return NULL;
@@ -113,19 +109,14 @@ static void *pad_mode_main(void *arg) {
         if (lay) for (int m = 0; m < g_nmod; m++) if (!strcmp(g_mod[m].name, "main")) base = g_mod[m].base;
         if (!lay || !base) { struct timespec ts = { 0, 250000000 }; nanosleep(&ts, NULL); }
     }
-    if (!lay || !base) { LOG("[pad] no game-state layout for this build; the pad stays as it is"); return NULL; }
+    if (!lay || !base) { atomic_store(&g_pad_mode, 0); LOG("[pad] no game-state layout for this build; the pad stays as it is"); return NULL; }
     LOG("[pad] watching the game state for cutscenes and loads (build %s)", lay->build);
     const char *be = getenv("DM_PAD_BAG");   // the bag mode's own switch, read once: off (0), mode 4 never happens and the pad behaves as if the feature were not there
     int bag_on = !be || atoi(be);
     if (!bag_on) LOG("[pad] bag mode off (DM_PAD_BAG=0)");
     int cur = -1;
-    // TEMPORARY page probe (delete in the next build): a rising edge on any pad button arms one wide dump of the UI
-    // and game manager instances 600 ms later (um 0x1400, gm 0x1000), to find the field that names the current menu
-    // page -- the game/UI state enums sit at 1/1 from the title screen through options, the controller page and the
-    // key-binding page, so no state value tells those pages apart.
-    uint64_t pprev = 0, prose = 0; int pcount = 0, pticks = -1;
     for (;;) {
-        int mode = 0;
+        int mode = 0, known = 0;
         const void *gm = pad_static(base, lay->game_class, 0x8);
         const void *um = pad_static(base, lay->ui_class, 0x10);
         int gs = gm ? *(const int32_t *)((const uint8_t *)gm + 0x20) : -1;
@@ -138,39 +129,32 @@ static void *pad_mode_main(void *arg) {
         if (tab < 0 || tab > 4) tab = -1;   // a value outside the tab range means the layout does not fit: unknown, and the front end shows the bag's X key rather than hiding it on a guess
         static int ptab = -2;
         if (tab != ptab) { ptab = tab; atomic_store(&g_pad_tab, tab); LOG("[pad] tab %d", tab); }
+        int page = um ? *(const int32_t *)((const uint8_t *)um + 0x68) : -1;   // the UI manager's current page, next to its UI state
+        if (page < 0 || page > 64) page = -1;   // a value outside the page range means the layout does not fit: unknown, and no page mode follows from it
+        static int ppage = -2;
+        if (page != ppage) { ppage = page; atomic_store(&g_pad_page, page); LOG("[pad] page %d", page); }
         if (gs >= 0 && gs <= 7 && us >= 0 && us <= 6) {   // a state outside its range means the layout does not fit: never hide
+            known = 1;
             if (gs == 7 || us == 3) {
                 mode = 2;
                 const void *ih = gm ? *(const void *const *)((const uint8_t *)gm + 0xa8) : NULL;
                 if (ih && *(const void *const *)((const uint8_t *)ih + 0x10)) { int sm = *(const int32_t *)((const uint8_t *)ih + 0x84); if (sm == 0 || sm == 1) mode = 3; }
             } else if (gs == 2 || gs == 3 || gs == 6 || us == 2) mode = 1;
+            else if (gs == 1 && page == 1) mode = 5;   // the title screen: the pad shows the stick and its two letter keys only
+            else if (gs == 1 && (page == 3 || page == 20)) mode = 6;   // the controller pages: every key, as a letter, so the key-binding page can be worked
             else if (bag_on && gs == 4 && inv == 1) mode = 4;   // the inventory: both enums stay at play while it is open, only the hero's byte tells
         }
-        if (mode != cur) { cur = mode; atomic_store(&g_pad_mode, mode); LOG("[pad] mode %d (%s)", mode, mode == 4 ? "bag" : mode == 3 ? "cutscene, skippable" : mode == 2 ? "cutscene" : mode == 1 ? "loading" : "play"); }
-        {   // TEMPORARY page probe (delete in the next build): poll player 1's buttons (the same three sources shake_note reads)
-            uint64_t btns = atomic_load(&g_btn) | atomic_load(&g_sc_btn) | atomic_load(&g_pad_btn[0]);
-            uint64_t rose = btns & ~pprev; pprev = btns;
-            if (pticks < 0 && pcount < 40 && rose) { prose = rose; pticks = 6; }   // any key's rising edge arms one dump, 6 ticks (600 ms) later, once the page switch has settled
-            if (pticks > 0 && --pticks == 0) {
-                pcount++;
-                LOG("[pad] dump n=%d btn=%#llx", pcount, (unsigned long long)prose);
-                const struct { const char *obj; const void *inst; uint32_t size; } objs[2] = {
-                    { "um", pad_static(base, lay->ui_class, 0x10), 0x1400 },
-                    { "gm", pad_static(base, lay->game_class, 0x8), 0x1000 } };
-                for (int o = 0; o < 2; o++)
-                    if (objs[o].inst) pad_probe_dump(pcount, objs[o].obj, (const uint8_t *)objs[o].inst, objs[o].size, gs, us, tab);
-                    else LOG("[pad] dump skipped %s", objs[o].obj);
-                pticks = -1;
-            }
-        }
+        if ((known || cur >= 0) && mode != cur) { cur = mode; atomic_store(&g_pad_mode, mode); LOG("[pad] mode %d (%s)", mode, mode == 6 ? "settings" : mode == 5 ? "title" : mode == 4 ? "bag" : mode == 3 ? "cutscene, skippable" : mode == 2 ? "cutscene" : mode == 1 ? "loading" : "play"); }   // until the first state inside its range derives a mode, nothing is published: the mode stays -1 and the pad stays hidden
         struct timespec ts = { 0, 100000000 }; nanosleep(&ts, NULL);
     }
     return NULL;
 }
 static void pad_mode_start(void) {
     atomic_store(&g_pad_tab, -1);   // unknown until the watcher reads the hero (it may never start: then the tab stays unknown)
+    atomic_store(&g_pad_page, -1);   // unknown until the watcher reads the UI manager, on the same terms
     const char *e = getenv("DM_PAD_SKIN");   // the reader exists for the pad skin only: without it no thread starts and the mode stays 0
     if (!e || !atoi(e)) return;
+    atomic_store(&g_pad_mode, -1);   // unpublished until the watcher derives its first mode: with the skin on, the pad stays hidden while the game loads
     pthread_t th; if (!pthread_create(&th, NULL, pad_mode_main, NULL)) pthread_detach(th);
 }
 static pthread_once_t pad_mode_once = PTHREAD_ONCE_INIT;
@@ -181,6 +165,10 @@ int dm_pad_mode(void) {
 int dm_pad_tab(void) {
     pthread_once(&pad_mode_once, pad_mode_start);
     return atomic_load(&g_pad_tab);
+}
+int dm_pad_page(void) {
+    pthread_once(&pad_mode_once, pad_mode_start);
+    return atomic_load(&g_pad_page);
 }
 // DM_KEYS scripted input (for tests): "seconds:key[+key][~hold seconds][*count/interval seconds],...", e.g. "8:A,12:A,15:Down~0.5,16:A+B,40:A*80/2" (A every 2 s from 40 s on, 80 times). Key names A B X Y LS RS L R ZL ZR (plus the sticks LLeft LUp LRight LDown and RLeft RUp RRight RDown) Plus Minus Left Up Right Down, left stick LLeft LUp LRight LDown,
 //   L<x>/<y> and R<x>/<y> = a stick tilted part way (each -1 to 1, y up: a cursor that a full tilt sweeps past its target), T<x>x<y> = a touch at normalized picture coordinates (origin top left) for the hold time, and Shake = the controller shaken for the hold time (at least one whole shake);

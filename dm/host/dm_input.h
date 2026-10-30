@@ -15,14 +15,22 @@ void dm_input_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t 
 uint64_t dm_input_samples(void);   // Cumulative number of times the game has sampled the controller
 // Pad mode for the touch gamepad's skin (hle_hid.c): 0 = play (the pad shows), 1 = a loading state (the pad hides), 2 = a cutscene that
 // cannot be skipped (the pad hides, its recall switch shows), 3 = a cutscene that can be skipped (the pad hides, the recall switch and a
-// skip key show). Read from the game's own state objects by a host thread, only with the pad skin on (DM_PAD_SKIN) and only for a build
-// with a known class layout; any doubt -- a class not ready, a null link, a state value out of range -- reads as 0, so the pad never
-// hides on a guess. The iOS gamepad polls it; other front ends never call it and see no change
+// skip key show), 4 = the inventory (the bag layout replaces the pad), 5 = the title screen (the stick and two letter keys show),
+// 6 = a controller page (every key shows, as a letter). Read from the game's own state objects by a host thread, only with the pad
+// skin on (DM_PAD_SKIN) and only for a build with a known class layout. -1 while the watcher has not published yet (it derives its
+// first mode from the first state inside its range), so the pad stays hidden while the game loads; a build with no layout publishes 0
+// at once, and any doubt once the watcher is running -- a class not ready, a null link, a state value out of range -- reads as 0, so
+// the pad never hides on a guess. The iOS gamepad polls it; other front ends never call it and see no change
 int dm_pad_mode(void);
 // The inventory's current tab for the same pad (hle_hid.c, the same watcher): 0 = items, 1 = crests, 2 = quests, 3 = journal,
 // 4 = map, read from the hero's own field; -1 while the hero does not resolve or the value sits outside the tab range (the tab
 // keeps its last value while the inventory is closed). The bag layout's X key shows only on the crests tab; an unknown tab shows it
 int dm_pad_tab(void);
+// The UI manager's current page for the same pad (hle_hid.c, the same watcher): 1 = the title screen, 2 = options, 3 = the
+// controller page, 20 = the key-binding page, read from the UI manager's own field (the game and UI state enums sit at 1/1
+// across all four pages); -1 while the UI manager does not resolve or the value sits outside the page range. At game state 1
+// the watcher turns page 1 into pad mode 5 and pages 3 and 20 into pad mode 6; every other page leaves the mode to the states
+int dm_pad_page(void);
 // Physical controller path (Mac / iOS GameController): stored separately from keyboard / touch and scripted input (DM_KEYS / DM_CTL); when the game reads player 1,
 // buttons are ORed bitwise and each stick axis takes whichever source is deflected more. All 0 when no controller is connected.
 // dm_pad_set is player 1's controller (DM_BTN_SHAKE counts there only); dm_pad_set_player sets player n + 1's, which the game reads on its own npad (hle_hid.c) while

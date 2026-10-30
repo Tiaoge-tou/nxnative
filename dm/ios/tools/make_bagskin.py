@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make the Silksong pad's bag-mode key art (dm/ios/padskin + padskin-badge).
+"""Make the Silksong pad's bag-mode and letter key art (dm/ios/padskin + padskin-badge).
 
 The bag layout (DmGamepad pad mode 4) has nine keys of its own: a D-pad of
 four round-frame keys with a solid block arrow each (generously rounded
@@ -11,7 +11,13 @@ over a clean radial dark disc generated here: the frames' own discs carry
 their icons, and a cleaned copy of one still showed the icon's ghost in the
 approved layout preview, so the disc is procedural (a radial gradient, a
 soft inner shadow at its rim, faint brush dabs and grain, in the badge
-medallion face's family) and no pixel of an icon survives into it.
+medallion face's family) and no pixel of an icon survives into it. The same
+frames and craft also bake the letter set of the title and settings pages
+(pad modes 5 and 6): one round-frame key per game key -- X / A / B / Y / L /
+R / + / - at the face keys' letter size (the plus and the minus drawn at
+the letters' own size, their ink standing at the approved settings
+preview's proportions) and ZL / ZR at
+the full letter height, narrowed to fit the disc.
 
 Glyphs follow the badge bake's letter craft (tools in the skin workspace,
 bake_badges.py): Noto Serif, an ivory vertical gradient, a dark carved
@@ -164,19 +170,36 @@ def block_arrow_glyph(direction):
     return glyph_layer(draw, soften)
 
 
-def letter_glyph(letter, ink_h):
+def letter_glyph(letter, ink_h, max_w=None, ink_w=None):
+    letter = letter.replace('\u2212', '-')   # Noto Serif carries no U+2212 (the font would draw its .notdef box): the minus key draws the ASCII hyphen, a centred bar
     probe = ImageDraw.Draw(Image.new('RGBA', (4, 4)))
     def draw(md, SS):
         size = int(ink_h * SS * 1.9)
         while size > 8:
             f = ImageFont.truetype(SERIF, size)
             b = probe.textbbox((0, 0), letter, font=f)
-            if b[3] - b[1] <= ink_h * SS:
+            if ink_w:   # fit the drawn ink's width, not the font's box: a hyphen's text box is its line box, wider and taller than the bar itself
+                m = Image.new('L', (size, size), 0)
+                ImageDraw.Draw(m).text((0, 0), letter, font=f, fill=255)
+                mb = m.getbbox()
+                if mb and mb[2] - mb[0] <= ink_w * SS:
+                    break
+            elif b[3] - b[1] <= ink_h * SS:
                 break
             size -= 2
         c = CANVAS * SS // 2
         md.text((c - (b[2] - b[0]) / 2 - b[0], c - (b[3] - b[1]) / 2 - b[1]), letter, font=f, fill=255)
-    return glyph_layer(draw)
+    def squeeze(mask):   # a two-letter glyph at the face keys' full ink height is wider than the disc: narrow the mask to max_w, its height untouched (the carved shadow and the gradient follow the mask, as with any glyph)
+        if not max_w:
+            return mask
+        bb = mask.getbbox()
+        if not bb:
+            return mask
+        cap = max_w * mask.width // CANVAS   # max_w is in canvas px; the mask is supersampled
+        if bb[2] - bb[0] <= cap:
+            return mask
+        return mask.resize((mask.width * cap // (bb[2] - bb[0]), mask.height), Image.LANCZOS)
+    return glyph_layer(draw, squeeze)
 
 
 def pressed(art, centre):
@@ -212,6 +235,17 @@ def main():
         keys.append((name, 'bind', letter_glyph(letter, 383)))   # ink height 0.474 of the frame's 807
     for name, letter in (('bagl', 'L'), ('bagr', 'R')):
         keys.append((name, 'needolin', letter_glyph(letter, 230)))   # 0.314 of the horn frame's 733
+    # The letter set of the title and settings pages (pad modes 5 and 6): every game key as a round-frame
+    # letter at the bag face keys' own size, so the settings pages name the keys they rebind. The title
+    # screen uses leta / letb; the controller pages use the whole set at the combat keys' seats
+    for name, glyph in (('letx', letter_glyph('X', 383)), ('leta', letter_glyph('A', 383)),
+                        ('letb', letter_glyph('B', 383)), ('lety', letter_glyph('Y', 383)),
+                        ('letl', letter_glyph('L', 383)), ('letr', letter_glyph('R', 383)),
+                        ('letplus', letter_glyph('+', 383)),   # drawn at the letters' own size: a serif plus's ink stands at about three quarters of a letter's, as on the approved settings preview
+                        ('letminus', letter_glyph('\u2212', 383, ink_w=190)),   # a minus has no ink height to fit: it is drawn at the letters' size and fitted by its ink's width, the bar's thickness following
+                        ('letzl', letter_glyph('ZL', 383, max_w=565)),   # two letters at the full ink height, narrowed to the disc
+                        ('letzr', letter_glyph('ZR', 383, max_w=565))):
+        keys.append((name, 'bind', glyph))
     bases = {}
     done = []
     for name, frame, glyph in keys:
