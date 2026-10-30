@@ -2,7 +2,8 @@
 """Make the Silksong pad's bag-mode key art (dm/ios/padskin + padskin-badge).
 
 The bag layout (DmGamepad pad mode 4) has nine keys of its own: a D-pad of
-four round-frame keys with an ivory chevron each, the X / A / B face keys as
+four round-frame keys with a solid block arrow each (generously rounded
+corners), the X / A / B face keys as
 round-frame keys with a big serif letter, and L / R in the double-horn frame
 with a letter. Every key is composed from the shipping skin's own frames --
 bind.png for the round thorn frame, needolin.png for the double-horn frame --
@@ -16,8 +17,8 @@ Glyphs follow the badge bake's letter craft (tools in the skin workspace,
 bake_badges.py): Noto Serif, an ivory vertical gradient, a dark carved
 offset below, optically centred. Sizes are the approved bag-layout
 preview's: a face letter's ink stands 0.474 of the frame's diameter, an
-L / R letter's 0.314 of its frame's, a chevron spans 0.41 across and 0.288
-down its frame with a 0.079 stroke. The pressed state follows the shipping
+L / R letter's 0.314 of its frame's, a block arrow spans 0.41 across and
+0.434 down its frame before rounding. The pressed state follows the shipping
 set's rule, measured off bind / bind_p: the frame is untouched and the
 disc's interior takes a warm rose glow, strongest at the centre. The badge
 set is the plain set padded onto its 1020 canvas (the same +70 offset
@@ -114,12 +115,16 @@ def clean_base(frame_name, seed):
     return out
 
 
-def glyph_layer(draw_fn):
-    """Render a glyph at 2x with the carved shadow and ivory gradient, centred."""
+def glyph_layer(draw_fn, post=None):
+    """Render a glyph at 2x with the carved shadow and ivory gradient, centred.
+
+    post, when given, post-processes the drawn mask before centring (the
+    D-pad's block arrows blur and re-threshold theirs to round the corners)."""
     SS = 2
     S = CANVAS * SS
     mask = Image.new('L', (S, S), 0)
     draw_fn(ImageDraw.Draw(mask), SS)
+    if post: mask = post(mask)
     bbox = mask.getbbox()
     if bbox:   # optical centring on the ink, as bake_badges' glyph_mask
         dx = round(S / 2 - (bbox[0] + bbox[2]) / 2)
@@ -141,19 +146,22 @@ def glyph_layer(draw_fn):
     return lay.resize((CANVAS, CANVAS), Image.LANCZOS)
 
 
-def chevron_glyph(direction):
-    """direction: 0 left, 1 up, 2 down, 3 right (DmGamepad's triPath order)."""
-    W, H, ST = 325, 228, 62   # ink spans, in canvas px (0.41 / 0.288 / 0.079 of the frame's 807)
+def block_arrow_glyph(direction):
+    """A solid block arrow with generously rounded corners, drawn natively
+    per direction (the polygon's coordinates rotate, never a bitmap): an
+    arrowhead 330 wide over a shaft 96 wide, the whole 350 tall in canvas
+    px, its corners rounded by blurring the 2x mask and re-thresholding it
+    (the approved design sheet's heavier rounding)."""
+    UP = [(0, -175), (165, 30), (48, 30), (48, 175), (-48, 175), (-48, 30), (-165, 30)]
+    ROT = {'up': lambda x, y: (x, y), 'right': lambda x, y: (-y, x),
+           'down': lambda x, y: (-x, -y), 'left': lambda x, y: (y, -x)}
     def draw(md, SS):
         c = CANVAS * SS // 2
-        w, h, st = W * SS // 2, H * SS // 2, ST * SS
-        pts = {'up': [(0, -h), (-w, h), (w, h)], 'down': [(0, h), (-w, -h), (w, -h)],
-               'left': [(-w, 0), (h, -w), (h, w)], 'right': [(w, 0), (-h, -w), (-h, w)]}
-        (ax, ay), (bx, by), (ex, ey) = pts[direction]
-        md.line([c + bx, c + by, c + ax, c + ay, c + ex, c + ey], fill=255, width=st, joint='curve')   # one polyline, so the apex joins round instead of notching
-        for (gx, gy) in ((bx, by), (ex, ey)):
-            md.ellipse([c + gx - st // 2, c + gy - st // 2, c + gx + st // 2, c + gy + st // 2], fill=255)
-    return glyph_layer(draw)
+        rot = ROT[direction]
+        md.polygon([(c + rot(x, y)[0] * SS, c + rot(x, y)[1] * SS) for x, y in UP], fill=255)
+    def soften(mask):
+        return mask.filter(ImageFilter.GaussianBlur(38)).point(lambda v: 255 if v >= 128 else 0)
+    return glyph_layer(draw, soften)
 
 
 def letter_glyph(letter, ink_h):
@@ -199,7 +207,7 @@ def badge(art):
 def main():
     keys = []   # (name, frame, glyph layer)
     for name, direction in (('bagdup', 'up'), ('bagddown', 'down'), ('bagdleft', 'left'), ('bagdright', 'right')):
-        keys.append((name, 'bind', chevron_glyph(direction)))
+        keys.append((name, 'bind', block_arrow_glyph(direction)))
     for name, letter in (('bagx', 'X'), ('baga', 'A'), ('bagb', 'B')):
         keys.append((name, 'bind', letter_glyph(letter, 383)))   # ink height 0.474 of the frame's 807
     for name, letter in (('bagl', 'L'), ('bagr', 'R')):
