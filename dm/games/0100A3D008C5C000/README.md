@@ -21,9 +21,16 @@ supplied version. The supplied 4.0.0 update is damaged and remains unsupported
   12 GB request; the abort's backtrace ends at `sdk+0x324b7c`,
   `main+0x12ded4c`. This is the same compact-address-space limit as
   [Legends: Z-A](../0100F43008C44000/README.md#memory).
-  The build-gated [cut](patches.py) at `main+0x12df074` reduces the virtual
-  reservation to 4 GB. This is a platform workaround; physical commits remain
-  bounded by the application pool.
+  A build-gated cut at `main+0x12df074` first reduced the virtual reservation
+  to 4 GB. **Current: the host's StandardAllocator cap, no `patches.py`**
+  ([StandardAllocators over 12 to 62 GB](../../../docs/reference/memory.md#standardallocators-over-12-to-62-gb-of-address-space)):
+  the gate gives the 12 GB request 4.06 GB at alias +0.06 GB. Checked
+  2026-10-30 on 1.0.0 without the cut, headless from a fresh save with the
+  route below for 480 s, to frame 9,900 in the opening (the get-up prompt comes
+  at about 10,000; screenshots of the Paldea narration and the flyover): the alias region was
+  used up to +4.12 GB of 4.38 GB, no region failed, and the only `[RED]` line
+  was the conservative-raster diagnostic. Physical commits remain bounded by
+  the application pool.
 - **Resolved: the 4 GB request still failed with 1 GB placement alignment.**
   The existing 62 MB node-area cuts apply because SDK build `3644a676…` is
   nirvanA Initiative's. Its allocation helper (`sdk+0x37c2d0`) rounds regions

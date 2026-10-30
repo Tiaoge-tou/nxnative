@@ -829,6 +829,7 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
   - [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md): TOTK wraps nearly every `ClearColor` / `ClearDepthStencil` this way; each clear is followed by `ReportCounter(TIMESTAMP_TOP, rec)`, the CPU sets `rec` to 1 when a target needs a clear, and `rec + 16` is never written, so after one clear the two are equal and later conditional clears of that target are skipped. The first tile-lighting round, the half-resolution scene depth the light volumes test against (back faces `GREATER` against a buffer just cleared to 1.0 can never pass) and the light accumulation were all cleared before the composite read them.
   - [Mario vs. Donkey Kong](../../dm/games/0100B99019412000/README.md) (it skips clears under render conditions, as Tears of the Kingdom and Animal Crossing: New Horizons do).
   - Drawn unconditionally with no `render_cond`, nothing looked wrong in [Big Brain Academy: Brain vs. Brain](../../dm/games/0100620012D6E000/README.md) (no screen played looked wrong) or [DARK SOULS: REMASTERED](../../dm/games/01004AB00A260000/README.md) (nothing seen).
+  - [Portal 2](../../dm/games/0100ABD01785C000/README.md) needs no `render_cond` and must not get it: NVIDIA's occlusion culling in its D3D9 layer (`IDirect3DDevice9::SetOcclusionShape`, `materialsystem.nro+0xc1130`) puts a mesh under `SetRenderEnableConditional(RENDER_IF_NOT_EQUAL, pair)` when its shape has a query, else `SetRenderEnable(true)`, so drawing everything only costs GPU time. With the key on, those conditions read 0 / 0 at replay (no report in the submission writes the pairs; memory later held `0xffff` / 0) and visible furniture vanished. **Open:** who writes those pairs and when.
 
 ## Vulkan layer
 
@@ -973,8 +974,8 @@ Digimon Story Cyber Sleuth: Complete Edition (Media.Vision's MVGL engine, SDK 6.
 
 - **Symptom:** the NSP script took the game for an OpenGL one (`main imports EGL and names glShaderSource`), the GL shader capture found no shader, and the capture boot stopped with `[nvn-mtl] FATAL cannot read the shader map` from `h_nvnQueueSubmitCommands` called in an NRO (`nro8+0xc10d0`).
 - **Cause:** Portal's `main` is SDL with its EGL video backend; it imports 20 EGL functions and names `glShaderSource` twice (SDL's GL renderer), but imports no NVN and draws nothing. The renderer is in the Source engine NROs: `materialsystem.nro` (with the D3D9 layer linked in) and `video_nx.nro` import `nvnBootstrapLoader` and draw with NVN.
-- **Fix:** `profile_guess.py` `shader_sources` now reads the imports of the loose NROs in the RomFS (`romfs_nro_imports`): when one imports `nvnBootstrapLoader`, the game is an NVN game whatever `main` imports. Digimon keeps the GL rule: it has no NRO.
-- **Found on:** [Portal](../../dm/games/01007BB017812000/README.md).
+- **Fix:** `profile_guess.py` `shader_sources` now reads the imports of the loose NROs in the RomFS (`romfs_nro_imports`): when one imports `nvnBootstrapLoader`, the game is an NVN game whatever `main` imports. Digimon keeps the GL rule: it has no NRO. The survey, which has only a RomFS manifest, called Portal 2 an OpenGL game and left GLSLC out of its modules until `nx_extract --manifest` also wrote the RomFS's NROs (`romfs_nro/`, 60 MB for Portal 2's 21) for it to read the same way.
+- **Found on:** [Portal](../../dm/games/01007BB017812000/README.md); [Portal 2](../../dm/games/0100ABD01785C000/README.md) (the survey).
 
 ### Which GL functions a game calls
 

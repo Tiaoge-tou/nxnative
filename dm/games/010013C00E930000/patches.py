@@ -180,3 +180,10 @@ def render_width(ctx):
 # The key is the module build ID as dm/tools/patch_nso.py computes it (module bytes 0x40..0x50; also the BUILD_ID header of
 # main.fixups.tsv) -- NOT the main= value of game.tsv's build line (which happens to agree for this game)
 FRAME_STEP = {'fc9ea4ccc955d5799f37752b2d730b31': render_width}
+
+BINDING = [
+    {'what': 'render size routed from the host: the size sites (getter, swapchain, SetResolution requests, ctor and display init) and the display-state width getter read the packed render size from the frame-step state page', 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
+     'why': "Unity's Switch player never asks the host for a display resolution, so the size has to be served where the guest materialises it; a function-matched rule could carry the stubs over the game's updates"},
+    {'what': "the display-mode size words in the screen-state ctor template, and the wide-screen world record's word, written by the loader at start (HOST_FILLS)", 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
+     'why': "the template is data the guest reports its mode sizes from and crops by, not code a stub can hang off; its baked size words are recognisable data, so a content match could carry the fills over the game's updates"},
+]

@@ -35,3 +35,8 @@ def render_width(ctx):
 # The key is the module build ID as dm/tools/patch_nso.py computes it (module bytes 0x40..0x50; also the BUILD_ID header of
 # main.fixups.tsv) -- NOT the main= value of game.tsv's build line, which is a different ID and keys nothing
 FRAME_STEP = {'8ce1ac48e9fa74479051f3520e632df4': render_width}
+
+BINDING = [
+    {'what': "render size routed from the host: the platform initialiser's packed display-size constant read from the frame-step state page instead", 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
+     'why': "the initialiser materialises the size as one packed constant and never asks the host for it (no display-resolution import), so the size has to be served at the site that materialises it; a function-matched rule could carry the stub over the game's updates"},
+]

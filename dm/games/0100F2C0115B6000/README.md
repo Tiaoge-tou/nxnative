@@ -7,7 +7,7 @@ Update 1.4.3 (v720896) over the base game, SDK 20.5.22. Nintendo EPD's engine (s
 | Setting | Where | Why |
 |---|---|---|
 | Frame step, `fps_target 60` | [`patches.py`](patches.py) `FRAME_STEP`, [`game.tsv`](game.tsv) | 60 fps at normal speed; see [Frame rate](#frame-rate) |
-| Node area cut 1 GB → 62 MB | `dm/tools/sdk_patches.py`, `sdk` build `574284b4…` | the resource heaps ran out of alias region (issue #70); see [Memory](#memory) |
+| Node area cut 1 GB → 62 MB | `dm/tools/sdk_patches.py` SDK-wide rules, `sdk` build `574284b4…` | the resource heaps ran out of alias region (issue #70); see [Memory](#memory) |
 | 5 GB guest layout: `mem_reserve 0x140000000`, `mem_alias 0x98000000`, `mem_stack 0x10000000`, `app_pool 0xCD500000` | `game.tsv` | 256 MB in front + 2.375 GB alias + 256 MB stack + 2.125 GB heap region. 5 GB is the total proven on a phone (one reservation of at most 6 GB without the extended virtual addressing entitlement) |
 | `render_cond on` | `game.tsv` | the 3D scene was black: the game skips clears with conditional rendering |
 | `tex_flush_upload on` | `game.tsv` | streamed textures are written by the CPU into pool memory in GPU layout and published with `nvnMemoryPoolFlushMappedRange` |
