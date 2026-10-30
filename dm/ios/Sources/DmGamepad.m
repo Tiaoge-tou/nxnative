@@ -141,13 +141,13 @@ static BOOL padSkin(void) { const char *e = getenv("DM_PAD_SKIN"); return e && a
 static int silkSkinMode(void) { const char *e = getenv("DM_SILK_SKIN"); int m = e ? atoi(e) : 1; return m < 0 ? 0 : m > 2 ? 2 : m; }   // the launcher's button-skin choice for this pad: 0 glass, 1 the image skin, 2 the letter-badge skin (dm/padskin-badge); the image skin (1) when unset
 enum { SK_ALWAYS, SK_SKILL, SK_TOGGLE };
 static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_skin[] = {
-    {"attack",   B_Y,     SK_ALWAYS, 0.684, 0.822, 0.040},   // needle attack
-    {"jump",     B_B,     SK_ALWAYS, 0.781, 0.822, 0.040},
-    {"dash",     B_ZR,    SK_ALWAYS, 0.876, 0.822, 0.040},   // Swift Step: tap dashes, hold sprints
-    {"tool",     B_R,     SK_SKILL,  0.877, 0.410, 0.040},   // the equipped tool: the cluster's top right (Needolin's old seat), in its original round frame; an eye-key skill key
+    {"attack",   B_Y,     SK_ALWAYS, 0.6919, 0.8198, 0.0389},   // needle attack
+    {"jump",     B_B,     SK_ALWAYS, 0.785, 0.8198, 0.0389},
+    {"dash",     B_ZR,    SK_ALWAYS, 0.878, 0.8198, 0.0389},   // Swift Step: tap dashes, hold sprints
+    {"tool",     B_R,     SK_SKILL,  0.878, 0.4156, 0.0389},   // the equipped tool: the cluster's top right (Needolin's old seat), in its original round frame; an eye-key skill key
     {"needolin", B_X,     SK_ALWAYS, 0.783, 0.080, 0.023},   // Needolin: the top row, between map and bag, in the double-horn frame; always shown (not an eye-key skill key)
-    {"bind",     B_A,     SK_ALWAYS, 0.877, 0.616, 0.040},   // Bind (heal)
-    {"clawline", B_ZL,    SK_SKILL,  0.781, 0.616, 0.040},   // Clawline (swapped with Needolin)
+    {"bind",     B_A,     SK_ALWAYS, 0.878, 0.6177, 0.0389},   // Bind (heal)
+    {"clawline", B_ZL,    SK_SKILL,  0.785, 0.6177, 0.0389},   // Clawline (swapped with Needolin)
     {"eye",      0,       SK_TOGGLE, 0.672, 0.080, 0.023},   // show / hide the skill keys
     {"map",      B_L,     SK_ALWAYS, 0.727, 0.080, 0.023},   // quick map (the top row respaced evenly for five keys)
     {"bag",      B_MINUS, SK_ALWAYS, 0.838, 0.080, 0.023},   // inventory
@@ -201,9 +201,12 @@ static UIImage *namedPressedImage(const char *name) {   // the pressed-state art
 // (the stick and its disc go away), X / A / B in a column at the right, and L / R alone at the top, for the inventory's
 // tabs. The layout is the measured one approved on the inventory's own screenshot (1564x720, the 19.5:9 frame): each
 // side's keys centre in the black bar between the inventory's white frame and the screen edge, the two groups share one
-// horizontal line (y 0.6389), and B sits at the combat bottom row's own height. The D-pad cross was widened after the
+// horizontal line (y 0.6389), and B sat at the combat bottom row's own height (the column scaling below lifts it a
+// hair). The D-pad cross was widened after the
 // first on-device pass: bigger keys (r 0.0248), the vertical pair spread further apart (72 in the frame) and the
-// horizontal pair drawn closer in (52), the group centre unmoved. Centres and radii follow the k_skin
+// horizontal pair drawn closer in (52), the group centre unmoved. The X / A / B column is scaled by the combat
+// cluster's own factor (0.9731) about A -- A keeps the groups' shared line and B ends a hair above the combat
+// bottom row -- so the two layouts' right-hand keys shrink together. Centres and radii follow the k_skin
 // convention, skinCenter's stacking included but without the Up key's disc exemption (the four D-pad keys move as one
 // cross). The art is the bag set in dm/padskin and dm/padskin-badge, made by dm/ios/tools/make_bagskin.py; dir is
 // triPath's order, for the glass keys' arrows
@@ -212,9 +215,9 @@ static const struct { const char *art; int bit; int dir; CGFloat x, y, r; } k_ba
     {"bagddown",  B_DOWN,  2, 0.0716, 0.7389, 0.0248},
     {"bagdleft",  B_LEFT,  0, 0.0384, 0.6389, 0.0248},
     {"bagdright", B_RIGHT, 3, 0.1049, 0.6389, 0.0248},
-    {"bagx",       B_X,    -1, 0.9316, 0.4556, 0.040},
-    {"baga",       B_A,    -1, 0.9316, 0.6389, 0.040},
-    {"bagb",       B_B,    -1, 0.9316, 0.8222, 0.040},
+    {"bagx",       B_X,    -1, 0.9316, 0.4605, 0.0390},
+    {"baga",       B_A,    -1, 0.9316, 0.6389, 0.0390},
+    {"bagb",       B_B,    -1, 0.9316, 0.8173, 0.0390},
     {"bagl",       B_L,    -1, 0.0716, 0.075,  0.023},
     {"bagr",       B_R,    -1, 0.9316, 0.075,  0.023},
 };
