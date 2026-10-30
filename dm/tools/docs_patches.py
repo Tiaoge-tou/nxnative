@@ -226,8 +226,7 @@ def switches(gs):   # [(key, value, [games])] of every profile key set away from
             if k in NOT_SWITCHES or not g.values(k): continue
             v = ' '.join(g.values(k)[0])
             if v == d: continue
-            shown = '(shader keys)' if k == 'feedback_snap' else v
-            out.setdefault((k, shown), []).append(g)
+            out.setdefault((k, v), []).append(g)
     return sorted(((k, v, gl) for (k, v), gl in out.items()), key=lambda r: (len(r[2]), r[0], r[1]))
 
 

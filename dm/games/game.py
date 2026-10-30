@@ -117,8 +117,6 @@ def header(g):
     if sf not in ('bfttf', 'ttf'): sys.exit(f'{g.id}: shared_font must be bfttf or ttf: {sf}')
     pl = g.get('pad_layout', 'simple')   # the virtual gamepad's first layout (DmGamepad.m; afterwards whatever the player switched to in game is kept): simple = 2D, full = 3D (D-pad, right stick, L3 / R3),
     if pl not in ('simple', 'full', 'touch'): sys.exit(f'{g.id}: pad_layout must be simple, full or touch: {pl}')   # touch = Tap (no control: every touch goes to the game's touch screen)
-    fbs = g.words('feedback_snap', '')   # fragment shader key prefixes whose same-pass feedback sampling gets a snapshot first (nvn_mtl.m fb_prepare); none by default
-    if any(not re.fullmatch(r'[0-9a-f]{8,16}', k) for k in fbs): sys.exit(f'{g.id}: feedback_snap takes fragment shader keys (8-16 lowercase hex digits): {fbs}')
     spv = g.words('serve_patch', '')   # byte slots in a game file the file layer serves mode-dependently (hle_fs.c): "[n:|w:]<file>@<off>:<docked float bits>><handheld float bits>[@...]" per file (n: = narrow screens only, w: = wide only; a slot may name a stock pattern first, "<stock>><docked>><handheld>", a * on the docked value marks it computed from the render width, and a # on a value serves the mode's render width as four ASCII decimal digits), hex; none by default
     for w in spv:
         if not re.fullmatch(r'(n:|w:)?[^@\s:]+(@[0-9a-fA-F]+:([*#]?[0-9a-fA-F]{8}>){1,2}[*#]?[0-9a-fA-F]{8})+', w): sys.exit(f'{g.id}: serve_patch takes "[n:|w:]<file>@<off>:<docked>><handheld>" groups of hex offsets and float bits (a slot may name a stock pattern first, mark its docked value * for computed, or a value # for the render width as ASCII digits): {w}')
@@ -188,7 +186,6 @@ def header(g):
          f'#define DM_GAME_PAD_LAYOUT {("simple", "full", "touch").index(pl)}',
          f'#define DM_GAME_OPMODE {int(om == "console")}',
          f'#define DM_GAME_PERF_BOOST {int(pm == "boost")}',
-         f'#define DM_GAME_FEEDBACK_SNAP {q(" ".join(fbs))}',
          f'#define DM_GAME_SERVE_PATCH {q(" ".join(spv))}',
          f'#define DM_GAME_TEX_FLUSH_UPLOAD {int(tfu == "on")}',
          f'#define DM_GAME_SHADER_KEY_SKIP_OFF {sko:#x}', f'#define DM_GAME_SHADER_KEY_SKIP_LEN {skl:#x}',

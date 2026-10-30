@@ -92,9 +92,9 @@ existing [per-depth-mode entry-point mechanism](../../../docs/reference/shaders.
 - [`smoke.tsv`](smoke.tsv) uses an isolated, fixed copy of the save just after
   getting up at `<NSP folder>/0100A3D008C5C000-work/smoke-save`. Make that
   copy before running the regression harness; the save stays outside the repo.
-  `regress.py capture` records its frame 3000 for `regress.py replay`: 4 of 8
-  replays equal the live frame, noise 20 pixels (2026-10-29, chain
-  `6ad4d951e3c8`; 7 of 8 and 18 pixels in an earlier capture). The capture
+  `regress.py capture` records its frame 3000 for `regress.py replay`: 1 of 8
+  replays equals the live frame, noise 7 pixels (2026-10-30, chain
+  `f3ceca86cac5`; 4 of 8 and 20 pixels, 7 of 8 and 18 in earlier captures). The capture
   takes 53 s ([a frame capture runs under the standard thread
   policy](../../../docs/reference/nvn-objects.md#a-frame-capture-runs-under-the-standard-thread-policy),
   resolved; 1,178 s before). The first
@@ -242,5 +242,6 @@ existing [per-depth-mode entry-point mechanism](../../../docs/reference/shaders.
 - [A replay's own objects take serials above a capture's](../../../docs/reference/nvn-objects.md#a-replays-own-objects-take-serials-above-a-captures).
 - [A captured texture ID whose memory pool was finalized](../../../docs/reference/nvn-objects.md#a-captured-texture-id-whose-memory-pool-was-finalized).
 - [A frame capture runs under the standard thread policy](../../../docs/reference/nvn-objects.md#a-frame-capture-runs-under-the-standard-thread-policy).
+- [A capture refused after a change to the reflection structs](../../../docs/reference/nvn-objects.md#a-capture-refused-after-a-change-to-the-reflection-structs).
 - [Conservative rasterization remains unimplemented](../../../docs/reference/rendering.md#conservative-rasterization-remains-unimplemented).
 - [Metal's build folders left by pipeline archive flushes](../../../docs/reference/shaders.md#metals-build-folders-left-by-pipeline-archive-flushes).
