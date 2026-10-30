@@ -29,7 +29,7 @@ _Static_assert(sizeof(NpadState) == 0x28, "NpadState");
 // Front-end publishing: the keyboard / touch path (dm_input_set), the scripted path (script_set: DM_KEYS and DM_CTL) and player 1's physical controller path (dm_pad_set) are ORed;
 // each further player has a controller path of its own (dm_pad_set_player). Press edges are latched until the game's next read so short presses are not lost. Scripted presses have
 // their own path because a connected controller publishes its whole state on every change (a DualShock 4's sticks change all the time), which overwrote them on the shared one;
-// the separate paths also keep scripted input out of DM_REC, which records the physical ones (rec_note)
+// the separate paths also keep scripted input out of DM_REC, which records the physical ones (rec_read)
 static _Atomic uint64_t g_btn, g_axes, g_latch, g_sc_btn, g_sc_axes, g_sc_latch, g_pad_btn[DM_PLAYERS], g_pad_axes[DM_PLAYERS], g_pad_latch[DM_PLAYERS];
 static _Atomic int64_t g_sampling = 1 << 16;   // starts high so the history entries below the newest keep positive sampling numbers
 static uint64_t pack(int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
@@ -48,17 +48,14 @@ static void shake_note(void) {
     if (on) { if (t >= atomic_load(&g_shake_end)) atomic_store(&g_shake_t0, t); atomic_store(&g_shake_end, UINT64_MAX); }
     else { uint64_t t0 = atomic_load(&g_shake_t0); atomic_store(&g_shake_end, t0 + ((t - t0) / SHAKE_CYCLE_NS + 1) * SHAKE_CYCLE_NS); }
 }
-static _Atomic int g_rec_on; static void rec_note(void);   // DM_REC (below): physical input published, record player 1's state
 void dm_input_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
     uint64_t old = atomic_exchange(&g_btn, buttons); atomic_fetch_or(&g_latch, buttons & ~old); atomic_store(&g_axes, pack(lx, ly, rx, ry));
     shake_note();
-    if (atomic_load_explicit(&g_rec_on, memory_order_relaxed)) rec_note();
 }
 void dm_pad_set_player(int p, uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
     if (p < 0 || p >= DM_PLAYERS) return;
     uint64_t old = atomic_exchange(&g_pad_btn[p], buttons); atomic_fetch_or(&g_pad_latch[p], buttons & ~old); atomic_store(&g_pad_axes[p], pack(lx, ly, rx, ry));
     if (!p) shake_note();
-    if (atomic_load_explicit(&g_rec_on, memory_order_relaxed)) rec_note();
 }
 void dm_pad_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry) { dm_pad_set_player(0, buttons, lx, ly, rx, ry); }
 static void script_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
@@ -135,7 +132,8 @@ int dm_pad_mode(void) {
 //   held 0.15 s by default, at most KEY_STEPS steps (counted after repeats are expanded). Goes through player 1's scripted path (script_set), ORed with keyboard / touch and player 1's controller, none overrides another. Times are counted from host start.
 //   An f before the time means a presented frame number ("f7600:A", and the repeat interval counts frames too): when the machine is busy seconds drift from the game's progress, frame numbers do not (used for the Zelda BotW opening route)
 //   An f before the hold counts presented frames too ("f7600:A~f12"): held until 12 frames after the step's frame, and a step that begins by then follows without a release in between (the buttons
-//   go straight to its state, a held touch moves instead of lifting): DM_REC writes a run as such steps, one state after the other. Whitespace and newlines separate steps as commas do
+//   go straight to its state, a held touch moves instead of lifting): DM_REC writes a run as such steps, one state after the other, and a list of only such steps is applied at the
+//   game's reads (keys_sync) instead of by keys_main. Whitespace and newlines separate steps as commas do
 typedef struct { double at, hold; uint64_t btn; int32_t lx, ly, rx, ry; int frame, fhold, tap; float tx, ty; } key_step;   // tap: a touch at (tx, ty), normalized; fhold: hold in frames
 #define KEY_STEPS (1 << 20)
 static key_step *g_steps; static int g_nsteps, g_cap_steps;
@@ -164,6 +162,36 @@ static void *keys_main(void *arg) {
         if (!next) { script_set(0, 0, 0, 0, 0); if (s->tap) dm_touch_script(NULL, 0); released = (int64_t)dm_guest_frame(); }
     }
     return NULL;
+}
+// A list of frame steps that are all held in frames (what DM_REC writes) is not played by keys_main, whose thread presses within 5 ms after a present, before or after the game's read
+// of that frame: player 1's reads (fill, the touch screen, gestures) call keys_sync first, which applies on the reading thread every step due in the frame the read is in. Every read
+// in frame N then sees the state stamped on frame N, as DM_REC stamps a state with the frame of the reads that saw it (rec_read). A list with a step in seconds goes through keys_main
+static _Atomic int g_sync_on; static pthread_mutex_t g_sync_mu = PTHREAD_MUTEX_INITIALIZER;
+static int g_sync_next, g_sync_held;   // the next step to press; whether g_steps[g_sync_next - 1] is held
+static int keys_framed(void) { for (int i = 0; i < g_nsteps; i++) if (!g_steps[i].frame || !g_steps[i].fhold) return 0; return g_nsteps > 0; }
+static void keys_sync(void) {
+    if (!atomic_load_explicit(&g_sync_on, memory_order_acquire)) return;
+    pthread_mutex_lock(&g_sync_mu);
+    uint64_t f = dm_guest_frame();
+    for (;;) {
+        if (g_sync_held) {
+            const key_step *s = &g_steps[g_sync_next - 1]; uint64_t end = (uint64_t)s->at + (uint64_t)s->hold;
+            if (end > f) break;
+            if (g_sync_next < g_nsteps && g_steps[g_sync_next].at <= (double)end) {   // the next step begins where this hold ends: no release (buttons go to its state, a finger moves)
+                const key_step *n = &g_steps[g_sync_next++];
+                if (n->tap) { dm_touch t = {0, n->tx, n->ty}; dm_touch_script(&t, 1); } else if (s->tap) dm_touch_script(NULL, 0);
+                script_set(n->btn, n->lx, n->ly, n->rx, n->ry); continue;
+            }
+            script_set(0, 0, 0, 0, 0); if (s->tap) dm_touch_script(NULL, 0);   // let go (a hold of 0 frames is pressed and let go before one read: the press latch hands it to that read)
+            g_sync_held = 0; continue;
+        }
+        if (g_sync_next >= g_nsteps) { atomic_store(&g_sync_on, 0); LOG("DM_KEYS: the %d frame steps were played, the last let go at frame %llu", g_nsteps, (unsigned long long)f); break; }
+        const key_step *s = &g_steps[g_sync_next];
+        if (s->at > (double)f) break;
+        if (s->tap) { dm_touch t = {0, s->tx, s->ty}; dm_touch_script(&t, 1); }
+        script_set(s->btn, s->lx, s->ly, s->rx, s->ry); g_sync_next++; g_sync_held = 1;
+    }
+    pthread_mutex_unlock(&g_sync_mu);
 }
 // The key names of NpadButton bits 0..15 (dm_input.h): DM_KEYS and DM_CTL read them, DM_REC writes them
 static const char *const key_names[16] = {"A", "B", "X", "Y", "LS", "RS", "L", "R", "ZL", "ZR", "Plus", "Minus", "Left", "Up", "Right", "Down"};
@@ -229,6 +257,7 @@ void hid_keys_init(void) {
         char *text = keys_file(e + 1); if (!text) { LOG("[RED] DM_KEYS: cannot read %s", e + 1); return; }
         keys_parse(text); free(text);
     } else keys_parse(e);
+    if (keys_framed()) { atomic_store(&g_sync_on, 1); LOG("DM_KEYS: %d steps, all in frames: applied at the game's input reads of their frames", g_nsteps); return; }
     pthread_t th; if (g_nsteps && !pthread_create(&th, NULL, keys_main, NULL)) { pthread_detach(th); LOG("DM_KEYS: %d steps", g_nsteps); }
 }
 
@@ -341,33 +370,23 @@ void dm_pad_players(uint32_t mask) {
 // with DM_KEYS=@<file> from the same save and build: a bug report's path without the game's data, or a regress route recorded instead of written. DM_KEYS and DM_CTL have
 // paths of their own (script_set, dm_touch_script) and are never recorded. Each step is one state of player 1, from the presented frame it began to the frame it ended:
 // "f<frame>:<keys>~f<frames>," on a line of its own, the idle states between them left out. Frames, not seconds: under DM_DETCLOCK the guest clock and the game follow the
-// presents, so frame N of the replay is frame N of the recording to within a frame (a step is stamped when its input arrives and replayed within 5 ms after its frame's present, the game
-// reads at its own point in the frame), while seconds from host start drift with load. A state that began and ended in the same frame stays (~f0: the
-// press latch hands it to the game once) when it pressed a button or touched where the next state does not, otherwise the next state replaces it (the game cannot have read it).
+// presents, while seconds from host start drift with load. A state is stamped with the frame of the game's reads that saw it (rec_read, called by fill for player 1), not with the
+// moment it arrived, and the replay applies it at the reads of that frame (keys_sync): frame N of the replay reads what frame N of the recording read. Within one frame the
+// buttons of all its reads are ORed (a press that came and went between two reads reached the game through the press latch) and the sticks and the touch are the last read's.
 // Sticks in hundredths of full tilt (L<x>/<y>, R<x>/<y>, what DM_KEYS reads back exactly), recorded again when an axis moves REC_STICK_STEP hundredths or leaves or comes back to the
-// centre; the touchscreen as its first finger (T<x>x<y> in thousandths of the picture), recorded again when it moves REC_TOUCH_STEP thousandths. The publishing thread takes a mutex,
-// compares and formats into memory; a writer thread appends that to the file every REC_FLUSH_MS (no file I/O on an input or guest thread). Off, a publish costs one branch
+// centre; the touchscreen as its first finger (T<x>x<y> in thousandths of the picture), recorded again when it moves REC_TOUCH_STEP thousandths, taken at player 1's controller reads
+// (a touch that came and went between two of them counts once). The reading thread takes a mutex, compares and formats into memory; a writer thread appends that to the file every
+// REC_FLUSH_MS (no file I/O on an input or guest thread). Off, a read costs one branch
 enum { REC_STICK_STEP = 2, REC_TOUCH_STEP = 5, REC_FLUSH_MS = 250 };
 typedef struct { uint64_t btn; int32_t q[4]; int touch; int32_t tx, ty; } rec_state;   // q: the sticks in hundredths; tx, ty: thousandths
+static _Atomic int g_rec_on;
 static pthread_mutex_t g_rec_mu = PTHREAD_MUTEX_INITIALIZER, g_rec_io = PTHREAD_MUTEX_INITIALIZER;
 static rec_state g_rec_cur; static uint64_t g_rec_from;   // the open state and the frame it began
-static int g_rec_touch; static float g_rec_tx, g_rec_ty;   // the front end's first finger (rec_touch)
+static rec_state g_rec_frame; static uint64_t g_rec_at; static int g_rec_have;   // the state the reads of frame g_rec_at saw so far (g_rec_have: there were reads)
+static int g_rec_touch, g_rec_tlatch; static float g_rec_tx, g_rec_ty;   // the front end's first finger (rec_touch); tlatch: put down since the last read
 static char *g_rec_buf; static size_t g_rec_len, g_rec_cap;   // text not written yet
 static FILE *g_rec_file;
 extern void (*_Atomic dm_touch_observer)(const dm_touch *t, int n);   // hle_touch.c: called by dm_touch_set (the front ends), not by dm_touch_script
-static rec_state rec_now(void) {   // player 1's physical state, as fill composes it (g_rec_mu held)
-    rec_state s = {0}; int32_t a[4];
-    s.btn = atomic_load(&g_btn); uint64_t k = atomic_load(&g_axes); for (int i = 0; i < 4; i++) a[i] = ax(k, i);
-    uint32_t src = 1u | merged_players();
-    for (int p = 0; p < DM_PLAYERS; p++) if (src >> p & 1) {
-        s.btn |= atomic_load(&g_pad_btn[p]) & (p ? 0xffffull : ~0ull);   // DM_BTN_SHAKE counts on player 1's own controller only (shake_note)
-        uint64_t v = atomic_load(&g_pad_axes[p]); for (int i = 0; i < 4; i++) a[i] = pick(a[i], ax(v, i));
-    }
-    s.btn &= 0xffffull | DM_BTN_SHAKE;
-    for (int i = 0; i < 4; i++) { long q = lrint(a[i] * 100.0 / DM_STICK_MAX); s.q[i] = (int32_t)(q < -100 ? -100 : q > 100 ? 100 : q); }
-    if ((s.touch = g_rec_touch)) { s.tx = (int32_t)lrintf(g_rec_tx * 1000); s.ty = (int32_t)lrintf(g_rec_ty * 1000); }
-    return s;
-}
 static int rec_idle(const rec_state *s) { return !s->btn && !s->q[0] && !s->q[1] && !s->q[2] && !s->q[3] && !s->touch; }
 static int rec_same(const rec_state *a, const rec_state *b) {   // within the recording's steps
     if (a->btn != b->btn || a->touch != b->touch) return 0;
@@ -394,21 +413,29 @@ static void rec_step(const rec_state *s, uint64_t from, uint64_t to) {   // appe
     if (g_rec_len + (size_t)n > g_rec_cap) { size_t cap = g_rec_cap ? g_rec_cap * 2 : 4096; while (cap < g_rec_len + (size_t)n) cap *= 2; char *b = realloc(g_rec_buf, cap); if (!b) return; g_rec_buf = b; g_rec_cap = cap; }
     memcpy(g_rec_buf + g_rec_len, line, (size_t)n); g_rec_len += (size_t)n;
 }
-static void rec_note(void) {
-    pthread_mutex_lock(&g_rec_mu);
-    rec_state s = rec_now(); uint64_t f = dm_guest_frame();
-    if (!rec_same(&s, &g_rec_cur)) {
-        int idle = rec_idle(&g_rec_cur);
-        int replace = !idle && f == g_rec_from && !(g_rec_cur.btn & ~s.btn) && (!g_rec_cur.touch || s.touch);   // began this frame and loses no press
-        if (!idle && !replace) rec_step(&g_rec_cur, g_rec_from, f);
-        if (!replace) g_rec_from = f;
-        g_rec_cur = s;
+static void rec_frame_done(void) {   // the reads of frame g_rec_at are over: its state ends the open one when it differs (g_rec_mu held)
+    if (!g_rec_have) return;
+    if (!rec_same(&g_rec_frame, &g_rec_cur)) {
+        if (!rec_idle(&g_rec_cur)) rec_step(&g_rec_cur, g_rec_from, g_rec_at);
+        g_rec_cur = g_rec_frame; g_rec_from = g_rec_at;
     }
+    g_rec_have = 0;
+}
+// A read of player 1 (fill): btn and a are what it composed from the physical sources, before the scripted path joins
+static void rec_read(uint64_t btn, const int32_t a[4]) {
+    rec_state s = {btn};
+    for (int i = 0; i < 4; i++) { long q = lrint(a[i] * 100.0 / DM_STICK_MAX); s.q[i] = (int32_t)(q < -100 ? -100 : q > 100 ? 100 : q); }
+    pthread_mutex_lock(&g_rec_mu);
+    uint64_t f = dm_guest_frame();
+    if (g_rec_have && f != g_rec_at) rec_frame_done();
+    if ((s.touch = g_rec_touch || g_rec_tlatch)) { s.tx = (int32_t)lrintf(g_rec_tx * 1000); s.ty = (int32_t)lrintf(g_rec_ty * 1000); }
+    g_rec_tlatch = 0;
+    if (!g_rec_have) { g_rec_frame = s; g_rec_at = f; g_rec_have = 1; }
+    else { s.btn |= g_rec_frame.btn; g_rec_frame = s; }   // buttons over all the frame's reads, the sticks and the touch as the last read saw them
     pthread_mutex_unlock(&g_rec_mu);
 }
 static void rec_touch(const dm_touch *t, int n) {
-    pthread_mutex_lock(&g_rec_mu); g_rec_touch = n > 0; if (n > 0) { g_rec_tx = t[0].x; g_rec_ty = t[0].y; } pthread_mutex_unlock(&g_rec_mu);
-    rec_note();
+    pthread_mutex_lock(&g_rec_mu); g_rec_touch = n > 0; if (n > 0) { g_rec_tx = t[0].x; g_rec_ty = t[0].y; g_rec_tlatch = 1; } pthread_mutex_unlock(&g_rec_mu);
 }
 static void rec_flush(void) {   // the text so far to the file, outside the input lock
     pthread_mutex_lock(&g_rec_io);
@@ -417,10 +444,13 @@ static void rec_flush(void) {   // the text so far to the file, outside the inpu
     free(b);
     pthread_mutex_unlock(&g_rec_io);
 }
-// At exit (exit, SIGTERM through dm_host_shutdown): the open state ends at the current frame and everything goes to the file. A kill loses at most the last REC_FLUSH_MS
+// At exit (exit, SIGTERM through dm_host_shutdown): the open state ends at the current frame, or after the last frame read when that is later (a state its reads saw lasts through
+// them), and everything goes to the file. A kill loses at most the last REC_FLUSH_MS
 void dm_rec_finish(void) {
     if (!atomic_load(&g_rec_on)) return;
-    pthread_mutex_lock(&g_rec_mu); uint64_t f = dm_guest_frame();
+    pthread_mutex_lock(&g_rec_mu);
+    uint64_t last = g_rec_have ? g_rec_at + 1 : 0; rec_frame_done();
+    uint64_t f = dm_guest_frame(); if (f < last) f = last;
     if (!rec_idle(&g_rec_cur)) rec_step(&g_rec_cur, g_rec_from, f);
     g_rec_cur = (rec_state){0}; g_rec_from = f;
     pthread_mutex_unlock(&g_rec_mu);
@@ -431,7 +461,6 @@ static int rec_open(const char *path) {   // a new recording (the file starts em
     if (!(g_rec_file = fopen(path, "w"))) { LOG("[RED] DM_REC: cannot write %s", path); return 0; }
     atomic_store(&dm_touch_observer, rec_touch);
     atomic_store(&g_rec_on, 1);
-    rec_note();   // what is already held
     return 1;
 }
 static void rec_start(void) {
@@ -450,12 +479,18 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     uint32_t src = pl ? 1u << pl : 1u | merged_players();
     uint64_t b = 0; int32_t a[4] = {0};
     if (!pl) {
-        b = atomic_load(&g_btn) | atomic_exchange(&g_latch, 0) | atomic_load(&g_sc_btn) | atomic_exchange(&g_sc_latch, 0);
-        uint64_t k = atomic_load(&g_axes), c = atomic_load(&g_sc_axes); for (int i = 0; i < 4; i++) a[i] = pick(ax(k, i), ax(c, i));
+        keys_sync();   // DM_KEYS frame steps due in this frame, before the read
+        b = atomic_load(&g_btn) | atomic_exchange(&g_latch, 0);
+        uint64_t k = atomic_load(&g_axes); for (int i = 0; i < 4; i++) a[i] = ax(k, i);
     }
     for (int p = 0; p < DM_PLAYERS; p++) if (src >> p & 1) {
         b |= atomic_load(&g_pad_btn[p]) | atomic_exchange(&g_pad_latch[p], 0);
         uint64_t v = atomic_load(&g_pad_axes[p]); for (int i = 0; i < 4; i++) a[i] = pick(a[i], ax(v, i));
+    }
+    if (!pl) {   // the physical sources so far (DM_REC records them, DM_BTN_SHAKE only from player 1's own controller and the keyboard, as shake_note), then the scripted path
+        if (atomic_load_explicit(&g_rec_on, memory_order_relaxed)) rec_read((b & 0xffffull) | ((atomic_load(&g_btn) | atomic_load(&g_pad_btn[0])) & DM_BTN_SHAKE), a);
+        b |= atomic_load(&g_sc_btn) | atomic_exchange(&g_sc_latch, 0);
+        uint64_t c = atomic_load(&g_sc_axes); for (int i = 0; i < 4; i++) a[i] = pick(a[i], ax(c, i));
     }
     s->lx = a[0]; s->ly = a[1]; s->rx = a[2]; s->ry = a[3];
     b &= 0xffffull;
@@ -782,6 +817,7 @@ HLE_FORCE("_ZN2nn3hid28ShowControllerFirmwareUpdateERKNS0_27ControllerFirmwareUp
 // without checking the mode, so in console mode the state stays empty (only the header is written). Super Mario Galaxy's pointer is the touch screen in handheld mode
 int touch_fill_n(void *out, int max, uint64_t now_ns);
 static void touch_read(void *s, int n) {
+    keys_sync();   // DM_KEYS frame steps due in this frame (their touches), before the read
     if (dm_opmode() == 0) { touch_fill_n(s, n, now_ns()); return; }
     int64_t *p = s; p[0] = atomic_fetch_add(&g_sampling, 1) + 1; ((int32_t *)s)[2] = 0; ((int32_t *)s)[3] = 0;
 }
@@ -796,6 +832,7 @@ TOUCH(1) TOUCH(2) TOUCH(3) TOUCH(4) TOUCH(5) TOUCH(6) TOUCH(7) TOUCH(8) TOUCH(9)
 int gesture_fill(void *out, int n, uint64_t now_ns);
 HLE_FORCE("_ZN2nn3hid17InitializeGestureEv", "connect to the hid gesture recognizer; the host recognizes gestures from the touch points", void, h_hid_InitGesture, void) {}
 HLE_FORCE("_ZN2nn3hid16GetGestureStatesEPNS0_12GestureStateEi", "gesture states, newest first (handheld mode: recognized from the touch points; console mode: none)", int, h_hid_Gestures, void *out, int n) {
+    keys_sync();
     return dm_opmode() == 0 ? gesture_fill(out, n, now_ns()) : 0;
 }
 
