@@ -11443,6 +11443,9 @@ static void present_gpu_note(double s, int fx) {
     n[fx] = 0;
 }
 static double g_link_it_tin;   // Enqueue time of the frame the display-link callback is presenting (read and written only on the display-link thread)
+// DM_PRESENT_CLASSIC=1: the present takes the classic path in present_now (the classic queue and present_encode, as screenshots do) instead of the Metal 4 present
+// segment. Diagnostic only, off by default: bisects the Metal 4 present segment (the iOS 26 green picture survived both the CPU texture path and DM_PSO_MTL4=0)
+static int present_classic(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_PRESENT_CLASSIC"); v = e && atoi(e); } return v; }
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
@@ -11508,6 +11511,29 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     if (!supplied) g_drawable_ns += now_ns() - dt0;
     if (!dr) return 0;
     int alloc_i = (int)(ticket % 3);
+    if (present_classic()) {
+        // The classic present: the frame drawn into the drawable by present_encode on the classic queue and presented by that command buffer, skipping the whole
+        // Metal 4 present segment (the allocator reset, waitForDrawable, the argument-table encode, the Metal 4 queue commit and signalDrawable). The completion
+        // handler keeps the ticket bookkeeping the Metal 4 commit feedback handler does, so the present queue's waiters see this present complete like any other
+        static int noted;
+        if (!noted) { noted = 1; MLOG("[nvn-mtl] present: classic encoder (DM_PRESENT_CLASSIC)"); }
+        id<MTLCommandBuffer> cb = q_cb();
+        if (!present_encode(cb, src, dr.texture, crop)) return 0;
+        [cb presentDrawable:dr];
+        [cb addCompletedHandler:^(id<MTLCommandBuffer> c) {
+            if (c.error) MLOG("[RED] display command buffer error: %s", c.error.description.UTF8String);
+            pthread_mutex_lock(&g_pq_mu); if (ticket > g_pq_done) g_pq_done = ticket; if (ticket > g_present_alloc_done[alloc_i]) g_present_alloc_done[alloc_i] = ticket; g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv);
+            present_gpu_note(c.GPUEndTime - c.GPUStartTime, 0); pthread_mutex_unlock(&g_pq_mu);
+        }];
+        pthread_mutex_lock(&g_pq_mu); g_pq_inflight++; pthread_mutex_unlock(&g_pq_mu);
+        [cb commit];
+        g_present_alloc_fence[alloc_i] = ticket;
+#if !TARGET_OS_SIMULATOR
+        uint64_t pn = ticket;   // The presentation-time record the Metal 4 path keeps below (hle's present statistics read it by ticket number)
+        [dr addPresentedHandler:^(id<MTLDrawable> d) { CFTimeInterval tt = d.presentedTime; g_pres[pn % PRING] = (pres_ent){pn, tt > 0 ? tt : -1}; }];
+#endif
+        return 1;
+    }
     if (g_present_alloc_fence[alloc_i]) {
         pthread_mutex_lock(&g_pq_mu);
         while (g_present_alloc_done[alloc_i] < g_present_alloc_fence[alloc_i]) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
