@@ -28,6 +28,18 @@ class NvnMetalHost(unittest.TestCase):
         self.assertIn('int direct = !xcode', self.mtl)   # a decompressed texture never takes the direct upload
         self.assertIn('int use_gpu = !xcode', self.mtl)   # ... nor the GPU deswizzle staging
 
+    def test_bc_refusal_is_per_format_not_per_device(self):
+        # Upstream 6d880d23 refuses a GPU without BC wholesale (before the launcher, and again at device init);
+        # this fork transcodes BC1-BC5 for such GPUs instead, so both device-level refusals are out and the
+        # refusal sits on the one format family with no transcode, at the texture's creation
+        main = read('dm/ios/Sources/main.m')
+        self.assertNotIn('supportsBCTextureCompression', main)   # no whole-device refusal before the launcher
+        self.assertNotIn('has no BC texture formats', self.mtl)   # ... and none at device init either
+        self.assertIn('static int fmt_bc67(int f) { return f >= 0x4d && f <= 0x50; }', self.mtl)   # BC7 .. BC6H_UF
+        self.assertIn('if (fmt_bc67(t->d.format) && !bc_native()) MDIE(', self.mtl)   # refused in tex_desc, on a GPU without BC only
+        self.assertIn('getenv("DM_NVN_DESWZ_GPU")', self.mtl)   # the fork's other NVN switches stay beside it
+        self.assertIn('getenv("DM_PRESENT_CLASSIC")', self.mtl)
+
     def test_upload_forward_declaration_matches_upstream_signature(self):
         self.assertIn('pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse, MTLTextureUsage keep);', self.mtl)
         self.assertIn('d.usage |= keep & (MTLTextureUsageRenderTarget | MTLTextureUsagePixelFormatView);', self.mtl)

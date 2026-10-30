@@ -433,9 +433,8 @@ void mtl_init(void) {
         MLOG("[RED] Metal device %s has no Metal 4 (%s%s%s): the classic part only, nothing is presented (enough for a run-time shader capture)", g_dev.name.UTF8String, no4, *why ? ": " : "", why);
         return;
     }
-    // BC textures are created and uploaded as BC, with no decompression path (dm/gfx/tex/README.md); without BC the first one aborts in Metal's descriptor validation mid-game
-    // (GitHub issue #704: an iPhone 15, A16). The iOS front end refuses such a device before the launcher (main.m); this stops every other route at the device, with the reason
-    if (!g_dev.supportsBCTextureCompression) MDIE("the Metal device %s has no BC texture formats, which the games' textures use and the host does not decompress: an iPhone needs an A17 Pro or later, an iPad an M1 or later", g_dev.name.UTF8String);
+    // No device-level BC refusal here (upstream 6d880d23 refuses a GPU without BC at this point): this host transcodes BC1-BC5
+    // on such a GPU (the BC section below), so only a BC6H / BC7 texture -- the formats it does not transcode -- is refused, in tex_desc
     [g_q addResidencySet:g_res];
     [g_q4 addResidencySet:g_res];
     { void crash_set_wait_dump(void (*fn)(void)); void mtl_wait_state_dump(void); crash_set_wait_dump(mtl_wait_state_dump); }
@@ -1635,6 +1634,7 @@ static int bc_native(void) {
     return g_bc_native != 0;
 }
 static int fmt_bc15(int f) { return f >= 0x41 && f <= 0x4c; }   // NVN DXT1 .. BC5_SNORM (nvn_fmt_mtl.c)
+static int fmt_bc67(int f) { return f >= 0x4d && f <= 0x50; }   // NVN BC7 .. BC6H_UF (nvn_fmt_mtl.c): the BC formats with no transcode
 static uint32_t bc_xcode_pf(int f) { return f >= 0x45 && f <= 0x48 ? MTLPixelFormatRGBA8Unorm_sRGB : (f == 0x4a || f == 0x4c) ? MTLPixelFormatRGBA8Snorm : MTLPixelFormatRGBA8Unorm; }
 static int fmt_mtl_dev(int f, uint32_t *pf, uint8_t swz[4]) {
     int k = nvn_fmt_to_mtl(f, pf, swz);
@@ -1898,6 +1898,9 @@ static int tex_atomic_capable(id<MTLTexture> base) { return pf_r32i(base.pixelFo
 static MTLTextureDescriptor *tex_desc(const tex_t *t, int packaged) {
     uint32_t pf = 0; uint8_t swz[4];
     if (!fmt_mtl_dev(t->d.format, &pf, swz) || !pf) { RED_ONCE(0, "texture format %#x has no Metal equivalent (first case)", t->d.format); return nil; }
+    // A BC6H / BC7 texture where the GPU has no BC: the host transcodes BC1-BC5 only, so this one reaches Metal as BC and
+    // aborts inside its descriptor validation with no reason named (GitHub issue #704). Refuse it here, where the format is known
+    if (fmt_bc67(t->d.format) && !bc_native()) MDIE("texture format %#x is BC6H/BC7, which the GPU (%s) cannot hold and the host does not decompress: BC6H/BC7 textures need a GPU with BC texture compression (an iPhone with an A17 Pro or later, an iPad with an M1 or later)", t->d.format, g_dev.name.UTF8String);
     // Metal's limits: 16384 in 2D, 2048 in 3D, 2048 array layers; beyond them Metal aborts the process on an assertion, so they are caught here with a red line
     if (t->d.width > 16384 || t->d.height > 16384 || t->d.depth > 2048) { RED_ONCE(71, "texture size exceeds Metal limits: %u×%u×%u levels %u format %#x target %d (first case ser=%llu)", t->d.width, t->d.height, t->d.depth, t->d.levels, t->d.format, t->d.target, (unsigned long long)t->serial); return nil; }
     MTLTextureDescriptor *d = [MTLTextureDescriptor new];
