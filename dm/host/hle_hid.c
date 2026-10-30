@@ -100,6 +100,9 @@ static void *pad_mode_main(void *arg) {
     }
     if (!lay || !base) { LOG("[pad] no game-state layout for this build; the pad stays as it is"); return NULL; }
     LOG("[pad] watching the game state for cutscenes and loads (build %s)", lay->build);
+    const char *be = getenv("DM_PAD_BAG");   // the bag mode's own switch, read once: off (0), mode 4 never happens and the pad behaves as if the feature were not there
+    int bag_on = !be || atoi(be);
+    if (!bag_on) LOG("[pad] bag mode off (DM_PAD_BAG=0)");
     int cur = -1;
     for (;;) {
         int mode = 0;
@@ -117,7 +120,7 @@ static void *pad_mode_main(void *arg) {
                 const void *ih = gm ? *(const void *const *)((const uint8_t *)gm + 0xa8) : NULL;
                 if (ih && *(const void *const *)((const uint8_t *)ih + 0x10)) { int sm = *(const int32_t *)((const uint8_t *)ih + 0x84); if (sm == 0 || sm == 1) mode = 3; }
             } else if (gs == 2 || gs == 3 || gs == 6 || us == 2) mode = 1;
-            else if (gs == 4 && inv == 1) mode = 4;   // the inventory: both enums stay at play while it is open, only the hero's byte tells
+            else if (bag_on && gs == 4 && inv == 1) mode = 4;   // the inventory: both enums stay at play while it is open, only the hero's byte tells
         }
         if (mode != cur) { cur = mode; atomic_store(&g_pad_mode, mode); LOG("[pad] mode %d (%s)", mode, mode == 4 ? "bag" : mode == 3 ? "cutscene, skippable" : mode == 2 ? "cutscene" : mode == 1 ? "loading" : "play"); }
         struct timespec ts = { 0, 100000000 }; nanosleep(&ts, NULL);
