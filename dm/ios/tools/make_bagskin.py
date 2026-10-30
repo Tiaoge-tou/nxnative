@@ -14,10 +14,11 @@ soft inner shadow at its rim, faint brush dabs and grain, in the badge
 medallion face's family) and no pixel of an icon survives into it. The same
 frames and craft also bake the letter set of the title and settings pages
 (pad modes 5 and 6): one round-frame key per game key -- X / A / B / Y / L /
-R / + / - at the face keys' letter size (the plus and the minus drawn at
-the letters' own size, their ink standing at the approved settings
-preview's proportions) and ZL / ZR at
-the full letter height, narrowed to fit the disc.
+R / + / - at a letter size a notch below the bag face keys' (their ink 305
+against the face keys' 383: at the full size the letters crowded their
+discs on the device; the plus and the minus drawn at the letters' own size,
+their ink standing at the approved settings preview's proportions) and
+ZL / ZR at the same letter height, narrowed further to fit the disc.
 
 Glyphs follow the badge bake's letter craft (tools in the skin workspace,
 bake_badges.py): Noto Serif, an ivory vertical gradient, a dark carved
@@ -235,16 +236,17 @@ def main():
         keys.append((name, 'bind', letter_glyph(letter, 383)))   # ink height 0.474 of the frame's 807
     for name, letter in (('bagl', 'L'), ('bagr', 'R')):
         keys.append((name, 'needolin', letter_glyph(letter, 230)))   # 0.314 of the horn frame's 733
-    # The letter set of the title and settings pages (pad modes 5 and 6): every game key as a round-frame
-    # letter at the bag face keys' own size, so the settings pages name the keys they rebind. The title
-    # screen uses leta / letb; the controller pages use the whole set at the combat keys' seats
-    for name, glyph in (('letx', letter_glyph('X', 383)), ('leta', letter_glyph('A', 383)),
-                        ('letb', letter_glyph('B', 383)), ('lety', letter_glyph('Y', 383)),
-                        ('letl', letter_glyph('L', 383)), ('letr', letter_glyph('R', 383)),
-                        ('letplus', letter_glyph('+', 383)),   # drawn at the letters' own size: a serif plus's ink stands at about three quarters of a letter's, as on the approved settings preview
-                        ('letminus', letter_glyph('\u2212', 383, ink_w=190)),   # a minus has no ink height to fit: it is drawn at the letters' size and fitted by its ink's width, the bar's thickness following
-                        ('letzl', letter_glyph('ZL', 383, max_w=565)),   # two letters at the full ink height, narrowed to the disc
-                        ('letzr', letter_glyph('ZR', 383, max_w=565))):
+    # The letter set of the menu and settings pages (pad modes 5 and 6): every game key as a round-frame
+    # letter a notch below the bag face keys' size (ink 305 against their 383), so the settings pages
+    # name the keys they rebind. The menu pages use leta / letb; the controller pages use the whole set
+    # at the combat keys' seats
+    for name, glyph in (('letx', letter_glyph('X', 305)), ('leta', letter_glyph('A', 305)),
+                        ('letb', letter_glyph('B', 305)), ('lety', letter_glyph('Y', 305)),
+                        ('letl', letter_glyph('L', 305)), ('letr', letter_glyph('R', 305)),
+                        ('letplus', letter_glyph('+', 305)),   # drawn at the letters' own size: a serif plus's ink stands at about three quarters of a letter's, as on the approved settings preview
+                        ('letminus', letter_glyph('\u2212', 305, ink_w=150)),   # a minus has no ink height to fit: it is drawn at the letters' size and fitted by its ink's width, the bar's thickness following
+                        ('letzl', letter_glyph('ZL', 305, max_w=425)),   # two letters at the letters' height, narrowed to the disc (at this height to about seven tenths of its width)
+                        ('letzr', letter_glyph('ZR', 305, max_w=425))):
         keys.append((name, 'bind', glyph))
     bases = {}
     done = []

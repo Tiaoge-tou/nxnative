@@ -434,7 +434,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   </details>
 
   - host [hle_fpslock.c:70](../../dm/host/hle_fpslock.c#L70): engine frame limit set to fps_target: Unity targetFrameRate
-  - host [hle_hid.c:88](../../dm/host/hle_hid.c#L88): k_pad_layouts
+  - host [hle_hid.c:90](../../dm/host/hle_hid.c#L90): k_pad_layouts
 
 ### Hyrule Warriors: Age of Calamity
 

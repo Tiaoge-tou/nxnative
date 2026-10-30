@@ -242,13 +242,15 @@ static CGFloat bagArtScale(void) {   // every bag key ships a badge version (its
     return silkSkinMode() == 2 ? SILK_BADGE_SCALE : 1.0;
 }
 // ---- Title and settings layouts (pad modes 5 and 6) ----
-// On the title screen (mode 5) the combat pad gives way to the stick and two letter keys: A at the jump
+// On the menu pages (mode 5: the title screen and the options branch's pages -- options, the save
+// select, sound, game options) the combat pad gives way to the stick and two letter keys: A at the jump
 // key's seat sending A, B at the dash key's seat sending B -- the seats and their order are the player's
 // (A left, B right) -- so the menus take the stick and a confirm / back pair and nothing else covers the
-// title art. On the controller pages (mode 6: the game's controller diagram and its key-binding page)
+// menu art. On the controller pages (mode 6: the game's controller diagram and its key-binding page)
 // every key shows at its own seat as its letter instead of its icon, the skill keys included, so each key
-// names the button it sends while the binding page is worked; the eye keeps its icon (it is not a game
-// key) and the Up key stays invisible, as in every mode. The letter art is the let* set in dm/padskin and
+// names the button it sends while the binding page is worked; the eye hides there (every key shows
+// anyway, so it has nothing to toggle, and its seat takes no touch) and the Up key stays invisible, as
+// in every mode. The letter art is the let* set in dm/padskin and
 // dm/padskin-badge, made by dm/ios/tools/make_bagskin.py; the glass skin needs no extra art, its keys'
 // glyphs (silkGlyph) being the same letters
 static const struct { const char *art; int bit; CGFloat x, y, r; } k_title[] = {
@@ -261,7 +263,7 @@ static CGPoint titleCenter(int j, CGRect b) {   // title key j's centre, in poin
     if (y > 0.2) y = 0.822 + (y - 0.822) * SKIN_REF_HW * b.size.width / b.size.height;
     return CGPointMake(k_title[j].x * b.size.width, y * b.size.height);
 }
-static const char *silkLetter(int i) {   // skin key i's letter art on the controller pages, or nil for the two keys that keep what they have (the eye its icon, the Up key its invisibility)
+static const char *silkLetter(int i) {   // skin key i's letter art on the controller pages, or nil where a key has none (the eye, which hides there instead, and the Up key, invisible in every mode)
     const char *a = k_skin[i].art;
     if (!strcmp(a, "attack")) return "lety"; if (!strcmp(a, "jump")) return "letb"; if (!strcmp(a, "dash")) return "letzr";
     if (!strcmp(a, "tool")) return "letr"; if (!strcmp(a, "needolin")) return "letx"; if (!strcmp(a, "bind")) return "leta";
@@ -583,9 +585,10 @@ static BOOL isClick(int b) { return b == B_LS || b == B_RS; }
 - (CGPoint)swapCenter { CGRect s = self.safe; return CGPointMake(CGRectGetMidX(s), CGRectGetMinY(s) + K_PILL_Y * self.u); }
 
 static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); }
-- (int)skinBtnAt:(CGPoint)p {   // skin mode: the image key under the point, or -1 (hidden skill keys take no touch, except on the controller pages, where every key works)
+- (int)skinBtnAt:(CGPoint)p {   // skin mode: the image key under the point, or -1 (hidden skill keys take no touch, except on the controller pages, where every key works; the eye takes none there, so a touch at its seat is the game's)
     CGRect b = self.bounds;
     for (int i = 0; i < SKIN_N; i++) { if (_padMode != 6 && _skillOff && k_skin[i].grp == SK_SKILL) continue;
+        if (_padMode == 6 && k_skin[i].grp == SK_TOGGLE) continue;
         CGPoint c = skinCenter(i, b);
         if (dist(p, c) <= k_skin[i].r * b.size.width * 1.35) return i; }
     return -1;
@@ -777,7 +780,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 // inventory lasts — the stick disc and knob included — and closing the inventory restores the pad exactly as it was.
 // Inside the inventory the bag's X key follows the game's own current tab (dm_pad_tab): it serves the crests tab alone,
 // so it hides on the other tabs and comes back with the crests; while the tab reads unknown it stays shown
-// Modes 5 (the title screen) and 6 (the controller pages) are not hidings either: the title screen keeps the stick and
+// Modes 5 (the menu pages) and 6 (the controller pages) are not hidings either: the menu pages keep the stick and
 // its two letter keys (k_title), the controller pages keep every key at its seat with its letter in place of its icon
 // (the let* layers, the glass skin's own labels), the skill keys' eye gate aside, so the key-binding page can be worked.
 // Before the watcher publishes its first mode the mode reads -1 and the whole pad is hidden: the game is still loading
@@ -786,7 +789,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (BOOL)skinKeyHidden:(int)i {   // skin key i's icon layer in the current mode: the one rule applyPadMode and refresh share
     if (!_sSkinMode) return YES;   // the glass choice draws its own discs; the image layers stay hidden under it
     if ([self padHidden] || _padMode == 4 || _padMode == 5) return YES;
-    if (_padMode == 6) return silkLetter(i) != nil;   // the controller pages: the letter layer takes the icon's place; a key with no letter (the eye) keeps its icon
+    if (_padMode == 6) { if (k_skin[i].grp == SK_TOGGLE) return YES; return silkLetter(i) != nil; }   // the controller pages: the letter layer takes the icon's place, and the eye hides outright (every key shows there anyway, so it has nothing to toggle)
     return _skillOff && k_skin[i].grp == SK_SKILL;
 }
 - (void)applyPadMode {
@@ -894,7 +897,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             for (int i = 0; i < SKIN_N; i++) if (_sGlass[i]) { CGFloat r = k_skin[i].r * b.size.width; CGPoint c = skinCenter(i, b);
                 _sGlass[i].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); _sGlass[i].layer.cornerRadius = r;
                 setPath(_sWash[i], circlePath(c, r));
-                if (_sLabel[i]) placeLabel(_sLabel[i], c, r * 1.02);
+                if (_sLabel[i]) placeLabel(_sLabel[i], c, r * 0.81);   // a notch below the bag labels' r * 1.02 in the loop below: the letter set shrank a notch (make_bagskin's ink 305 against 383 before), and the glass glyphs are the same letters
                 else if (_sSym[i]) setPath(_sSym[i], k_skin[i].grp == SK_TOGGLE ? circlePath(c, r * 0.20) : symPath(c, r, k_skin[i].bit == B_PLUS)); }
             for (int j = 0; j < BAG_N; j++) if (_bGlass[j]) { CGFloat r = k_bag[j].r * b.size.width; CGPoint c = bagCenter(j, b);
                 _bGlass[j].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); _bGlass[j].layer.cornerRadius = r;
@@ -994,7 +997,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             for (int i = 0; i < SKIN_N; i++) { if (!_sWash[i]) continue;
                 int bit = _padMode == 5 ? (i == 1 ? B_A : B_B) : k_skin[i].bit;   // on the title screen the two shown discs send A and B, not their seats' own keys
                 _sWash[i].opacity = (k_skin[i].grp == SK_TOGGLE ? _skillOff : ((_btnBits >> bit) & 1)) ? 0.35 : 0;
-                BOOL hid = [self padHidden] || _padMode == 4 || (_skillOff && k_skin[i].grp == SK_SKILL && _padMode != 6);   // the whole key hides, letter and symbol with the disc: the glyph layers live in the overlay, not in the disc view; the controller pages show the skill keys too, their letters being the point
+                BOOL hid = [self padHidden] || _padMode == 4 || (_skillOff && k_skin[i].grp == SK_SKILL && _padMode != 6) || (_padMode == 6 && k_skin[i].grp == SK_TOGGLE);   // the whole key hides, letter and symbol with the disc: the glyph layers live in the overlay, not in the disc view; the controller pages show the skill keys too, their letters being the point, and hide the eye, which has nothing to toggle there
                 if (_padMode == 5) hid = i != 1 && i != 2;   // the title screen: only the jump and dash seats' discs, relabelled A and B in applyPadMode
                 if (_sGlass[i]) _sGlass[i].hidden = hid;
                 if (_sLabel[i]) _sLabel[i].hidden = hid;

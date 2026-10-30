@@ -75,10 +75,12 @@ uint64_t dm_input_samples(void) { return (uint64_t)atomic_load(&g_sampling); }
 // 1 crests, 2 quests, 3 journal, 4 map; its neighbours sit still while only it steps with the tab, found by a wide dump across
 // all five tabs; it keeps its last value while the inventory is closed), published through dm_pad_tab for the bag layout's X
 // key, which shows on the crests tab only. The UI manager also carries its current page as a u32 at +0x68 (1 = the title
-// screen, 2 = options, 3 = the controller page, 20 = the key-binding page; the two state enums sit at 1/1 across all four
-// pages, so only this field tells them apart, found by a wide dump across the pages in the memory-diff probe's format, every
-// one of its twelve dumps fitting), published through dm_pad_page: at game state 1, page 1 is mode 5 (the title screen) and
-// pages 3 and 20 are mode 6 (the controller pages). An instance counts only while the
+// screen, 2 = options, 3 = the controller page, 6 = the save select, 7 = sound, 12 = game options, 20 = the key-binding
+// page; the two state enums sit at 1/1 across all of them, so only this field tells them apart, found by a wide dump
+// across the pages in the memory-diff probe's format, every one of its twelve dumps fitting, the later pages read off
+// the watcher's own page log), published through dm_pad_page: at game state 1, pages 1, 2, 6, 7 and 12 are mode 5 (the
+// menu pages: the stick and its two letter keys only) and pages 3 and 20 are mode 6 (the controller pages). An instance
+// counts only while the
 // native object behind it lives (the pointer at +0x10). The mode starts unpublished (dm_pad_mode reads -1) until the watcher
 // first derives it from a state inside its range, so the pad stays hidden while the game loads to its title screen; a build
 // with no layout publishes 0 at once, and once the watcher is running, fail-safe throughout: a class not ready, a null link,
@@ -140,7 +142,7 @@ static void *pad_mode_main(void *arg) {
                 const void *ih = gm ? *(const void *const *)((const uint8_t *)gm + 0xa8) : NULL;
                 if (ih && *(const void *const *)((const uint8_t *)ih + 0x10)) { int sm = *(const int32_t *)((const uint8_t *)ih + 0x84); if (sm == 0 || sm == 1) mode = 3; }
             } else if (gs == 2 || gs == 3 || gs == 6 || us == 2) mode = 1;
-            else if (gs == 1 && page == 1) mode = 5;   // the title screen: the pad shows the stick and its two letter keys only
+            else if (gs == 1 && (page == 1 || page == 2 || page == 6 || page == 7 || page == 12)) mode = 5;   // the menu pages (the title screen and the options branch's pages, the save select with them): the stick and its two letter keys only
             else if (gs == 1 && (page == 3 || page == 20)) mode = 6;   // the controller pages: every key, as a letter, so the key-binding page can be worked
             else if (bag_on && gs == 4 && inv == 1) mode = 4;   // the inventory: both enums stay at play while it is open, only the hero's byte tells
         }
