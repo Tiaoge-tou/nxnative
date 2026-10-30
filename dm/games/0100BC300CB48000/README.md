@@ -55,7 +55,7 @@ Run the command printed by `scripts/build_ipa_from_nsp.py --platform mac`. Use `
 - [NRO memory accounting](../../../docs/reference/memory.md#offline-nro-copies-are-not-additional-guest-memory) and [thread-stack backing](../../../docs/reference/memory.md#thread-stacks-backed-by-active-nro-data).
 - [Phyre shaders in VBF](../../../docs/reference/shaders.md#phyre-nvn-effects-in-virtuos-vbf-archives).
 - [Queue state](../../../docs/reference/nvn-objects.md#bindings-belong-to-each-queue) and [integer border colours](../../../docs/reference/nvn-objects.md#integer-sampler-border-colours).
-- [GPUs without BC textures are refused at start](../../../docs/reference/rendering.md#gpus-without-bc-textures-are-refused-at-start): [issue #704](https://github.com/seedds/nxnative/issues/704), an iPhone 15 (A16) aborted at FFX's first BC3 texture; the device is not supported.
+- [GPUs without BC textures: BC1 to BC5 are transcoded, BC6H and BC7 are refused at creation](../../../docs/reference/rendering.md#gpus-without-bc-textures-bc1-to-bc5-are-transcoded-bc6h-and-bc7-are-refused-at-creation): [issue #704](https://github.com/seedds/nxnative/issues/704), an iPhone 15 (A16) aborted at FFX's first BC3 texture; on this fork its BC1 to BC5 textures are transcoded instead, and only a BC6H or BC7 texture would stop it.
 
 ## Open
 

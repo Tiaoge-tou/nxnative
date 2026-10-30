@@ -21,7 +21,7 @@ The offsets of each level and layer within the storage, and the block height and
 
 ## BC textures
 
-Only GPUs with BC compressed textures are supported (`supportsBCTextureCompression` of `MTLDevice`: Apple silicon Macs and the latest iPhones), so BC textures are created and uploaded as BC; there is no decompression path. A device without them is refused at start ([GPUs without BC textures](../../../docs/reference/rendering.md#gpus-without-bc-textures-are-refused-at-start)). A BC texture is never a render target and its raw blocks are not sampled through an uncompressed view (Metal has no such views; Breath of the Wild encodes one 32×32 BC4 texture on the GPU, GitHub issue #4).
+On a GPU with BC compressed textures (`supportsBCTextureCompression` of `MTLDevice`: Apple silicon Macs, iPhones from the A17 Pro, iPads from the M1) BC textures are created and uploaded as BC. A GPU without them is not refused: BC1 to BC5 are decompressed on upload (the transcode in `../nvn/nvn_mtl.m`), and only a BC6H or BC7 texture, the two with no decompression path, is refused, at its creation ([GPUs without BC textures: BC1 to BC5 are transcoded, BC6H and BC7 are refused at creation](../../../docs/reference/rendering.md#gpus-without-bc-textures-bc1-to-bc5-are-transcoded-bc6h-and-bc7-are-refused-at-creation)). A BC texture is never a render target and its raw blocks are not sampled through an uncompressed view (Metal has no such views; Breath of the Wild encodes one 32×32 BC4 texture on the GPU, GitHub issue #4).
 
 ## Tests
 
