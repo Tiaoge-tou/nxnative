@@ -87,6 +87,24 @@ static const void *pad_static(const uint8_t *base, uint64_t slot, uint64_t inst_
     if (!inst || !*(const void *const *)((const uint8_t *)inst + 0x10)) return NULL;   // no live object behind it
     return inst;
 }
+static void pad_dump_obj(const uint8_t *base, const pad_layout_t *lay, int ui, const char *tag, int n, int phase) {
+    const void *inst = pad_static(base, ui ? lay->ui_class : lay->game_class, ui ? 0x10 : 0x8);
+    const char *obj = ui ? "um" : "gm";
+    if (!inst) { LOG("[pad] dump skipped %s", obj); return; }
+    LOG("[pad] dump tag=%s n=%d phase=%d obj=%s", tag, n, phase, obj);
+    const uint8_t *p = (const uint8_t *)inst;
+    for (int off = 0; off < 0x800; off += 32) {
+        char line[128]; int w = snprintf(line, sizeof line, "[pad] +0x%03x: ", off);
+        for (int i = 0; i < 32; i++) w += snprintf(line + w, sizeof line - (size_t)w, "%s%02x", i ? " " : "", p[off + i]);
+        LOG("%s", line);
+    }
+}
+// Memory-diff probe (temporary): a player 1 press of Minus, B, L, R or Plus starts a burst of dumps of both instances
+// (at the press and about 200, 500 and 1000 ms later, on the 100 ms poll), so the fields that flip when the inventory
+// opens or closes can be found by diffing bursts offline. Read-only; at most 60 bursts, then the state logging goes on alone
+static const struct { uint64_t bit; const char *tag; } k_dump_keys[] = {
+    { DM_BTN_MINUS, "MINUS" }, { DM_BTN_B, "B" }, { DM_BTN_L, "L" }, { DM_BTN_R, "R" }, { DM_BTN_PLUS, "PLUS" },
+};
 static void *pad_mode_main(void *arg) {
     (void)arg;
     const pad_layout_t *lay = NULL; const uint8_t *base = NULL;
@@ -99,6 +117,9 @@ static void *pad_mode_main(void *arg) {
     if (!lay || !base) { LOG("[pad] no game-state layout for this build; the pad stays as it is"); return NULL; }
     LOG("[pad] watching the game state for cutscenes and loads (build %s)", lay->build);
     int cur = -1;
+    uint64_t dump_prev = 0, dump_poll = 0;   // memory-diff probe state: the last poll's watched buttons, the poll count
+    int dump_started = 0, dump_phase = -1, dump_start = 0, dump_limit_logged = 0;   // dump_phase < 0: no burst running
+    const char *dump_tag = NULL, *dump_pending = NULL;
     for (;;) {
         int mode = 0;
         const void *gm = pad_static(base, lay->game_class, 0x8);
@@ -115,6 +136,29 @@ static void *pad_mode_main(void *arg) {
             } else if (gs == 2 || gs == 3 || gs == 6 || us == 2) mode = 1;
         }
         if (mode != cur) { cur = mode; atomic_store(&g_pad_mode, mode); LOG("[pad] mode %d (%s)", mode, mode == 3 ? "cutscene, skippable" : mode == 2 ? "cutscene" : mode == 1 ? "loading" : "play"); }
+        {   // memory-diff probe: watch player 1's buttons (the touch path publishes through g_btn, a controller through g_pad_btn[0])
+            static const int dump_off[4] = { 0, 2, 5, 10 };   // burst phases in polls of 100 ms: the press, +200, +500, +1000 ms
+            uint64_t btn = atomic_load(&g_btn) | atomic_load(&g_sc_btn) | atomic_load(&g_pad_btn[0]);
+            uint64_t edges = btn & ~dump_prev; dump_prev = btn;
+            const char *edge_tag = NULL;
+            for (unsigned k = 0; k < sizeof k_dump_keys / sizeof *k_dump_keys && !edge_tag; k++) if (edges & k_dump_keys[k].bit) edge_tag = k_dump_keys[k].tag;
+            if (edge_tag) {
+                if (dump_started >= 60) { if (!dump_limit_logged) { dump_limit_logged = 1; LOG("[pad] dump limit reached"); } }
+                else if (dump_phase < 0) { dump_tag = edge_tag; dump_phase = 0; dump_start = (int)dump_poll; }
+                else dump_pending = edge_tag;
+            }
+            if (dump_phase >= 0 && (int)dump_poll >= dump_start + dump_off[dump_phase]) {
+                if (!dump_phase) dump_started++;
+                pad_dump_obj(base, lay, 0, dump_tag, dump_started, dump_phase);
+                pad_dump_obj(base, lay, 1, dump_tag, dump_started, dump_phase);
+                if (++dump_phase > 3) {
+                    dump_phase = -1;
+                    if (dump_pending && dump_started < 60) { dump_tag = dump_pending; dump_pending = NULL; dump_phase = 0; dump_start = (int)dump_poll + 1; }
+                    else dump_pending = NULL;
+                }
+            }
+            dump_poll++;
+        }
         struct timespec ts = { 0, 100000000 }; nanosleep(&ts, NULL);
     }
     return NULL;
