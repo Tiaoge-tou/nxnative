@@ -887,7 +887,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     _swap.fillColor = (_swapHeld ? k_on : k_idle).CGColor; _swapLabel.foregroundColor = (_swapHeld ? k_textOn : k_text).CGColor;
     CGPoint h = self.stickHome, o = [self knobOffset:0];
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
-    if (_skin) {   // pressed keys swap to their _p art and dip; the eye key shows its _p art while the skill keys are hidden (and dims instead when the skin ships no eye _p art); the medallion knob follows the touch, kept inside the disc
+    if (_skin) {   // pressed keys swap to their _p art and dip; the eye key shows its _p art while the skill keys are hidden (and dims instead when the skin ships no eye _p art); the medallion knob follows the touch, its rim reaching the disc's rim at a full tilt
         if (_sSkinMode) for (int i = 0; i < SKIN_N; i++) {
             if (k_skin[i].grp == SK_TOGGLE) { UIImage *p = _skillOff ? skinPressedImage(i) : nil;
                 _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
@@ -904,9 +904,14 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             UIImage *p = on ? bagPressedImage(j) : nil;
             _bagBtn[j].contents = (id)(p ? p : skinImage(k_bag[j].art)).CGImage;
             _bagBtn[j].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
-        CGFloat ol = hypot(o.x, o.y), maxO = 0.30 * [self stickR:0];
-        if (ol > maxO) { o.x *= maxO / ol; o.y *= maxO / ol; }
-        _skinKnob.position = CGPointMake(h.x + o.x, h.y + o.y); _skinKnob.opacity = _stick[0] ? 1.0 : 0.95;
+        // The drawn knobs' travel, each clamped on its own from the raw offset so the knob's rim just reaches its
+        // disc's rim at a full tilt: the image knob's visible cap is 0.0227 of the width across inside a disc face
+        // of radius 0.0720 (stickR is 0.074), so its centre may travel 0.67 of stickR; the glass knob is 0.44 of
+        // its disc across against the glass disc's own radius (stickR itself), so 0.56. The input path keeps the
+        // raw offset (knobOffset): only the drawing is clamped, each knob to its own reach
+        CGFloat ol = hypot(o.x, o.y), sR = [self stickR:0];
+        CGPoint ko = o; CGFloat km = 0.67 * sR; if (ol > km) { ko.x *= km / ol; ko.y *= km / ol; }
+        _skinKnob.position = CGPointMake(h.x + ko.x, h.y + ko.y); _skinKnob.opacity = _stick[0] ? 1.0 : 0.95;
         if (!_sSkinMode) {   // the glass controls: a key's wash lit while it is pressed (the eye's while the skill keys are hidden), the skill discs hidden with the eye off, the knob following the touch
             for (int i = 0; i < SKIN_N; i++) { if (!_sWash[i]) continue;
                 _sWash[i].opacity = (k_skin[i].grp == SK_TOGGLE ? _skillOff : ((_btnBits >> k_skin[i].bit) & 1)) ? 0.35 : 0;
@@ -915,7 +920,8 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
                 if (_sLabel[i]) _sLabel[i].hidden = hid;
                 if (_sSym[i]) _sSym[i].hidden = hid;
                 _sWash[i].hidden = hid; }
-            _sKnob.center = CGPointMake(h.x + o.x, h.y + o.y);
+            CGPoint go = o; CGFloat gm = 0.56 * sR; if (ol > gm) { go.x *= gm / ol; go.y *= gm / ol; }   // the glass knob's own reach (see the clamp above)
+            _sKnob.center = CGPointMake(h.x + go.x, h.y + go.y);
             _sStick.hidden = _sKnob.hidden = [self padHidden] || _padMode == 4;
             for (int j = 0; j < BAG_N; j++) { if (!_bWash[j]) continue;   // the bag keys as glass: shown only in the inventory, each key's wash lit while it is held (the X key only on the crests tab)
                 _bWash[j].opacity = ((_btnBits >> k_bag[j].bit) & 1) ? 0.35 : 0;
