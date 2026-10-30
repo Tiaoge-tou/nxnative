@@ -206,7 +206,8 @@ static UIImage *namedPressedImage(const char *name) {   // the pressed-state art
 // first on-device pass: bigger keys (r 0.0248), the vertical pair spread further apart (72 in the frame) and the
 // horizontal pair drawn closer in (52), the group centre unmoved. The X / A / B column is scaled by the combat
 // cluster's own factor (0.9731) about A -- A keeps the groups' shared line and B ends a hair above the combat
-// bottom row -- so the two layouts' right-hand keys shrink together. Centres and radii follow the k_skin
+// bottom row -- so the two layouts' right-hand keys shrink together. The X key shows only on the crests tab
+// (bagXShown). Centres and radii follow the k_skin
 // convention, skinCenter's stacking included but without the Up key's disc exemption (the four D-pad keys move as one
 // cross). The art is the bag set in dm/padskin and dm/padskin-badge, made by dm/ios/tools/make_bagskin.py; dir is
 // triPath's order, for the glass keys' arrows
@@ -222,6 +223,7 @@ static const struct { const char *art; int bit; int dir; CGFloat x, y, r; } k_ba
     {"bagr",       B_R,    -1, 0.9316, 0.075,  0.023},
 };
 #define BAG_N (int)(sizeof k_bag / sizeof k_bag[0])
+#define BAG_X 4   // the X key's row in k_bag: it serves the crests tab alone, so it shows only while that tab is up (bagXShown)
 static CGPoint bagCenter(int i, CGRect b) {   // bag key i's centre, in points (the layout and the touch hit test share it)
     CGFloat y = k_bag[i].y;
     if (y > 0.2) y = 0.822 + (y - 0.822) * SKIN_REF_HW * b.size.width / b.size.height;
@@ -358,6 +360,7 @@ static void pads_start(void);   // Physical controllers, below
     BOOL _skillOff;                                // the skill keys (grp SK_SKILL) are hidden by the eye key
     CALayer *_skipKey, *_padKey;   // the cutscene keys: the skin's Skip medallion at the Bind key's place, its Pad medallion at the eye key's place (drawn in every skin mode, glass included)
     int _padMode; BOOL _padPeek;                   // the host's pad mode (hle_hid.c dm_pad_mode) and the player's recall of the pad for the rest of the mode
+    int _padTab;                                   // the host's inventory tab (dm_pad_tab) as last polled: a change inside the inventory only re-runs refresh (the bag X key follows the crests tab)
     NSTimer *_padTimer;                            // polls the pad mode while the skin is up
     BOOL _hades;                                   // DM_PAD_HADES: the glass controls below replace the drawn ones
     UIView *_glassBox;                             // holds the Hades glass controls: hidden while a physical controller is connected
@@ -549,9 +552,10 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         if (dist(p, c) <= k_skin[i].r * b.size.width * 1.35) return i; }
     return -1;
 }
-- (int)bagBtnAt:(CGPoint)p {   // bag mode: the bag key under the point, or -1
+- (int)bagBtnAt:(CGPoint)p {   // bag mode: the bag key under the point, or -1 (the X key takes no touch while it is hidden off the crests tab)
     CGRect b = self.bounds;
     for (int j = 0; j < BAG_N; j++) {
+        if (j == BAG_X && ![self bagXShown]) continue;
         CGPoint c = bagCenter(j, b);
         if (dist(p, c) <= k_bag[j].r * b.size.width * 1.35) return j; }
     return -1;
@@ -722,23 +726,27 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 // are the skin's drawn medallions whatever the skin choice is (the glass choice too): their art loads through skinImage like any skin
 // key's, and the glass controls at their places stay hidden with the rest of the glass pad while they show.
 // Mode 4 (the inventory is open) is not a hiding: the combat pad gives way to the bag layout (k_bag) for as long as the
-// inventory lasts — the stick disc and knob included — and closing the inventory restores the pad exactly as it was
+// inventory lasts — the stick disc and knob included — and closing the inventory restores the pad exactly as it was.
+// Inside the inventory the bag's X key follows the game's own current tab (dm_pad_tab): it serves the crests tab alone,
+// so it hides on the other tabs and comes back with the crests; while the tab reads unknown it stays shown
 - (BOOL)padHidden { return _padMode > 0 && !_padPeek; }
+- (BOOL)bagXShown { int t = dm_pad_tab(); return t < 0 || t == 1; }   // the bag's X key serves the crests tab alone: shown on that tab, and while the tab is unknown (the hero unread or a value out of range) -- never hidden on a guess
 - (void)applyPadMode {
     BOOL bag = _padMode == 4;
     BOOL hide = [self padHidden] || bag;   // in the inventory the combat pad is gone either way; the bag layout replaces it
     _skinDisc.hidden = hide || !_sSkinMode; _skinKnob.hidden = hide || !_sSkinMode;
     for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = hide || !_sSkinMode || (_skillOff && k_skin[i].grp == SK_SKILL);
-    for (int j = 0; j < BAG_N; j++) _bagBtn[j].hidden = !bag || !_sSkinMode;
+    for (int j = 0; j < BAG_N; j++) _bagBtn[j].hidden = !bag || !_sSkinMode || (j == BAG_X && ![self bagXShown]);
     _skipKey.hidden = !(_padMode == 3 && !_padPeek);   // the cutscene keys are drawn medallions in every skin mode, the glass choice included: the glass pad yields their places (its box hides below, each glass key in refresh, both with padHidden)
     _padKey.hidden = !((_padMode == 2 || _padMode == 3) && !_padPeek);
     if (_sGlassBox) _sGlassBox.hidden = _sSkinMode >= 1 || ([self padHidden] && !bag);   // the glass box: covered by the image skin; hidden while the pad is, except in the inventory, whose glass keys live in it
     [self refresh];
 }
 - (void)padTick {
-    int m = dm_pad_mode();
-    if (m == _padMode) return;
-    _padMode = m; _padPeek = NO;
+    int m = dm_pad_mode(), t = dm_pad_tab();
+    if (m == _padMode && t == _padTab) return;
+    if (m == _padMode) { _padTab = t; [self refresh]; return; }   // a tab switch inside the inventory: no reset, only the bag X key's showing follows
+    _padMode = m; _padTab = t; _padPeek = NO;
     [self reset];   // held touches end with the mode change: their keys may be hidden now
     [self applyPadMode];
 }
@@ -890,8 +898,8 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
             _skinBtn[i].opacity = 1.0;
             _skinBtn[i].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
-        if (_sSkinMode) for (int j = 0; j < BAG_N; j++) {   // the bag keys, shown only in the inventory, press like skin keys: the _p art and a dip while held
-            _bagBtn[j].hidden = _padMode != 4;
+        if (_sSkinMode) for (int j = 0; j < BAG_N; j++) {   // the bag keys, shown only in the inventory, press like skin keys: the _p art and a dip while held (the X key only on the crests tab)
+            _bagBtn[j].hidden = _padMode != 4 || (j == BAG_X && ![self bagXShown]);
             BOOL on = (_btnBits >> k_bag[j].bit) & 1;
             UIImage *p = on ? bagPressedImage(j) : nil;
             _bagBtn[j].contents = (id)(p ? p : skinImage(k_bag[j].art)).CGImage;
@@ -909,9 +917,9 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
                 _sWash[i].hidden = hid; }
             _sKnob.center = CGPointMake(h.x + o.x, h.y + o.y);
             _sStick.hidden = _sKnob.hidden = [self padHidden] || _padMode == 4;
-            for (int j = 0; j < BAG_N; j++) { if (!_bWash[j]) continue;   // the bag keys as glass: shown only in the inventory, each key's wash lit while it is held
+            for (int j = 0; j < BAG_N; j++) { if (!_bWash[j]) continue;   // the bag keys as glass: shown only in the inventory, each key's wash lit while it is held (the X key only on the crests tab)
                 _bWash[j].opacity = ((_btnBits >> k_bag[j].bit) & 1) ? 0.35 : 0;
-                BOOL hid = _padMode != 4;
+                BOOL hid = _padMode != 4 || (j == BAG_X && ![self bagXShown]);
                 if (_bGlass[j]) _bGlass[j].hidden = hid;
                 if (_bLabel[j]) _bLabel[j].hidden = hid;
                 if (_bSym[j]) _bSym[j].hidden = hid;
