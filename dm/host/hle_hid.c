@@ -69,12 +69,13 @@ uint64_t dm_input_samples(void) { return (uint64_t)atomic_load(&g_sampling); }
 // The layout below is per build, like every fixed guest offset in this host, and follows the offsets the touch port of this same
 // build uses (MZhao-ouo/Touchable, MIT): GameManager's instance at statics +0x8, its game state at +0x20 (7 = a cutscene; 2, 3 and
 // 6 = loading states), its input handler at +0xa8, whose skip mode at +0x84 is 0 or 1 while the cutscene can be skipped;
-// UIManager's instance at statics +0x10, its UI state at +0x64 (3 = a cutscene, 2 = loading). An instance counts only while the
+// UIManager's instance at statics +0x10, its UI state at +0x64 (3 = a cutscene, 2 = loading); the hero's instance at its own
+// class's statics +0x8, with the byte at +0x8ac set while the inventory is open (the two state enums do not change for it). An instance counts only while the
 // native object behind it lives (the pointer at +0x10). Fail-safe throughout: a class not ready, a null link, or a state value
 // outside its range reads as mode 0 (play), so a layout that does not fit the build can never hide the pad
-typedef struct { const char *build; uint64_t game_class, ui_class; } pad_layout_t;
+typedef struct { const char *build; uint64_t game_class, ui_class, player_class; } pad_layout_t;
 static const pad_layout_t k_pad_layouts[] = {
-    { "fc9ea4ccc955d5799f37752b2d730b31", 0x7e14880, 0x7e195b8 },   // Hollow Knight: Silksong, the build in its game.tsv
+    { "fc9ea4ccc955d5799f37752b2d730b31", 0x7e14880, 0x7e195b8, 0x7e176b0 },   // Hollow Knight: Silksong, the build in its game.tsv
 };
 static _Atomic int g_pad_mode;
 static const void *pad_static(const uint8_t *base, uint64_t slot, uint64_t inst_off) {
@@ -87,21 +88,24 @@ static const void *pad_static(const uint8_t *base, uint64_t slot, uint64_t inst_
     if (!inst || !*(const void *const *)((const uint8_t *)inst + 0x10)) return NULL;   // no live object behind it
     return inst;
 }
-static void pad_dump_obj(const uint8_t *base, const pad_layout_t *lay, int ui, const char *tag, int n, int phase) {
-    const void *inst = pad_static(base, ui ? lay->ui_class : lay->game_class, ui ? 0x10 : 0x8);
-    const char *obj = ui ? "um" : "gm";
+static void pad_dump_obj(const uint8_t *base, const pad_layout_t *lay, int which, const char *tag, int n, int phase) {
+    // which: 0 = GameManager, 1 = UIManager (both dumped whole, +0x0 to +0x800); 2 = the hero (only +0x800 to +0x900, around the inventory byte)
+    const void *inst = which == 0 ? pad_static(base, lay->game_class, 0x8) : which == 1 ? pad_static(base, lay->ui_class, 0x10) : pad_static(base, lay->player_class, 0x8);
+    const char *obj = which == 0 ? "gm" : which == 1 ? "um" : "pl";
     if (!inst) { LOG("[pad] dump skipped %s", obj); return; }
     LOG("[pad] dump tag=%s n=%d phase=%d obj=%s", tag, n, phase, obj);
     const uint8_t *p = (const uint8_t *)inst;
-    for (int off = 0; off < 0x800; off += 32) {
+    const int from = which == 2 ? 0x800 : 0, to = which == 2 ? 0x900 : 0x800;
+    for (int off = from; off < to; off += 32) {
         char line[128]; int w = snprintf(line, sizeof line, "[pad] +0x%03x: ", off);
         for (int i = 0; i < 32; i++) w += snprintf(line + w, sizeof line - (size_t)w, "%s%02x", i ? " " : "", p[off + i]);
         LOG("%s", line);
     }
 }
-// Memory-diff probe (temporary): a player 1 press of Minus, B, L, R or Plus starts a burst of dumps of both instances
-// (at the press and about 200, 500 and 1000 ms later, on the 100 ms poll), so the fields that flip when the inventory
-// opens or closes can be found by diffing bursts offline. Read-only; at most 60 bursts, then the state logging goes on alone
+// Memory-diff probe (temporary): a player 1 press of Minus, B, L, R or Plus starts a burst of dumps of the three
+// instances (at the press and about 200, 500 and 1000 ms later, on the 100 ms poll), so the fields that flip when the
+// inventory opens or closes can be found by diffing bursts offline — the hero's dump covers the +0x8ac inventory byte
+// the poll logs on change. Read-only; at most 60 bursts, then the state logging goes on alone
 static const struct { uint64_t bit; const char *tag; } k_dump_keys[] = {
     { DM_BTN_MINUS, "MINUS" }, { DM_BTN_B, "B" }, { DM_BTN_L, "L" }, { DM_BTN_R, "R" }, { DM_BTN_PLUS, "PLUS" },
 };
@@ -128,6 +132,9 @@ static void *pad_mode_main(void *arg) {
         int us = um ? *(const int32_t *)((const uint8_t *)um + 0x64) : -1;
         static int pgs = -2, pus = -2;   // state probe: log the raw game/UI states whenever either changes (read-only)
         if (gs != pgs || us != pus) { pgs = gs; pus = us; LOG("[pad] state gs=%d us=%d", gs, us); }
+        const void *pl = pad_static(base, lay->player_class, 0x8);   // inventory probe: the hero's byte at +0x8ac (Touchable's PLAYER_INVENTORY_OPEN)
+        static int pinv = -2;
+        if (pl) { int inv = *(const uint8_t *)((const uint8_t *)pl + 0x8ac); if (inv != pinv) { pinv = inv; LOG("[pad] inv=%d (gs=%d us=%d)", inv, gs, us); } }
         if (gs >= 0 && gs <= 7 && us >= 0 && us <= 6) {   // a state outside its range means the layout does not fit: never hide
             if (gs == 7 || us == 3) {
                 mode = 2;
@@ -151,6 +158,7 @@ static void *pad_mode_main(void *arg) {
                 if (!dump_phase) dump_started++;
                 pad_dump_obj(base, lay, 0, dump_tag, dump_started, dump_phase);
                 pad_dump_obj(base, lay, 1, dump_tag, dump_started, dump_phase);
+                pad_dump_obj(base, lay, 2, dump_tag, dump_started, dump_phase);
                 if (++dump_phase > 3) {
                     dump_phase = -1;
                     if (dump_pending && dump_started < 60) { dump_tag = dump_pending; dump_pending = NULL; dump_phase = 0; dump_start = (int)dump_poll + 1; }
