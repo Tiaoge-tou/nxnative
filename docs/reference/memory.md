@@ -124,7 +124,7 @@ The guest address space, heaps, pools, virtual address memory and the allocators
   - [BALL x PIT](../../dm/games/010086A022444000/README.md) (SDK 20.5.19): `sdk+0x145d0c` / `+0x145d78`, the SDK 20.5.22 build's offsets.
   - [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md) (Frostbite, SDK 22.2.0, `sdk` `fed212d6…`, also Well Dweller's): constructor `sdk+0x14def0`, `+0x14df00` / `+0x14df6c`. SDK 22's constructor is SDK 19 / 20's instruction for instruction, with 32 more bytes on its cold path (an abort code per failing result), so it is the SDK-wide rule's sixth implementation; region placement aligns to 64 KB or 2 MB only (`sdk+0x14e060`). Frostbite's `VirtualAlloc` (`main+0x17f9884`) reserves 264 regions, 2.8 GB of address space, in its first minute while mapping 0.7 GB; behind the 1 GB node area they ran past the alias region (`Couldn't reserve memory of size: 536870912`, a deliberate null store at `main+0x17f98c4`).
   - [Cult of the Lamb](../../dm/games/01002E7016C46000/README.md) (Unity 2022.3.62f3, SDK 19.3.14, `sdk` `871fb219…`): `sdk+0x1423fc` / `+0x142468`, Octopath Traveler 0's offsets. The SDK-wide rule cut it while the profile was provisional and skipped it once the profile named the build (the rewrite had no cut), so the cuts are registered for this build; region placement aligns to 64 KB or 2 MB only (`sdk+0x142544`). It also needs a 1 GB pool, as Ace Attorney Investigations Collection and Monster Train 2.
-  - [Batman: Arkham Knight](../../dm/games/0100ACD0163D0000/README.md) (SDK 14.3.0, `sdk` `2aef2cff…`): constructor `sdk+0x12d8a0`, `+0x12d8b0` / `+0x12d94c`, registered as Cult of the Lamb's was; regions are not aligned to 1 GB on this build, so no alignment cut.
+  - [Batman: Arkham Knight](../../dm/games/0100ACD0163D0000/README.md) (SDK 14.3.0, `sdk` `2aef2cff…`): constructor `sdk+0x12d8a0`, `+0x12d8b0` / `+0x12d94c`, registered as Cult of the Lamb's was until 2026-10-30; the SDK-wide rules now give it the node area cut and the 2 MB alignment (placement constants `sdk+0x12daa4` / `+0x12daac` / `+0x12dab0`).
 
 ### Size-aligned regions exhaust the alias address space
 
@@ -151,6 +151,7 @@ The guest address space, heaps, pools, virtual address memory and the allocators
   - [Paper Mario: The Thousand-Year Door](../../dm/games/0100ECD018EBE000/README.md) (SDK 15.3.2, Celeste's `sdk` build): `AllocateAddressRegion`'s alignment at `sdk+0x12e2e0`, as Absolum's did.
   - [Pikmin 4](../../dm/games/0100B7C00933A000/README.md) (SDK 10.4.8): the 10.4.1 build's offsets.
   - [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md) (SDK 12.3.9): large-region alignment at `sdk+0x34662c`, 1 GB to 32 MB; its compact 4 GB allocator reservation then fits after the 62 MB node area.
+  - [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md) (SDK 12.3.2, `sdk` `5bcf525f…`): the 2 GB engine region came at alias +0.75 GB behind the 62 MB node area; with the rules (constants at `sdk+0x346384` / `+0x34638c` / `+0x346390`) it starts at +0.06 GB, and the alias region's high-water mark on the smoke route fell from +1.75 GB to +1.00 GB (2026-10-30).
 - **Note:** FINAL FANTASY RESONANCE's SDK 20.5.17 build aligns regions of 2 MB and more to 2 MB only (`VammManager::AllocateAddressRegion`, `sdk+0x145e00`), so it needs no alignment cut.
 
 ### Size-class alignment doubles Unity's regions

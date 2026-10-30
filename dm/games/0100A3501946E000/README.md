@@ -12,8 +12,8 @@ Status: brought up on the Mac: the boot, the initial settings, the title, a new 
 | FMallocBinned3 constructor cut: `main+0xbecc08` `bl 0xc4d778` → `nop` | [`patches.py`](patches.py), `main` `0d964901…` | its pools are cut out of the engine region; see [Memory](#memory) |
 | Observation gate `OBS_UE_MALLOC` at `main+0xbecc0c` (orig `mov x0, x19`) | `patches.py` | puts the host allocator's vtable into the new object in x19 (`hle_uemalloc.c` layout `UE4_27`) |
 | `game_args -SwitchVirtualAddressSpaceSize=2048` | `game.tsv` | a 2 GB engine region instead of 62 GB |
-| Node area cut 1 GB → 62 MB (`sdk+0x346190` / `+0x34622c`) | `dm/tools/sdk_patches.py`, `sdk` build `5bcf525f…` | the AddressRegionManager constructor at `sdk+0x346180`; the engine region then starts 62 MB into the alias region |
-| 3.75 GB guest block: `mem_reserve 0xF0000000`, `mem_alias 0xC8000000`, `mem_stack 0x10000000`, `app_pool 0xCD500000` | `game.tsv` | as DRAGON QUEST VII Reimagined: alias region = node area + up to 1 GB of alignment + the 2 GB region |
+| Node area cut 1 GB → 62 MB (`sdk+0x346190` / `+0x34622c`) and regions of 4 MB and more aligned to 2 MB, as SDK 20 (`sdk+0x346384` / `+0x34638c` / `+0x346390`) | `dm/tools/sdk_patches.py`, the SDK-wide rules (`MATCH_CUTS`) on `sdk` build `5bcf525f…` | the AddressRegionManager constructor at `sdk+0x346180`; the 2 GB engine region then starts 62 MB into the alias region. Until 2026-10-30 a row for this build gave the node area cut only, and the region came at alias +0.75 GB (a run to the smoke route's end on each) |
+| 3.75 GB guest block: `mem_reserve 0xF0000000`, `mem_alias 0xC8000000`, `mem_stack 0x10000000`, `app_pool 0xCD500000` | `game.tsv` | as DRAGON QUEST VII Reimagined: alias region = node area + the 2 GB region, with room left over from when the region was aligned to 1 GB |
 | `sys_resource 0x5000000` | `game.tsv` | the NPDM declares 80 MB of system resource |
 | `pad_layout full` | `game.tsv` | the battle menu picks a weapon with the D-pad. It reads the controller only, so it stays docked (1920x1080) |
 | `shader_groups GlobalShaderCache=global #Engine/=engine #Majesty/=game` | `game.tsv` | the global shader cache, the engine's materials and the game's |
@@ -63,6 +63,7 @@ General changes first needed here; each applies to every game:
 - **Recursive splits retain their original descriptor when child draws reuse the geometry job** (`geo_split`): [Recursive geometry splits retain their original draw range](../../../docs/reference/shaders.md#recursive-geometry-splits-retain-their-original-draw-range). The first-attack regression exposed an invalid index read in the job-based integration; a CPU reproduction verifies the ownership fix independently of the game.
 - **Guest primitive IDs retain the original draw's offset across compute splits**: [Split geometry primitive IDs](../../../docs/reference/shaders.md#split-geometry-primitive-ids). Found while reviewing this game's large shadow draw; the failure and fix are established with a real translated synthetic shader, independently of game-specific shader behavior.
 - **Thread stacks from the host's Unreal heap accepted by `MapMemory`** (`dm_ue_heap_owns`): [Thread stacks from the host's Unreal heap](../../../docs/reference/memory.md#thread-stacks-from-the-hosts-unreal-heap).
+- **The SDK-wide 2 MB alignment checked on SDK 12.3.2** (`sdk_patches.py` `MATCH_CUTS`; this build's row removed): [1 GB alignment of regions of 1 GB and more](../../../docs/reference/memory.md#1-gb-alignment-of-regions-of-1-gb-and-more).
 - **Partly tilted sticks in scripted input** (`L<x>/<y>`, `hle_hid.c`) and the host Makefile rebuilding on a change to `dm/gfx/nvn/*.inc` alone.
 
 ## Open
