@@ -83,6 +83,17 @@ static const pad_layout_t k_pad_layouts[] = {
 };
 static _Atomic int g_pad_mode;
 static _Atomic int g_pad_tab;   // the inventory's current tab (dm_pad_tab): -1 until the watcher first reads the hero
+// TEMPORARY page probe (delete in the next build): dump one instance's bytes
+// to the log in the memory-diff probe's format, 32 bytes a line
+static void pad_probe_dump(int n, const char *obj, const uint8_t *inst, uint32_t size, int gs, int us, int tab) {
+    LOG("[pad] dump n=%d obj=%s gs=%d us=%d tab=%d", n, obj, gs, us, tab);
+    char line[160];
+    for (uint32_t off = 0; off < size; off += 32) {
+        int w = snprintf(line, sizeof line, "[pad] +0x%03x:", off);
+        for (int i = 0; i < 32; i++) w += snprintf(line + w, (size_t)((int)sizeof line - w), " %02x", inst[off + i]);
+        LOG("%s", line);
+    }
+}
 static const void *pad_static(const uint8_t *base, uint64_t slot, uint64_t inst_off) {
     const void *klass = *(const void *const *)(base + slot);
     if (!klass || ((uintptr_t)klass & 7)) return NULL;
@@ -108,6 +119,11 @@ static void *pad_mode_main(void *arg) {
     int bag_on = !be || atoi(be);
     if (!bag_on) LOG("[pad] bag mode off (DM_PAD_BAG=0)");
     int cur = -1;
+    // TEMPORARY page probe (delete in the next build): a rising edge on any pad button arms one wide dump of the UI
+    // and game manager instances 600 ms later (um 0x1400, gm 0x1000), to find the field that names the current menu
+    // page -- the game/UI state enums sit at 1/1 from the title screen through options, the controller page and the
+    // key-binding page, so no state value tells those pages apart.
+    uint64_t pprev = 0, prose = 0; int pcount = 0, pticks = -1;
     for (;;) {
         int mode = 0;
         const void *gm = pad_static(base, lay->game_class, 0x8);
@@ -131,6 +147,22 @@ static void *pad_mode_main(void *arg) {
             else if (bag_on && gs == 4 && inv == 1) mode = 4;   // the inventory: both enums stay at play while it is open, only the hero's byte tells
         }
         if (mode != cur) { cur = mode; atomic_store(&g_pad_mode, mode); LOG("[pad] mode %d (%s)", mode, mode == 4 ? "bag" : mode == 3 ? "cutscene, skippable" : mode == 2 ? "cutscene" : mode == 1 ? "loading" : "play"); }
+        {   // TEMPORARY page probe (delete in the next build): poll player 1's buttons (the same three sources shake_note reads)
+            uint64_t btns = atomic_load(&g_btn) | atomic_load(&g_sc_btn) | atomic_load(&g_pad_btn[0]);
+            uint64_t rose = btns & ~pprev; pprev = btns;
+            if (pticks < 0 && pcount < 40 && rose) { prose = rose; pticks = 6; }   // any key's rising edge arms one dump, 6 ticks (600 ms) later, once the page switch has settled
+            if (pticks > 0 && --pticks == 0) {
+                pcount++;
+                LOG("[pad] dump n=%d btn=%#llx", pcount, (unsigned long long)prose);
+                const struct { const char *obj; const void *inst; uint32_t size; } objs[2] = {
+                    { "um", pad_static(base, lay->ui_class, 0x10), 0x1400 },
+                    { "gm", pad_static(base, lay->game_class, 0x8), 0x1000 } };
+                for (int o = 0; o < 2; o++)
+                    if (objs[o].inst) pad_probe_dump(pcount, objs[o].obj, (const uint8_t *)objs[o].inst, objs[o].size, gs, us, tab);
+                    else LOG("[pad] dump skipped %s", objs[o].obj);
+                pticks = -1;
+            }
+        }
         struct timespec ts = { 0, 100000000 }; nanosleep(&ts, NULL);
     }
     return NULL;
