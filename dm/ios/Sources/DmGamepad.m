@@ -196,6 +196,44 @@ static UIImage *skinPressedImage(int i) {   // the pressed-state art (<art>_p) f
 static UIImage *namedPressedImage(const char *name) {   // the pressed-state art (<name>_p) for a named padskin image, or nil when the skin ships none
     char pn[64]; snprintf(pn, sizeof pn, "%s_p", name); return skinImage(pn);
 }
+// ---- Bag layout (pad mode 4: the inventory is open) ----
+// While the inventory is open the combat pad gives way to nine keys of its own: a D-pad of four separate keys at the left
+// (the stick and its disc go away), X / A / B in a column at the right, and L / R alone at the top, for the inventory's
+// tabs. The layout is the measured one approved on the inventory's own screenshot (1564x720, the 19.5:9 frame): each
+// side's keys centre in the black bar between the inventory's white frame and the screen edge, the two groups share one
+// horizontal line (y 0.6389), and B sits at the combat bottom row's own height. Centres and radii follow the k_skin
+// convention, skinCenter's stacking included but without the Up key's disc exemption (the four D-pad keys move as one
+// cross). The art is the bag set in dm/padskin and dm/padskin-badge, made by dm/ios/tools/make_bagskin.py; dir is
+// triPath's order, for the glass keys' arrows
+static const struct { const char *art; int bit; int dir; CGFloat x, y, r; } k_bag[] = {
+    {"bagdup",    B_UP,    1, 0.0716, 0.5583, 0.0214},
+    {"bagddown",  B_DOWN,  2, 0.0716, 0.7194, 0.0214},
+    {"bagdleft",  B_LEFT,  0, 0.0345, 0.6389, 0.0214},
+    {"bagdright", B_RIGHT, 3, 0.1087, 0.6389, 0.0214},
+    {"bagx",       B_X,    -1, 0.9316, 0.4556, 0.040},
+    {"baga",       B_A,    -1, 0.9316, 0.6389, 0.040},
+    {"bagb",       B_B,    -1, 0.9316, 0.8222, 0.040},
+    {"bagl",       B_L,    -1, 0.0716, 0.075,  0.023},
+    {"bagr",       B_R,    -1, 0.9316, 0.075,  0.023},
+};
+#define BAG_N (int)(sizeof k_bag / sizeof k_bag[0])
+static CGPoint bagCenter(int i, CGRect b) {   // bag key i's centre, in points (the layout and the touch hit test share it)
+    CGFloat y = k_bag[i].y;
+    if (y > 0.2) y = 0.822 + (y - 0.822) * SKIN_REF_HW * b.size.width / b.size.height;
+    return CGPointMake(k_bag[i].x * b.size.width, y * b.size.height);
+}
+static NSString *bagGlyph(int i) {   // a bag key's glass glyph: the letter keys'; the D-pad keys carry a triangle instead
+    const char *a = k_bag[i].art;
+    if (!strcmp(a, "bagx")) return @"X"; if (!strcmp(a, "baga")) return @"A"; if (!strcmp(a, "bagb")) return @"B";
+    if (!strcmp(a, "bagl")) return @"L"; if (!strcmp(a, "bagr")) return @"R";
+    return nil;
+}
+static UIImage *bagPressedImage(int i) {   // the pressed-state art (<art>_p) for bag key i, or nil when the set ships none
+    char pn[64]; snprintf(pn, sizeof pn, "%s_p", k_bag[i].art); return skinImage(pn);
+}
+static CGFloat bagArtScale(void) {   // every bag key ships a badge version (its disc offset in the larger canvas, no medallion below it), so the badge choice grows the layer as a badged key's
+    return silkSkinMode() == 2 ? SILK_BADGE_SCALE : 1.0;
+}
 static CALayer *imgLayer(CALayer *parent, const char *name) {
     CALayer *l = [CALayer layer]; l.contents = (id)skinImage(name).CGImage; [parent addSublayer:l]; return l;
 }
@@ -300,6 +338,11 @@ static void pads_start(void);   // Physical controllers, below
     BOOL _skin;                                    // DM_PAD_SKIN: the image controls below replace the drawn ones
     CALayer *_skinDisc, *_skinKnob;                // the skin's stick disc and its knob (the knob follows the touch)
     CALayer *_skinBtn[SKIN_N];                     // the skin's keys, in k_skin order
+    CALayer *_bagBtn[BAG_N];                       // the bag layout's keys (pad mode 4), in k_bag order
+    UIView *_bGlass[BAG_N];                        // the bag keys as glass discs (the glass skin choice)
+    CAShapeLayer *_bWash[BAG_N];                   // a white wash over a bag glass disc, lit while its key is pressed
+    CATextLayer *_bLabel[BAG_N];                   // the bag glass keys' letters
+    CAShapeLayer *_bSym[BAG_N];                    // the bag glass D-pad keys' triangles
     int _sSkinMode;                                // DM_SILK_SKIN: 0 the glass controls below, 1 the image skin over them, 2 the letter-badge skin (the launcher's choice; 1 when unset)
     UIView *_sGlassBox;                            // holds this pad's glass controls: the k_skin layout drawn as glass (Hades' arrangement, mirrored)
     UIView *_sGlass[SKIN_N];                       // one clear disc per skin key (nil for the Up key: invisible in both skins)
@@ -371,6 +414,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             _skinDisc = imgLayer(_controls, "stick"); _skinDisc.opacity = 0.75;
             _skinKnob = imgLayer(_controls, "knob"); _skinKnob.opacity = 0.95;
             for (int i = 0; i < SKIN_N; i++) { _skinBtn[i] = imgLayer(_controls, k_skin[i].art); _skinBtn[i].opacity = 1.0; }
+            for (int j = 0; j < BAG_N; j++) { _bagBtn[j] = imgLayer(_controls, k_bag[j].art); _bagBtn[j].hidden = YES; }   // the bag layout's keys: applyPadMode shows them while the inventory is open
             _skipKey = imgLayer(_controls, "skip"); _skipKey.hidden = YES;   // the cutscene keys: skin medallions from dm/padskin; applyPadMode shows them while the host reports a cutscene
             _padKey = imgLayer(_controls, "pad"); _padKey.hidden = YES;
             _padTimer = [NSTimer scheduledTimerWithTimeInterval:0.15 target:self selector:@selector(padTick) userInfo:nil repeats:YES];   // the view lives as long as the app, so the timer needs no invalidation
@@ -387,6 +431,13 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
                 _sWash[i].strokeColor = nil; _sWash[i].shadowOpacity = 0;
                 if (k_skin[i].bit == B_MINUS || k_skin[i].bit == B_PLUS || k_skin[i].grp == SK_TOGGLE) { _sSym[i] = shape(ov); _sSym[i].fillColor = k_text.CGColor; _sSym[i].strokeColor = nil; _sSym[i].shadowOpacity = 0; }
                 else if (silkGlyph(i)) _sLabel[i] = label(ov, silkGlyph(i));
+            }
+            for (int j = 0; j < BAG_N; j++) {   // the bag layout's glass keys: discs in the box, washes and glyphs in the overlay, all hidden until the inventory opens
+                _bGlass[j] = clearDisc(_sGlassBox, 0.30); _bGlass[j].hidden = YES;
+                _bWash[j] = shape(ov); _bWash[j].fillColor = UIColor.whiteColor.CGColor; _bWash[j].opacity = 0;
+                _bWash[j].strokeColor = nil; _bWash[j].shadowOpacity = 0; _bWash[j].hidden = YES;
+                if (bagGlyph(j)) { _bLabel[j] = label(ov, bagGlyph(j)); _bLabel[j].hidden = YES; }
+                else { _bSym[j] = shape(ov); _bSym[j].fillColor = k_text.CGColor; _bSym[j].strokeColor = nil; _bSym[j].shadowOpacity = 0; _bSym[j].hidden = YES; }
             }
             _sGlassBox.hidden = _sSkinMode >= 1;   // the image skin covers the glass; with the choice at 0 the images stay hidden instead (applyPadMode and refresh keep them so)
             if (!_sSkinMode) { _skinDisc.hidden = YES; _skinKnob.hidden = YES; for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = YES; }
@@ -493,6 +544,13 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         if (dist(p, c) <= k_skin[i].r * b.size.width * 1.35) return i; }
     return -1;
 }
+- (int)bagBtnAt:(CGPoint)p {   // bag mode: the bag key under the point, or -1
+    CGRect b = self.bounds;
+    for (int j = 0; j < BAG_N; j++) {
+        CGPoint c = bagCenter(j, b);
+        if (dist(p, c) <= k_bag[j].r * b.size.width * 1.35) return j; }
+    return -1;
+}
 - (int)hadesBtnAt:(CGPoint)p {   // Hades mode: the glass key under the point, or -1
     CGRect b = self.bounds;
     for (int i = 0; i < HADES_N; i++) {
@@ -596,8 +654,9 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
             game |= [self gameBegin:t]; continue;
         }
         if (_skin) {   // skin mode: an image key, the disc (a fixed stick), else the game's touch screen
-            if (_padMode >= 2 && !_padPeek && dist(p, skinCenter(7, self.bounds)) <= k_skin[7].r * self.bounds.size.width * 1.35) { _padPeek = YES; [self applyPadMode]; continue; }   // the Pad recall key: the pad comes back for the rest of the cutscene
+            if ((_padMode == 2 || _padMode == 3) && !_padPeek && dist(p, skinCenter(7, self.bounds)) <= k_skin[7].r * self.bounds.size.width * 1.35) { _padPeek = YES; [self applyPadMode]; continue; }   // the Pad recall key: the pad comes back for the rest of the cutscene
             if (_padMode == 3 && !_padPeek && dist(p, skinCenter(5, self.bounds)) <= k_skin[5].r * self.bounds.size.width * 1.35) { [_owner setObject:@(C_BTN | (uint64_t)B_A << 8) forKey:t]; continue; }   // the Skip key: A, through the usual input path
+            if (_padMode == 4) { int bb = [self bagBtnAt:p]; if (bb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_bag[bb].bit << 8) forKey:t]; continue; } game |= [self gameBegin:t]; continue; }   // the bag layout: its nine keys take the touch (no stick: the disc is gone); every other touch is the game's
             if ([self padHidden]) { game |= [self gameBegin:t]; continue; }   // hidden for a cutscene or a load: the touch is the game's
             int sb = [self skinBtnAt:p];
             if (sb >= 0 && k_skin[sb].grp == SK_TOGGLE) { _skillOff = !_skillOff; [self refresh]; continue; }   // the eye key only flips the skill keys' visibility
@@ -656,15 +715,19 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 // cutscene can be skipped) the Skip key at the Bind key's place. Recalling brings the whole pad back for the rest of the mode. While the
 // pad is hidden every other touch goes to the game's own touch screen, as touches outside the controls always do. The two cutscene keys
 // are the skin's drawn medallions whatever the skin choice is (the glass choice too): their art loads through skinImage like any skin
-// key's, and the glass controls at their places stay hidden with the rest of the glass pad while they show
+// key's, and the glass controls at their places stay hidden with the rest of the glass pad while they show.
+// Mode 4 (the inventory is open) is not a hiding: the combat pad gives way to the bag layout (k_bag) for as long as the
+// inventory lasts — the stick disc and knob included — and closing the inventory restores the pad exactly as it was
 - (BOOL)padHidden { return _padMode > 0 && !_padPeek; }
 - (void)applyPadMode {
-    BOOL hide = [self padHidden];
+    BOOL bag = _padMode == 4;
+    BOOL hide = [self padHidden] || bag;   // in the inventory the combat pad is gone either way; the bag layout replaces it
     _skinDisc.hidden = hide || !_sSkinMode; _skinKnob.hidden = hide || !_sSkinMode;
     for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = hide || !_sSkinMode || (_skillOff && k_skin[i].grp == SK_SKILL);
+    for (int j = 0; j < BAG_N; j++) _bagBtn[j].hidden = !bag || !_sSkinMode;
     _skipKey.hidden = !(_padMode == 3 && !_padPeek);   // the cutscene keys are drawn medallions in every skin mode, the glass choice included: the glass pad yields their places (its box hides below, each glass key in refresh, both with padHidden)
-    _padKey.hidden = !(_padMode >= 2 && !_padPeek);
-    if (_sGlassBox) _sGlassBox.hidden = hide || _sSkinMode >= 1;
+    _padKey.hidden = !((_padMode == 2 || _padMode == 3) && !_padPeek);
+    if (_sGlassBox) _sGlassBox.hidden = _sSkinMode >= 1 || ([self padHidden] && !bag);   // the glass box: covered by the image skin; hidden while the pad is, except in the inventory, whose glass keys live in it
     [self refresh];
 }
 - (void)padTick {
@@ -744,6 +807,8 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         CGFloat kd = d * 0.67; _skinKnob.bounds = CGRectMake(0, 0, kd, kd); _skinKnob.position = hc;
         for (int i = 0; i < SKIN_N; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width * silkArtScale(k_skin[i].art); CGPoint c = skinCenter(i, b);
             _skinBtn[i].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
+        for (int j = 0; j < BAG_N; j++) { CGFloat dd = k_bag[j].r * 2 * b.size.width * bagArtScale(); CGPoint c = bagCenter(j, b);
+            _bagBtn[j].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
         if (_skipKey) { CGPoint c = skinCenter(5, b); CGFloat dd = k_skin[5].r * 2 * b.size.width; _skipKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Skip medallion at the Bind key's place, at its size
         if (_padKey) { CGPoint c = skinCenter(7, b); CGFloat dd = k_skin[7].r * 2 * b.size.width; _padKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Pad medallion at the eye key's place, at its size
         if (_sGlassBox) {
@@ -752,6 +817,11 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
                 setPath(_sWash[i], circlePath(c, r));
                 if (_sLabel[i]) placeLabel(_sLabel[i], c, r * 1.02);
                 else if (_sSym[i]) setPath(_sSym[i], k_skin[i].grp == SK_TOGGLE ? circlePath(c, r * 0.20) : symPath(c, r, k_skin[i].bit == B_PLUS)); }
+            for (int j = 0; j < BAG_N; j++) if (_bGlass[j]) { CGFloat r = k_bag[j].r * b.size.width; CGPoint c = bagCenter(j, b);
+                _bGlass[j].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); _bGlass[j].layer.cornerRadius = r;
+                setPath(_bWash[j], circlePath(c, r));
+                if (_bLabel[j]) placeLabel(_bLabel[j], c, r * 1.02);
+                else if (_bSym[j]) setPath(_bSym[j], triPath(c, r * 0.44, k_bag[j].dir)); }
             _sStick.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d); _sStick.layer.cornerRadius = d / 2;
             CGFloat kd2 = d * 0.44; _sKnob.bounds = CGRectMake(0, 0, kd2, kd2); _sKnob.layer.cornerRadius = kd2 / 2; _sKnob.center = hc;   // the Hades glass knob's fraction: a solid disc at the medallion's 0.67 reads far bigger than the art, whose cap sits inside transparent margins
         }
@@ -809,25 +879,38 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             if (k_skin[i].grp == SK_TOGGLE) { UIImage *p = _skillOff ? skinPressedImage(i) : nil;
                 _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
                 _skinBtn[i].opacity = p ? 1.0 : (_skillOff ? 0.45 : 1.0); _skinBtn[i].transform = CATransform3DIdentity; continue; }
-            _skinBtn[i].hidden = [self padHidden] || (_skillOff && k_skin[i].grp == SK_SKILL);
+            _skinBtn[i].hidden = [self padHidden] || _padMode == 4 || (_skillOff && k_skin[i].grp == SK_SKILL);
             BOOL on = (_btnBits >> k_skin[i].bit) & 1;
             UIImage *p = on ? skinPressedImage(i) : nil;
             _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
             _skinBtn[i].opacity = 1.0;
             _skinBtn[i].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
+        if (_sSkinMode) for (int j = 0; j < BAG_N; j++) {   // the bag keys, shown only in the inventory, press like skin keys: the _p art and a dip while held
+            _bagBtn[j].hidden = _padMode != 4;
+            BOOL on = (_btnBits >> k_bag[j].bit) & 1;
+            UIImage *p = on ? bagPressedImage(j) : nil;
+            _bagBtn[j].contents = (id)(p ? p : skinImage(k_bag[j].art)).CGImage;
+            _bagBtn[j].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
         CGFloat ol = hypot(o.x, o.y), maxO = 0.30 * [self stickR:0];
         if (ol > maxO) { o.x *= maxO / ol; o.y *= maxO / ol; }
         _skinKnob.position = CGPointMake(h.x + o.x, h.y + o.y); _skinKnob.opacity = _stick[0] ? 1.0 : 0.95;
         if (!_sSkinMode) {   // the glass controls: a key's wash lit while it is pressed (the eye's while the skill keys are hidden), the skill discs hidden with the eye off, the knob following the touch
             for (int i = 0; i < SKIN_N; i++) { if (!_sWash[i]) continue;
                 _sWash[i].opacity = (k_skin[i].grp == SK_TOGGLE ? _skillOff : ((_btnBits >> k_skin[i].bit) & 1)) ? 0.35 : 0;
-                BOOL hid = [self padHidden] || (_skillOff && k_skin[i].grp == SK_SKILL);   // the whole key hides, letter and symbol with the disc: the glyph layers live in the overlay, not in the disc view
+                BOOL hid = [self padHidden] || _padMode == 4 || (_skillOff && k_skin[i].grp == SK_SKILL);   // the whole key hides, letter and symbol with the disc: the glyph layers live in the overlay, not in the disc view
                 if (_sGlass[i]) _sGlass[i].hidden = hid;
                 if (_sLabel[i]) _sLabel[i].hidden = hid;
                 if (_sSym[i]) _sSym[i].hidden = hid;
                 _sWash[i].hidden = hid; }
             _sKnob.center = CGPointMake(h.x + o.x, h.y + o.y);
-            _sStick.hidden = _sKnob.hidden = [self padHidden];
+            _sStick.hidden = _sKnob.hidden = [self padHidden] || _padMode == 4;
+            for (int j = 0; j < BAG_N; j++) { if (!_bWash[j]) continue;   // the bag keys as glass: shown only in the inventory, each key's wash lit while it is held
+                _bWash[j].opacity = ((_btnBits >> k_bag[j].bit) & 1) ? 0.35 : 0;
+                BOOL hid = _padMode != 4;
+                if (_bGlass[j]) _bGlass[j].hidden = hid;
+                if (_bLabel[j]) _bLabel[j].hidden = hid;
+                if (_bSym[j]) _bSym[j].hidden = hid;
+                _bWash[j].hidden = hid; }
         }
         if (_skipKey && !_skipKey.hidden) { BOOL on = (_btnBits >> B_A) & 1;   // the Skip key presses like a skin key: A's bit swaps in its _p art and it dips (without _p art it only dips)
             UIImage *p = on ? namedPressedImage("skip") : nil;
