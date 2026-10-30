@@ -105,6 +105,8 @@ static void *pad_mode_main(void *arg) {
         const void *um = pad_static(base, lay->ui_class, 0x10);
         int gs = gm ? *(const int32_t *)((const uint8_t *)gm + 0x20) : -1;
         int us = um ? *(const int32_t *)((const uint8_t *)um + 0x64) : -1;
+        static int pgs = -2, pus = -2;   // state probe: log the raw game/UI states whenever either changes (read-only)
+        if (gs != pgs || us != pus) { pgs = gs; pus = us; LOG("[pad] state gs=%d us=%d", gs, us); }
         if (gs >= 0 && gs <= 7 && us >= 0 && us <= 6) {   // a state outside its range means the layout does not fit: never hide
             if (gs == 7 || us == 3) {
                 mode = 2;
