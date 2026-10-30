@@ -71,7 +71,10 @@ uint64_t dm_input_samples(void) { return (uint64_t)atomic_load(&g_sampling); }
 // 6 = loading states), its input handler at +0xa8, whose skip mode at +0x84 is 0 or 1 while the cutscene can be skipped;
 // UIManager's instance at statics +0x10, its UI state at +0x64 (3 = a cutscene, 2 = loading); the hero's instance at its own
 // class's statics +0x8, with the byte at +0x8ac set while the inventory is open (the two state enums do not change for it), which
-// with game state 4 (playing) is mode 4, the bag. An instance counts only while the
+// with game state 4 (playing) is mode 4, the bag. The hero also carries the inventory's current tab as a u32 at +0x278 (0 items,
+// 1 crests, 2 quests, 3 journal, 4 map; its neighbours sit still while only it steps with the tab, found by a wide dump across
+// all five tabs; it keeps its last value while the inventory is closed), published through dm_pad_tab for the bag layout's X
+// key, which shows on the crests tab only. An instance counts only while the
 // native object behind it lives (the pointer at +0x10). Fail-safe throughout: a class not ready, a null link, or a state value
 // outside its range reads as mode 0 (play), so a layout that does not fit the build can never hide the pad
 typedef struct { const char *build; uint64_t game_class, ui_class, player_class; } pad_layout_t;
@@ -79,17 +82,7 @@ static const pad_layout_t k_pad_layouts[] = {
     { "fc9ea4ccc955d5799f37752b2d730b31", 0x7e14880, 0x7e195b8, 0x7e176b0 },   // Hollow Knight: Silksong, the build in its game.tsv
 };
 static _Atomic int g_pad_mode;
-// TEMPORARY tab probe (delete in the next build): dump one instance's bytes
-// to the log in the memory-diff probe's format, 32 bytes a line
-static void pad_probe_dump(const char *tag, int n, const char *obj, const uint8_t *inst, uint32_t size) {
-    LOG("[pad] dump tag=%s n=%d phase=0 obj=%s", tag, n, obj);
-    char line[160];
-    for (uint32_t off = 0; off < size; off += 32) {
-        int w = snprintf(line, sizeof line, "[pad] +0x%03x:", off);
-        for (int i = 0; i < 32; i++) w += snprintf(line + w, (size_t)((int)sizeof line - w), " %02x", inst[off + i]);
-        LOG("%s", line);
-    }
-}
+static _Atomic int g_pad_tab;   // the inventory's current tab (dm_pad_tab): -1 until the watcher first reads the hero
 static const void *pad_static(const uint8_t *base, uint64_t slot, uint64_t inst_off) {
     const void *klass = *(const void *const *)(base + slot);
     if (!klass || ((uintptr_t)klass & 7)) return NULL;
@@ -115,12 +108,6 @@ static void *pad_mode_main(void *arg) {
     int bag_on = !be || atoi(be);
     if (!bag_on) LOG("[pad] bag mode off (DM_PAD_BAG=0)");
     int cur = -1;
-    // TEMPORARY tab probe (delete in the next build): a rising edge on Minus, B, L or R arms one wide dump of all
-    // three instances 600 ms later (gm 0x1000, um 0x1400, pl 0x1000), to find the field that names the inventory's
-    // current tab -- the earlier probe's ranges (pl 0x800-0x900, gm/um 0x000-0x800) are byte-identical across tabs.
-    static const struct { uint64_t bit; const char *tag; } k_probe_keys[] = {
-        { DM_BTN_MINUS, "MINUS" }, { DM_BTN_B, "B" }, { DM_BTN_L, "L" }, { DM_BTN_R, "R" } };
-    uint64_t pprev = 0; int pcount = 0, pticks = -1; const char *ptag = NULL;
     for (;;) {
         int mode = 0;
         const void *gm = pad_static(base, lay->game_class, 0x8);
@@ -131,6 +118,10 @@ static void *pad_mode_main(void *arg) {
         if (gs != pgs || us != pus) { pgs = gs; pus = us; LOG("[pad] state gs=%d us=%d", gs, us); }
         const void *pl = pad_static(base, lay->player_class, 0x8);   // the hero: the byte at +0x8ac is set while the inventory is open
         int inv = pl ? *(const uint8_t *)((const uint8_t *)pl + 0x8ac) : -1;   // -1 when the hero does not resolve: no bag, never a bag by accident
+        int tab = pl ? *(const int32_t *)((const uint8_t *)pl + 0x278) : -1;   // the inventory's current tab, on the same hero (keeps its last value while the inventory is closed)
+        if (tab < 0 || tab > 4) tab = -1;   // a value outside the tab range means the layout does not fit: unknown, and the front end shows the bag's X key rather than hiding it on a guess
+        static int ptab = -2;
+        if (tab != ptab) { ptab = tab; atomic_store(&g_pad_tab, tab); LOG("[pad] tab %d", tab); }
         if (gs >= 0 && gs <= 7 && us >= 0 && us <= 6) {   // a state outside its range means the layout does not fit: never hide
             if (gs == 7 || us == 3) {
                 mode = 2;
@@ -140,37 +131,24 @@ static void *pad_mode_main(void *arg) {
             else if (bag_on && gs == 4 && inv == 1) mode = 4;   // the inventory: both enums stay at play while it is open, only the hero's byte tells
         }
         if (mode != cur) { cur = mode; atomic_store(&g_pad_mode, mode); LOG("[pad] mode %d (%s)", mode, mode == 4 ? "bag" : mode == 3 ? "cutscene, skippable" : mode == 2 ? "cutscene" : mode == 1 ? "loading" : "play"); }
-        {   // TEMPORARY tab probe (delete in the next build): poll player 1's buttons (the same three sources shake_note reads)
-            uint64_t btns = atomic_load(&g_btn) | atomic_load(&g_sc_btn) | atomic_load(&g_pad_btn[0]);
-            uint64_t rose = btns & ~pprev; pprev = btns;
-            if (pticks < 0 && pcount < 40)
-                for (unsigned k = 0; k < sizeof k_probe_keys / sizeof *k_probe_keys; k++)
-                    if (rose & k_probe_keys[k].bit) { ptag = k_probe_keys[k].tag; pticks = 6; break; }   // fires 6 ticks (600 ms) later, once the tab switch has settled
-            if (pticks > 0 && --pticks == 0) {
-                pcount++;
-                const struct { const char *obj; const void *inst; uint32_t size; } objs[3] = {
-                    { "gm", pad_static(base, lay->game_class, 0x8), 0x1000 },
-                    { "um", pad_static(base, lay->ui_class, 0x10), 0x1400 },
-                    { "pl", pad_static(base, lay->player_class, 0x8), 0x1000 } };
-                for (int o = 0; o < 3; o++)
-                    if (objs[o].inst) pad_probe_dump(ptag, pcount, objs[o].obj, (const uint8_t *)objs[o].inst, objs[o].size);
-                    else LOG("[pad] dump skipped %s", objs[o].obj);
-                pticks = -1;
-            }
-        }
         struct timespec ts = { 0, 100000000 }; nanosleep(&ts, NULL);
     }
     return NULL;
 }
 static void pad_mode_start(void) {
+    atomic_store(&g_pad_tab, -1);   // unknown until the watcher reads the hero (it may never start: then the tab stays unknown)
     const char *e = getenv("DM_PAD_SKIN");   // the reader exists for the pad skin only: without it no thread starts and the mode stays 0
     if (!e || !atoi(e)) return;
     pthread_t th; if (!pthread_create(&th, NULL, pad_mode_main, NULL)) pthread_detach(th);
 }
+static pthread_once_t pad_mode_once = PTHREAD_ONCE_INIT;
 int dm_pad_mode(void) {
-    static pthread_once_t once = PTHREAD_ONCE_INIT;
-    pthread_once(&once, pad_mode_start);
+    pthread_once(&pad_mode_once, pad_mode_start);
     return atomic_load(&g_pad_mode);
+}
+int dm_pad_tab(void) {
+    pthread_once(&pad_mode_once, pad_mode_start);
+    return atomic_load(&g_pad_tab);
 }
 // DM_KEYS scripted input (for tests): "seconds:key[+key][~hold seconds][*count/interval seconds],...", e.g. "8:A,12:A,15:Down~0.5,16:A+B,40:A*80/2" (A every 2 s from 40 s on, 80 times). Key names A B X Y LS RS L R ZL ZR (plus the sticks LLeft LUp LRight LDown and RLeft RUp RRight RDown) Plus Minus Left Up Right Down, left stick LLeft LUp LRight LDown,
 //   L<x>/<y> and R<x>/<y> = a stick tilted part way (each -1 to 1, y up: a cursor that a full tilt sweeps past its target), T<x>x<y> = a touch at normalized picture coordinates (origin top left) for the hold time, and Shake = the controller shaken for the hold time (at least one whole shake);
