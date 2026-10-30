@@ -201,15 +201,17 @@ static UIImage *namedPressedImage(const char *name) {   // the pressed-state art
 // (the stick and its disc go away), X / A / B in a column at the right, and L / R alone at the top, for the inventory's
 // tabs. The layout is the measured one approved on the inventory's own screenshot (1564x720, the 19.5:9 frame): each
 // side's keys centre in the black bar between the inventory's white frame and the screen edge, the two groups share one
-// horizontal line (y 0.6389), and B sits at the combat bottom row's own height. Centres and radii follow the k_skin
+// horizontal line (y 0.6389), and B sits at the combat bottom row's own height. The D-pad cross was widened after the
+// first on-device pass: bigger keys (r 0.0248), the vertical pair spread further apart (72 in the frame) and the
+// horizontal pair drawn closer in (52), the group centre unmoved. Centres and radii follow the k_skin
 // convention, skinCenter's stacking included but without the Up key's disc exemption (the four D-pad keys move as one
 // cross). The art is the bag set in dm/padskin and dm/padskin-badge, made by dm/ios/tools/make_bagskin.py; dir is
 // triPath's order, for the glass keys' arrows
 static const struct { const char *art; int bit; int dir; CGFloat x, y, r; } k_bag[] = {
-    {"bagdup",    B_UP,    1, 0.0716, 0.5583, 0.0214},
-    {"bagddown",  B_DOWN,  2, 0.0716, 0.7194, 0.0214},
-    {"bagdleft",  B_LEFT,  0, 0.0345, 0.6389, 0.0214},
-    {"bagdright", B_RIGHT, 3, 0.1087, 0.6389, 0.0214},
+    {"bagdup",    B_UP,    1, 0.0716, 0.5389, 0.0248},
+    {"bagddown",  B_DOWN,  2, 0.0716, 0.7389, 0.0248},
+    {"bagdleft",  B_LEFT,  0, 0.0384, 0.6389, 0.0248},
+    {"bagdright", B_RIGHT, 3, 0.1049, 0.6389, 0.0248},
     {"bagx",       B_X,    -1, 0.9316, 0.4556, 0.040},
     {"baga",       B_A,    -1, 0.9316, 0.6389, 0.040},
     {"bagb",       B_B,    -1, 0.9316, 0.8222, 0.040},
