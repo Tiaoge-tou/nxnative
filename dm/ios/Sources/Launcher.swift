@@ -166,7 +166,7 @@ private struct LauncherView: View {
         f.locale = Locale(identifier: "en_US_POSIX")   // fixed digits and separators, whatever the device's language
         f.timeZone = .current
         f.dateFormat = "yyyy.MM.dd HH:mm"
-        return f.string(from: Date(timeIntervalSince1970: stamp.doubleValue))
+        return "构建时间：" + f.string(from: Date(timeIntervalSince1970: stamp.doubleValue))
     }
 
     private func appIcon() -> UIImage? {
