@@ -31,6 +31,10 @@ int dm_pad_tab(void);
 // across all four pages); -1 while the UI manager does not resolve or the value sits outside the page range. At game state 1
 // the watcher turns page 1 into pad mode 5 and pages 3 and 20 into pad mode 6; every other page leaves the mode to the states
 int dm_pad_page(void);
+// The cheat VM's key mask (hle_cheats.c): every input source's button bits (0..15 in the enum above) ORed and the
+// merged axes' eight stick-direction bits (16..23), one flat bitset; no latches are consumed (the game's own reads
+// keep them). The NpadButton SL / SR bits (24 / 25) never fire: no input source of this host reports them
+uint64_t dm_cheats_keys(void);
 // Physical controller path (Mac / iOS GameController): stored separately from keyboard / touch and scripted input (DM_KEYS / DM_CTL); when the game reads player 1,
 // buttons are ORed bitwise and each stick axis takes whichever source is deflected more. All 0 when no controller is connected.
 // dm_pad_set is player 1's controller (DM_BTN_SHAKE counts there only); dm_pad_set_player sets player n + 1's, which the game reads on its own npad (hle_hid.c) while
