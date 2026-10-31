@@ -21,30 +21,30 @@ private struct CloudSavesSection: View {
     var body: some View {
         Section {
             HStack {
-                Text("Cloud saves")
+                Text("云存档")
                 Spacer()
-                Text(folder.isEmpty ? "Off" : (folder as NSString).lastPathComponent)
+                Text(folder.isEmpty ? "关" : (folder as NSString).lastPathComponent)
                     .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
-            Button(folder.isEmpty ? "Choose a folder in iCloud Drive…" : "Choose a different folder…") { picking = true }
+            Button(folder.isEmpty ? "选择 iCloud Drive 中的文件夹…" : "选择其他文件夹…") { picking = true }
             if !folder.isEmpty {
-                Button("Turn off cloud saves", role: .destructive) {
+                Button("关闭云存档", role: .destructive) {
                     dm_clear_cloud_saves(); refresh(); note = ""
                 }
             }
         } footer: {
             Text(note.isEmpty
-                 ? "Choose a folder in iCloud Drive, and the same one in the Mac app's Cloud saves. The save comes in when the game starts and goes out after each save; a save that is replaced is kept in save-backups."
+                 ? "在 iCloud Drive 中选择一个文件夹，并在 Mac 应用的云存档中选择同一个。存档会在游戏启动时同步进来，并在每次存档后同步出去；被替换掉的存档会保留在 save-backups 中。"
                  : note)
         }
         .sheet(isPresented: $picking) {
             DocumentPicker(types: [.folder]) { url in
                 picking = false
                 if dm_store_cloud_saves(url) {
-                    note = "Saved. The game uses this folder when you press Play."
+                    note = "已保存。按下「开始游戏」后，游戏将使用此文件夹。"
                     refresh()
                 } else {
-                    note = "That folder could not be remembered — try a different one."
+                    note = "无法记住该文件夹——请换一个试试。"
                 }
             } onCancel: { picking = false }
         }
@@ -55,7 +55,7 @@ private struct CloudSavesSection: View {
         var stale: ObjCBool = false
         folder = dm_cloud_saves_path(&stale) ?? ""
         if stale.boolValue && folder.isEmpty {
-            note = "The folder you chose before is no longer readable (the app was signed differently). Please choose it again."
+            note = "之前选择的文件夹已无法读取（应用的签名已变更）。请重新选择。"
         }
     }
 }
@@ -107,7 +107,7 @@ private struct LauncherView: View {
                     }
                     Text((info("CFBundleDisplayName") as? String) ?? "Game")
                         .font(.title.weight(.bold)).multilineTextAlignment(.center)
-                    Text("Version \((info("CFBundleShortVersionString") as? String) ?? "")")
+                    Text("版本 \((info("CFBundleShortVersionString") as? String) ?? "")")
                         .font(.callout).foregroundStyle(.secondary)
                     playButton
                 }
@@ -152,7 +152,7 @@ private struct LauncherView: View {
     }
 
     @ViewBuilder var playButton: some View {
-        let button = Button(action: play) { Text("Play").font(.title3.weight(.semibold)).frame(maxWidth: 220) }.controlSize(.large)
+        let button = Button(action: play) { Text("开始游戏").font(.title3.weight(.semibold)).frame(maxWidth: 220) }.controlSize(.large)
         if #available(iOS 26.0, *) { button.buttonStyle(.glassProminent) } else { button.buttonStyle(.borderedProminent) }
     }
 
