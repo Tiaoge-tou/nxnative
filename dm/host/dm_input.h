@@ -27,9 +27,13 @@ int dm_pad_mode(void);
 // keeps its last value while the inventory is closed). The bag layout's X key shows only on the crests tab; an unknown tab shows it
 int dm_pad_tab(void);
 // The UI manager's current page for the same pad (hle_hid.c, the same watcher): 1 = the title screen, 2 = options, 3 = the
-// controller page, 20 = the key-binding page, read from the UI manager's own field (the game and UI state enums sit at 1/1
-// across all four pages); -1 while the UI manager does not resolve or the value sits outside the page range. At game state 1
-// the watcher turns page 1 into pad mode 5 and pages 3 and 20 into pad mode 6; every other page leaves the mode to the states
+// controller page, 6 = the save select, 7 = sound, 12 = game options, 13 = achievements, 19 = extras, 20 = the key-binding
+// page, read from the UI manager's own field (the game and UI state enums sit at 1/1 across all of them); -1 until the
+// watcher first reads the UI manager (no mode is published before that, so the pad stays hidden), and -1 while it does
+// not resolve or the value sits outside the page range. At game state 1 the watcher turns pages 1, 2, 3, 6, 7, 12 and 19
+// into pad mode 5, page 13 into pad mode 7 and page 20 into pad mode 6; at game state 5 (the pause: 17 = its menu, 10 =
+// its save-and-quit confirm, and an options branch that reuses the title branch's page values) page 20 alone turns into
+// pad mode 6 and every other page into pad mode 5; every other page at game state 1 leaves the mode to the states
 int dm_pad_page(void);
 // The cheat VM's key mask (hle_cheats.c): every input source's button bits (0..15 in the enum above) ORed and the
 // merged axes' eight stick-direction bits (16..23), one flat bitset; no latches are consumed (the game's own reads
