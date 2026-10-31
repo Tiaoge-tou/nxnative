@@ -241,12 +241,14 @@ static UIImage *bagPressedImage(int i) {   // the pressed-state art (<art>_p) fo
 static CGFloat bagArtScale(void) {   // every bag key ships a badge version (its disc offset in the larger canvas, no medallion below it), so the badge choice grows the layer as a badged key's
     return silkSkinMode() == 2 ? SILK_BADGE_SCALE : 1.0;
 }
-// ---- Title and settings layouts (pad modes 5 and 6) ----
+// ---- Title and settings layouts (pad modes 5, 6 and 7) ----
 // On the menu pages (mode 5: the title screen and the options branch's pages -- options, the save
-// select, sound, game options) the combat pad gives way to the stick and two letter keys: A at the jump
+// select, sound, game options, extras -- and, while the game is paused, the pause menu, its
+// save-and-quit confirm and its own options branch) the combat pad gives way to the stick and two letter keys: A at the jump
 // key's seat sending A, B at the dash key's seat sending B -- the seats and their order are the player's
 // (A left, B right) -- so the menus take the stick and a confirm / back pair and nothing else covers the
-// menu art. On the controller pages (mode 6: the game's controller diagram and its key-binding page)
+// menu art. On the achievements page (mode 7) only B of the pair shows, at its own seat: the list
+// scrolls on the stick and B is the page's only way out. On the controller pages (mode 6: the game's controller diagram and its key-binding page)
 // every key shows at its own seat as its letter instead of its icon, the skill keys included, so each key
 // names the button it sends while the binding page is worked; the eye hides there (every key shows
 // anyway, so it has nothing to toggle, and its seat takes no touch) and the Up key stays invisible, as
@@ -379,7 +381,7 @@ static void pads_start(void);   // Physical controllers, below
     CALayer *_skinDisc, *_skinKnob;                // the skin's stick disc and its knob (the knob follows the touch)
     CALayer *_skinBtn[SKIN_N];                     // the skin's keys, in k_skin order
     CALayer *_letBtn[SKIN_N];                      // the skin keys' letter layers (pad mode 6), in k_skin order (nil where a key keeps its icon)
-    CALayer *_titleBtn[TITLE_N];                   // the title screen's letter keys (pad mode 5), in k_title order
+    CALayer *_titleBtn[TITLE_N];                   // the title screen's letter keys (pad modes 5 and 7), in k_title order
     CALayer *_bagBtn[BAG_N];                       // the bag layout's keys (pad mode 4), in k_bag order
     UIView *_bGlass[BAG_N];                        // the bag keys as glass discs (the glass skin choice)
     CAShapeLayer *_bWash[BAG_N];                   // a white wash over a bag glass disc, lit while its key is pressed
@@ -601,9 +603,10 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         if (dist(p, c) <= k_bag[j].r * b.size.width * 1.35) return j; }
     return -1;
 }
-- (int)titleBtnAt:(CGPoint)p {   // title mode: the title letter key under the point, or -1
+- (int)titleBtnAt:(CGPoint)p {   // title mode: the title letter key under the point, or -1 (on the achievements page B alone takes the touch: the A seat is dead there)
     CGRect b = self.bounds;
     for (int j = 0; j < TITLE_N; j++) {
+        if (_padMode == 7 && k_title[j].bit != B_B) continue;
         CGPoint c = titleCenter(j, b);
         if (dist(p, c) <= k_title[j].r * b.size.width * 1.35) return j; }
     return -1;
@@ -714,9 +717,9 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
             if ((_padMode == 2 || _padMode == 3) && !_padPeek && dist(p, skinCenter(7, self.bounds)) <= k_skin[7].r * self.bounds.size.width * 1.35) { _padPeek = YES; [self applyPadMode]; continue; }   // the Pad recall key: the pad comes back for the rest of the cutscene
             if (_padMode == 3 && !_padPeek && dist(p, skinCenter(5, self.bounds)) <= k_skin[5].r * self.bounds.size.width * 1.35) { [_owner setObject:@(C_BTN | (uint64_t)B_A << 8) forKey:t]; continue; }   // the Skip key: A, through the usual input path
             if (_padMode == 4) { int bb = [self bagBtnAt:p]; if (bb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_bag[bb].bit << 8) forKey:t]; continue; } game |= [self gameBegin:t]; continue; }   // the bag layout: its nine keys take the touch (no stick: the disc is gone); every other touch is the game's
-            if (_padMode == 5) { int tb = [self titleBtnAt:p]; if (tb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_title[tb].bit << 8) forKey:t]; continue; }
+            if (_padMode == 5 || _padMode == 7) { int tb = [self titleBtnAt:p]; if (tb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_title[tb].bit << 8) forKey:t]; continue; }
                 if (!_stick[0] && dist(p, self.stickHome) <= [self stickR:0] * K_STICK_GRAB) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p; continue; }
-                game |= [self gameBegin:t]; continue; }   // the title screen: the stick and its two letter keys take the touch; every other touch is the game's
+                game |= [self gameBegin:t]; continue; }   // the menu pages (and the achievements page, B alone through titleBtnAt): the stick and its letter keys take the touch; every other touch is the game's
             if ([self padHidden]) { game |= [self gameBegin:t]; continue; }   // hidden for a cutscene or a load: the touch is the game's
             int sb = [self skinBtnAt:p];
             if (sb >= 0 && k_skin[sb].grp == SK_TOGGLE) { _skillOff = !_skillOff; [self refresh]; continue; }   // the eye key only flips the skill keys' visibility
@@ -780,15 +783,16 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 // inventory lasts — the stick disc and knob included — and closing the inventory restores the pad exactly as it was.
 // Inside the inventory the bag's X key follows the game's own current tab (dm_pad_tab): it serves the crests tab alone,
 // so it hides on the other tabs and comes back with the crests; while the tab reads unknown it stays shown
-// Modes 5 (the menu pages) and 6 (the controller pages) are not hidings either: the menu pages keep the stick and
-// its two letter keys (k_title), the controller pages keep every key at its seat with its letter in place of its icon
+// Modes 5 (the menu pages, and the pause with its options branch), 6 (the controller pages) and 7 (the
+// achievements page) are not hidings either: the menu pages keep the stick and
+// its two letter keys (k_title), the achievements page keeps the stick and B alone (k_title's second key), the controller pages keep every key at its seat with its letter in place of its icon
 // (the let* layers, the glass skin's own labels), the skill keys' eye gate aside, so the key-binding page can be worked.
 // Before the watcher publishes its first mode the mode reads -1 and the whole pad is hidden: the game is still loading
-- (BOOL)padHidden { return _padMode != 0 && _padMode != 5 && _padMode != 6 && !_padPeek; }   // play and the two menu layouts show their own keys; every other mode hides the combat pad, the unpublished -1 with them
+- (BOOL)padHidden { return _padMode != 0 && _padMode != 5 && _padMode != 6 && _padMode != 7 && !_padPeek; }   // play and the menu layouts show their own keys; every other mode hides the combat pad, the unpublished -1 with them
 - (BOOL)bagXShown { int t = dm_pad_tab(); return t < 0 || t == 1; }   // the bag's X key serves the crests tab alone: shown on that tab, and while the tab is unknown (the hero unread or a value out of range) -- never hidden on a guess
 - (BOOL)skinKeyHidden:(int)i {   // skin key i's icon layer in the current mode: the one rule applyPadMode and refresh share
     if (!_sSkinMode) return YES;   // the glass choice draws its own discs; the image layers stay hidden under it
-    if ([self padHidden] || _padMode == 4 || _padMode == 5) return YES;
+    if ([self padHidden] || _padMode == 4 || _padMode == 5 || _padMode == 7) return YES;
     if (_padMode == 6) { if (k_skin[i].grp == SK_TOGGLE) return YES; return silkLetter(i) != nil; }   // the controller pages: the letter layer takes the icon's place, and the eye hides outright (every key shows there anyway, so it has nothing to toggle)
     return _skillOff && k_skin[i].grp == SK_SKILL;
 }
@@ -798,13 +802,13 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     _skinDisc.hidden = hide || !_sSkinMode; _skinKnob.hidden = hide || !_sSkinMode;   // the title and controller pages keep the stick: it hides only with the pad (padHidden) or for the bag
     for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = [self skinKeyHidden:i];
     for (int i = 0; i < SKIN_N; i++) if (_letBtn[i]) _letBtn[i].hidden = _padMode != 6 || !_sSkinMode;
-    for (int j = 0; j < TITLE_N; j++) _titleBtn[j].hidden = _padMode != 5 || !_sSkinMode;
+    for (int j = 0; j < TITLE_N; j++) _titleBtn[j].hidden = !((_padMode == 5) || (_padMode == 7 && k_title[j].bit == B_B)) || !_sSkinMode;   // the achievements page shows B's layer alone
     for (int j = 0; j < BAG_N; j++) _bagBtn[j].hidden = !bag || !_sSkinMode || (j == BAG_X && ![self bagXShown]);
     _skipKey.hidden = !(_padMode == 3 && !_padPeek);   // the cutscene keys are drawn medallions in every skin mode, the glass choice included: the glass pad yields their places (its box hides below, each glass key in refresh, both with padHidden)
     _padKey.hidden = !((_padMode == 2 || _padMode == 3) && !_padPeek);
     if (_sGlassBox) _sGlassBox.hidden = _sSkinMode >= 1 || ([self padHidden] && !bag);   // the glass box: covered by the image skin; hidden while the pad is, except in the inventory, whose glass keys live in it
-    if (_sLabel[1]) _sLabel[1].string = _padMode == 5 ? @"A" : silkGlyph(1);   // the glass title keys: the jump and dash seats' discs, relabelled A and B while the title screen is up (silkGlyph restores them with the mode)
-    if (_sLabel[2]) _sLabel[2].string = _padMode == 5 ? @"B" : silkGlyph(2);
+    if (_sLabel[1]) _sLabel[1].string = _padMode == 5 ? @"A" : silkGlyph(1);   // the glass title keys: the jump and dash seats' discs, relabelled A and B while a menu page is up (silkGlyph restores them with the mode)
+    if (_sLabel[2]) _sLabel[2].string = (_padMode == 5 || _padMode == 7) ? @"B" : silkGlyph(2);   // the achievements page keeps the dash seat's disc as B alone
     [self refresh];
 }
 - (void)padTick {
@@ -979,8 +983,8 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             UIImage *p = on ? namedPressedImage(silkLetter(i)) : nil;
             _letBtn[i].contents = (id)(p ? p : skinImage(silkLetter(i))).CGImage;
             _letBtn[i].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
-        if (_sSkinMode) for (int j = 0; j < TITLE_N; j++) {   // the title screen's letter keys, on the same terms
-            _titleBtn[j].hidden = _padMode != 5;
+        if (_sSkinMode) for (int j = 0; j < TITLE_N; j++) {   // the title screen's letter keys, on the same terms (the achievements page: B's layer alone)
+            _titleBtn[j].hidden = !((_padMode == 5) || (_padMode == 7 && k_title[j].bit == B_B));
             BOOL on = (_btnBits >> k_title[j].bit) & 1;
             UIImage *p = on ? namedPressedImage(k_title[j].art) : nil;
             _titleBtn[j].contents = (id)(p ? p : skinImage(k_title[j].art)).CGImage;
@@ -995,10 +999,11 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         _skinKnob.position = CGPointMake(h.x + ko.x, h.y + ko.y); _skinKnob.opacity = _stick[0] ? 1.0 : 0.95;
         if (!_sSkinMode) {   // the glass controls: a key's wash lit while it is pressed (the eye's while the skill keys are hidden), the skill discs hidden with the eye off, the knob following the touch
             for (int i = 0; i < SKIN_N; i++) { if (!_sWash[i]) continue;
-                int bit = _padMode == 5 ? (i == 1 ? B_A : B_B) : k_skin[i].bit;   // on the title screen the two shown discs send A and B, not their seats' own keys
+                int bit = _padMode == 5 ? (i == 1 ? B_A : B_B) : _padMode == 7 ? B_B : k_skin[i].bit;   // on the title screen the two shown discs send A and B, not their seats' own keys; on the achievements page the one shown disc sends B
                 _sWash[i].opacity = (k_skin[i].grp == SK_TOGGLE ? _skillOff : ((_btnBits >> bit) & 1)) ? 0.35 : 0;
                 BOOL hid = [self padHidden] || _padMode == 4 || (_skillOff && k_skin[i].grp == SK_SKILL && _padMode != 6) || (_padMode == 6 && k_skin[i].grp == SK_TOGGLE);   // the whole key hides, letter and symbol with the disc: the glyph layers live in the overlay, not in the disc view; the controller pages show the skill keys too, their letters being the point, and hide the eye, which has nothing to toggle there
                 if (_padMode == 5) hid = i != 1 && i != 2;   // the title screen: only the jump and dash seats' discs, relabelled A and B in applyPadMode
+                if (_padMode == 7) hid = i != 2;   // the achievements page: the dash seat's disc alone, as B
                 if (_sGlass[i]) _sGlass[i].hidden = hid;
                 if (_sLabel[i]) _sLabel[i].hidden = hid;
                 if (_sSym[i]) _sSym[i].hidden = hid;
