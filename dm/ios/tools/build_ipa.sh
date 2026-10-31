@@ -108,6 +108,8 @@ if [ -n "${DM_ENV_FILE:-}" ]; then cp "$DM_ENV_FILE" Gen/dm/env.txt || die "copy
 if [ -d "$IOS_SOURCE/padskin" ] && grep -q '^DM_PAD_SKIN=1' Gen/dm/env.txt 2>/dev/null; then mkdir -p Gen/dm/padskin && cp "$IOS_SOURCE"/padskin/*.png Gen/dm/padskin/ || die "copy padskin art"; fi
 # The padskin's letter-badge set (dm/ios/padskin-badge in this repo): the same gate; the launcher's DM_SILK_SKIN choice (2) picks it at runtime.
 if [ -d "$IOS_SOURCE/padskin-badge" ] && grep -q '^DM_PAD_SKIN=1' Gen/dm/env.txt 2>/dev/null; then mkdir -p Gen/dm/padskin-badge && cp "$IOS_SOURCE"/padskin-badge/*.png Gen/dm/padskin-badge/ || die "copy padskin badge art"; fi
+# The padskin's black-iron set (dm/ios/padskin-metal in this repo): the same gate; the launcher's DM_SILK_SKIN choice (3) picks it at runtime.
+if [ -d "$IOS_SOURCE/padskin-metal" ] && grep -q '^DM_PAD_SKIN=1' Gen/dm/env.txt 2>/dev/null; then mkdir -p Gen/dm/padskin-metal && cp "$IOS_SOURCE"/padskin-metal/*.png Gen/dm/padskin-metal/ || die "copy padskin metal art"; fi
 # Hades II button-skin art (dm/ios/hadesskin in this repo): bundled at DmIOS.app/dm/hadesskin only for DM_PAD_HADES builds
 # (DmGamepad.m; the launcher's DM_HADES_SKIN toggle picks it over the glass controls at runtime) — other games' IPAs do not carry it.
 if [ -d "$IOS_SOURCE/hadesskin" ] && grep -q '^DM_PAD_HADES=1' Gen/dm/env.txt 2>/dev/null; then mkdir -p Gen/dm/hadesskin && cp "$IOS_SOURCE"/hadesskin/*.png Gen/dm/hadesskin/ || die "copy hadesskin art"; fi

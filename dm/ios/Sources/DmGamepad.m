@@ -138,7 +138,7 @@ int dm_opmode(void);   // hle_oe.c: 0 = handheld
 // the session; they start hidden at each launch, the eye in its pressed state (the default the player asked
 // for, set explicitly in init).
 static BOOL padSkin(void) { const char *e = getenv("DM_PAD_SKIN"); return e && atoi(e); }
-static int silkSkinMode(void) { const char *e = getenv("DM_SILK_SKIN"); int m = e ? atoi(e) : 1; return m < 0 ? 0 : m > 2 ? 2 : m; }   // the launcher's button-skin choice for this pad: 0 glass, 1 the image skin, 2 the letter-badge skin (dm/padskin-badge); the image skin (1) when unset
+static int silkSkinMode(void) { const char *e = getenv("DM_SILK_SKIN"); int m = e ? atoi(e) : 1; return m < 0 ? 0 : m > 3 ? 3 : m; }   // the launcher's button-skin choice for this pad: 0 glass, 1 the image skin, 2 the letter-badge skin (dm/padskin-badge), 3 the black-iron skin (dm/padskin-metal, the plain set's canvas, so no badge scaling); the image skin (1) when unset
 enum { SK_ALWAYS, SK_SKILL, SK_TOGGLE };
 static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_skin[] = {
     {"attack",   B_Y,     SK_ALWAYS, 0.6919, 0.8198, 0.0389},   // needle attack
@@ -178,13 +178,13 @@ static NSString *silkGlyph(int i) {   // a skin key's glass glyph, by art name: 
     if (!strcmp(a, "clawline")) return @"ZL"; if (!strcmp(a, "map")) return @"L";
     return nil;
 }
-static UIImage *skinImage(const char *name) {   // a padskin image, loaded once and cached (nil when the file is absent); the badge mode reads the dm/padskin-badge set instead (same names, the mode is fixed for the process, so one cache serves both)
+static UIImage *skinImage(const char *name) {   // a padskin image, loaded once and cached (nil when the file is absent); the badge mode reads the dm/padskin-badge set and the black-iron mode the dm/padskin-metal set instead (same names, the mode is fixed for the process, so one cache serves all)
     static NSMutableDictionary *cache;
     if (!cache) cache = [[NSMutableDictionary alloc] init];
     NSString *key = [NSString stringWithUTF8String:name];
     UIImage *im = cache[key];
     if (!im) {
-        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:silkSkinMode() == 2 ? @"dm/padskin-badge/%s.png" : @"dm/padskin/%s.png", name]];
+        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:silkSkinMode() == 2 ? @"dm/padskin-badge/%s.png" : silkSkinMode() == 3 ? @"dm/padskin-metal/%s.png" : @"dm/padskin/%s.png", name]];
         im = [UIImage imageWithContentsOfFile:p];
         if (im) cache[key] = im;
     }
@@ -387,7 +387,7 @@ static void pads_start(void);   // Physical controllers, below
     CAShapeLayer *_bWash[BAG_N];                   // a white wash over a bag glass disc, lit while its key is pressed
     CATextLayer *_bLabel[BAG_N];                   // the bag glass keys' letters
     CAShapeLayer *_bSym[BAG_N];                    // the bag glass D-pad keys' triangles
-    int _sSkinMode;                                // DM_SILK_SKIN: 0 the glass controls below, 1 the image skin over them, 2 the letter-badge skin (the launcher's choice; 1 when unset)
+    int _sSkinMode;                                // DM_SILK_SKIN: 0 the glass controls below, 1 the image skin over them, 2 the letter-badge skin, 3 the black-iron skin (the launcher's choice; 1 when unset)
     UIView *_sGlassBox;                            // holds this pad's glass controls: the k_skin layout drawn as glass (Hades' arrangement, mirrored)
     UIView *_sGlass[SKIN_N];                       // one clear disc per skin key (nil for the Up key: invisible in both skins)
     CAShapeLayer *_sWash[SKIN_N];                  // a white wash over a glass disc, lit while its key is pressed

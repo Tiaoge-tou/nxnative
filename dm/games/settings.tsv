@@ -28,7 +28,7 @@ DM_RUMBLE	toggle	-	1	always	Controls	游戏震动	游戏内震动传到手机或
 DM_RUMBLE_GAIN	range	0:3:0.1	1.0	always	Controls	震动强度	与游戏内的震动设置叠加生效	needs=DM_RUMBLE=1
 DM_RUMBLE_MIN	range	0:0.9:0.05	0	always	Controls	震动下限		
 DM_HADES_SKIN	choice	0=默认,1=冥月,2=冥月（角标）	1	DM_GAME_DISPLAY_WIDE!=0	Controls	按键皮肤	默认 = 玻璃按键；冥月 = 图标皮肤；冥月（角标）= 带字母角标的图标皮肤	
-DM_SILK_SKIN	choice	0=默认,1=黑荆棘,2=黑荆棘（角标）	1	DM_GAME_PAD_SKIN_TOGGLE!=0	Controls	按键皮肤	默认 = 玻璃按键；黑荆棘 = 图标皮肤；黑荆棘（角标）= 带字母角标的图标皮肤	
+DM_SILK_SKIN	choice	0=默认,1=黑荆棘,2=黑荆棘（角标）,3=黑铁	1	DM_GAME_PAD_SKIN_TOGGLE!=0	Controls	按键皮肤	默认 = 玻璃按键；黑荆棘 = 图标皮肤；黑荆棘（角标）= 带字母角标的图标皮肤；黑铁 = 黑铁金属外框的图标皮肤	
 DM_PRESENT_SNAP	toggle	-	DM_GAME_PRESENT_SNAP	gfxapi:nvn	Performance	帧缓冲	可能减少卡顿；会增加显示延迟。	
 DM_PSO_MTL4	toggle	-	DM_GAME_PSO_MTL4|1	gfxapi:nvn	Performance	Metal 4 管线	保留管线档案；占用更多内存。	
 DM_PSO_PREBUILD	toggle	-	1	gfxapi:nvn	Performance	管线预构建	首次启动需等待几分钟，仅一次。	
