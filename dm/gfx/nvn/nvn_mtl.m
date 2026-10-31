@@ -4423,6 +4423,11 @@ void mtl_set_origin_lower_left(int on) { if (atomic_exchange(&g_origin_ll, on) !
 static int g_queue_origin_ll;   // SET_WINDOW_ORIGIN's raster flip is queue state, independent of later device-origin changes.
 void mtl_set_queue_origin_lower_left(int on) { g_queue_origin_ll = on != 0; }
 void mtl_set_tex_pool_n(int n) { g_tpool_n = n; }
+// DM_NVN_VIEW_IDENTITY=1: tex_by_id binds the base texture as-is instead of building the guest's texture view
+// (the format / levels / layers / target / swizzle / stencil reinterpretation below): a bisect for the iOS 26
+// green screen — if the picture is still green the view mechanism is cleared too, if it clears one of the view
+// properties is the culprit (DM_NVN_TEXINFO names the concrete views). Default off: behaviour is unchanged
+static int view_identity(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_NVN_VIEW_IDENTITY"); v = e && atoi(e); } return v; }
 static id<MTLTexture> tex_by_id(int tid) {   // Caller holds g_rmu
     if (g_tpool_n && tid >= g_tpool_n) { if (!g_stat_tex_oob++) MLOG("texture ID %d outside the pool (capacity %d) treated as an empty slot: reads 0", tid, g_tpool_n); return nil; }
     if (tid < 0 || tid >= g_ntreg || !g_treg[tid].ok) { RED_ONCE(10, "texture ID %d not registered", tid); return nil; }
@@ -4465,7 +4470,10 @@ static id<MTLTexture> tex_by_id(int tid) {   // Caller holds g_rmu
     int stv = want_st && base.pixelFormat == MTLPixelFormatDepth32Float_Stencil8;
     if (want_st && !stv)
         RED_ONCE(104, "stencil-mode texture view of Metal format %lu (texture ID %d): no stencil-only view, depth is read", (unsigned long)base.pixelFormat, tid);
-    if ((r.has_v && (r.v.set_format || r.v.set_levels || r.v.set_layers || r.v.set_target)) || need_sw || stv) {
+    if (view_identity() && ((r.has_v && (r.v.set_format || r.v.set_levels || r.v.set_layers || r.v.set_target)) || need_sw || stv)) {
+        static int noted; if (!noted) { noted = 1; MLOG("[nvn-mtl] view identity: base textures bound without views (DM_NVN_VIEW_IDENTITY)"); }
+    }
+    if (!view_identity() && ((r.has_v && (r.v.set_format || r.v.set_levels || r.v.set_layers || r.v.set_target)) || need_sw || stv)) {
         if (!r.has_v) memset(&r.v, 0, sizeof r.v);
         uint32_t pf = (uint32_t)base.pixelFormat; uint8_t swz[4];
         if (r.v.set_format && !(fmt_mtl_dev(r.v.format, &pf, swz) && pf)) pf = (uint32_t)base.pixelFormat;
