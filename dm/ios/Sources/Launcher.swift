@@ -110,6 +110,9 @@ private struct LauncherView: View {
                     Text("版本 \((info("CFBundleShortVersionString") as? String) ?? "")")
                         .font(.callout).foregroundStyle(.secondary)
                     playButton
+                    if let buildTime = buildTimeText {
+                        Text(buildTime).font(.callout).foregroundStyle(.secondary)
+                    }
                 }
                 .padding(16)
                 .frame(width: geometry.size.width / 3, height: geometry.size.height)
@@ -154,6 +157,16 @@ private struct LauncherView: View {
     @ViewBuilder var playButton: some View {
         let button = Button(action: play) { Text("开始游戏").font(.title3.weight(.semibold)).frame(maxWidth: 220) }.controlSize(.large)
         if #available(iOS 26.0, *) { button.buttonStyle(.glassProminent) } else { button.buttonStyle(.borderedProminent) }
+    }
+
+    /// When this app was built: DMBuildTime in Info.plist (seconds since the epoch, stamped by build_ipa.sh at the same place as DMCommit), rendered in the device's time zone; nil, and the line stays hidden, when the stamp is absent
+    private var buildTimeText: String? {
+        guard let stamp = info("DMBuildTime") as? NSNumber else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")   // fixed digits and separators, whatever the device's language
+        f.timeZone = .current
+        f.dateFormat = "yyyy.MM.dd HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: stamp.doubleValue))
     }
 
     private func appIcon() -> UIImage? {
