@@ -4523,7 +4523,15 @@ static inline __attribute__((always_inline)) void *tex_fast(int tid) {
 // on Metal a 2D array bound to a texture2d argument is a type mismatch with undefined reads (measured: one fixed value). Super Mario 3D World + Bowser's Fury creates its pre-lighting buffer as a one-layer 2D array
 // and the deferred lighting shader samples it as 2D: the ambient light of the whole picture became one colour, washed out white. Supports 2D array <-> 2D and 2D array -> cube / cube array; a 2D texture in a cube or 3D slot reads zero; any other mismatch is reported once. Caller holds g_rmu
 static id<MTLTexture> dummy_tex(int dtt, int dpf); static uint64_t g_dummy_tex_rid[8][4];
+// DM_NVN_TEXFIT_IDENTITY=1: tex_fit binds the texture as-is instead of building the type-fit view below: a bisect for the iOS 26
+// green screen — tex_by_id's views are already cleared (DM_NVN_VIEW_IDENTITY, still green) and tex_fit is the second view site, at
+// bind time, which PASSDUMP's guest-side fields cannot see. Default off: behaviour is unchanged
+static int texfit_identity(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_NVN_TEXFIT_IDENTITY"); v = e && atoi(e); } return v; }
 static id<MTLTexture> tex_fit(int tid, id<MTLTexture> t, MTLTextureType want, uint64_t *rid) {
+    if (texfit_identity()) {
+        static int noted; if (!noted) { noted = 1; MLOG("[nvn-mtl] tex fit identity: base textures bound without fit views (DM_NVN_TEXFIT_IDENTITY)"); }
+        *rid = t.gpuResourceID._impl; return t;
+    }
     MTLTextureType have = t.textureType; NSUInteger ns = 0;
     if (want == MTLTextureType2D && have == MTLTextureType2DArray) ns = 1;
     else if (want == MTLTextureType2DArray && have == MTLTextureType2D) ns = 1;
