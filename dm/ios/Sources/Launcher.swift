@@ -27,6 +27,18 @@ private struct CloudSavesSection: View {
                     .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Button(folder.isEmpty ? "选择 iCloud Drive 中的文件夹…" : "选择其他文件夹…") { picking = true }
+                // The sheet sits on the button, not on the Section: SwiftUI hands a Section's modifiers to every row, so one tap presented a picker per row and they invalidated each other (LNPANDY/NX2Apple#315).
+                .sheet(isPresented: $picking) {
+                    DocumentPicker(types: [.folder]) { url in
+                        picking = false
+                        if dm_store_cloud_saves(url) {
+                            note = "已保存。按下「开始游戏」后，游戏将使用此文件夹。"
+                            refresh()
+                        } else {
+                            note = "无法记住该文件夹——请换一个试试。"
+                        }
+                    } onCancel: { picking = false }
+                }
             if !folder.isEmpty {
                 Button("关闭云存档", role: .destructive) {
                     dm_clear_cloud_saves(); refresh(); note = ""
@@ -36,17 +48,6 @@ private struct CloudSavesSection: View {
             Text(note.isEmpty
                  ? "在 iCloud Drive 中选择一个文件夹，并在 Mac 应用的云存档中选择同一个。存档会在游戏启动时同步进来，并在每次存档后同步出去；被替换掉的存档会保留在 save-backups 中。"
                  : note)
-        }
-        .sheet(isPresented: $picking) {
-            DocumentPicker(types: [.folder]) { url in
-                picking = false
-                if dm_store_cloud_saves(url) {
-                    note = "已保存。按下「开始游戏」后，游戏将使用此文件夹。"
-                    refresh()
-                } else {
-                    note = "无法记住该文件夹——请换一个试试。"
-                }
-            } onCancel: { picking = false }
         }
         .onAppear(perform: refresh)
     }
