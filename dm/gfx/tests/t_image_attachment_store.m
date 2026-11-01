@@ -1,5 +1,5 @@
 // A loaded color attachment and a fragment image refer to the same array texture.
-// The image-only draw must survive pass end; raster outputs and clears still need their tile store.
+// The image-only draw must survive pass end; raster outputs and clears executed in that pass still need their tile store.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -36,7 +36,7 @@ static void run(int mode, int store_all) {
     if(mode==5) S.chmask.mask=0;
     NvProg *pr=prog_get(&programs[raster]);
     if(mode==6) pr->sh[1]->rf.color_known=0;
-    if(mode==2) { R.has_rt=1; R.rt=code.rt; R.clear_c[0]=1; R.cc[0]=MTLClearColorMake(0,1,0,1); }
+    if(mode==2||mode==8) { R.has_rt=1; R.rt=code.rt; R.clear_c[0]=1; R.cc[0]=MTLClearColorMake(0,1,0,1); }
     uint64_t discarded=g_sd_n_dead;
     if(mode==7) { // Exercise the store-decision boundary with a real DontCare-load pass (image-only production passes normally load).
         R.has_rt=1; R.rt=code.rt;
@@ -52,12 +52,13 @@ static void run(int mode, int store_all) {
         enc_r_pso(g_enc,ps); enc_r_viewport(g_enc,(MTLViewport){0,0,8,8,0,1});
         CHECK(encode_args((id<MTLCommandEncoder>)g_enc,fs,1,0),"DontCare-load image arguments encoded");
         udc_note_draw(tail,0); enc_r_draw(g_enc,MTLPrimitiveTypeTriangle,0,3);
-    } else mtl_exec((const uint8_t *)&code);
+    } else mtl_exec(mode==8 ? (const uint8_t *)&code.ph : (const uint8_t *)&code); // Keep mode 8's pending clear for the first draw; another SetRenderTargets would land it alone.
     if(mode==4) { code.pr=(p_bind_program){&programs[2],3}; mtl_exec((const uint8_t *)&code.ph); }
     if(mode==6) pr->sh[1]->rf.color_known=1;
     if(mode==3) clear_color_tri(&(p_clear_color){.index=0,.mask=15,.rgba={0,1,0,1}});
     rp_end();
     if(mode==7) CHECK(g_sd_n_dead==discarded,"DontCare-load attachment keeps its store");
+    if(mode==8) CHECK(g_sd_n_dead==discarded+1,"a clear landed before the draw pass does not store stale tiles over image writes");
     id<MTLBuffer> pixels=[g_dev newBufferWithLength:4096 options:MTLResourceStorageModeShared]; res_add(pixels);
     for (unsigned layer=0;layer<4;layer++)
         enc_b_copy_texture_buffer(blit(),tex_mtl(&color),layer,0,MTLOriginMake(0,0,0),MTLSizeMake(8,8,1),pixels,1024*layer,128,1024);
@@ -70,7 +71,7 @@ static void run(int mode, int store_all) {
         int good=1;
         for(unsigned y=0;y<8;y++) for(unsigned x=0;x<8;x++)
             good&=!memcmp((const uint8_t *)pixels.contents+1024*layer+128*y+4*x,want,4);
-        char label[160]; snprintf(label,sizeof label,"%s layer %u survives pass end (unwritten-store optimization %s)",mode==7?"DontCare load and image":mode==4?"earlier raster and later image":mode==5?"zero-mask image":mode==6?"unknown reflection and image":mode==2?"load clear and image":mode==3?"explicit clear and image":raster?"raster and image":"image-only",layer,store_all?"off":"on");
+        char label[160]; snprintf(label,sizeof label,"%s layer %u survives pass end (unwritten-store optimization %s)",mode==8?"separate clear and image":mode==7?"DontCare load and image":mode==4?"earlier raster and later image":mode==5?"zero-mask image":mode==6?"unknown reflection and image":mode==2?"load clear and image":mode==3?"explicit clear and image":raster?"raster and image":"image-only",layer,store_all?"off":"on");
         CHECK(good,label);
         printf("%s: first pixel %u,%u,%u,%u\n",label,((uint8_t *)pixels.contents)[1024*layer],((uint8_t *)pixels.contents)[1024*layer+1],((uint8_t *)pixels.contents)[1024*layer+2],((uint8_t *)pixels.contents)[1024*layer+3]);
     }
@@ -116,6 +117,6 @@ int main(void) { @autoreleasepool {
         serial_put(programs[mode].serial,pr);
     }
     mapping_checks(prog_get(&programs[0]));
-    for(int mode=0;mode<8;mode++) for(int off=0;off<2;off++) run(mode,off); // NOLINT(clang-analyzer-osx.cocoa.RetainCount): g_by_serial owns the fixture programs throughout GPU replay.
+    for(int mode=0;mode<9;mode++) for(int off=0;off<2;off++) run(mode,off); // NOLINT(clang-analyzer-osx.cocoa.RetainCount): g_by_serial owns the fixture programs throughout GPU replay.
     printf("IMAGE_ATTACHMENT_STORE %d checks, %d failed\n",checks,failed); return failed!=0;
 } }
