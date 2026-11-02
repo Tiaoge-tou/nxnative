@@ -260,8 +260,8 @@ static const struct { const char *art; int bit; int dir; CGFloat x, y, r; } k_ba
     {"bagdleft",  B_LEFT,  0, 0.0384, 0.6389, 0.0248},
     {"bagdright", B_RIGHT, 3, 0.1049, 0.6389, 0.0248},
     {"bagx",       B_X,    -1, 0.9316, 0.4605, 0.0390},
-    {"baga",       B_A,    -1, 0.9316, 0.6389, 0.0390},
-    {"bagb",       B_B,    -1, 0.9316, 0.8173, 0.0390},
+    {"baga",       B_A,    -1, 0.9316, 0.6390, 0.0390},
+    {"bagb",       B_B,    -1, 0.9316, 0.8172, 0.0390},
     {"bagl",       B_L,    -1, 0.0716, 0.075,  0.023},
     {"bagr",       B_R,    -1, 0.9316, 0.075,  0.023},
 };
@@ -303,8 +303,8 @@ static CGFloat bagArtScale(void) {   // every bag key ships a badge version (its
 // dm/padskin-badge, made by dm/ios/tools/make_bagskin.py; the glass skin needs no extra art, its keys'
 // glyphs (silkGlyph) being the same letters
 static const struct { const char *art; int bit; CGFloat x, y, r; } k_title[] = {
-    {"leta", B_A, 0.9316, 0.6389, 0.0390},   // A at the bag page's A seat (k_bag's baga row), so the pair stacks as the inventory's
-    {"letb", B_B, 0.9316, 0.8173, 0.0390},   // B at the bag page's B seat (k_bag's bagb row)
+    {"leta", B_A, 0.9316, 0.6390, 0.0390},   // A at the bag page's A seat (k_bag's baga row), so the pair stacks as the inventory's
+    {"letb", B_B, 0.9316, 0.8172, 0.0390},   // B at the bag page's B seat (k_bag's bagb row)
 };
 #define TITLE_N (int)(sizeof k_title / sizeof k_title[0])
 static CGPoint titleCenter(int j, CGRect b) {   // title key j's centre, in points (bagCenter's remap, so the pair lands on the bag page's seats on any screen)
@@ -326,14 +326,15 @@ static CGFloat letArtScale(void) {   // every letter key ships a badge version o
 // ---- Title D-pad (pad modes 5 and 7: the menu pages' direction keys, in place of the stick) ----
 // Four separate keys in the bag page's plus arrangement, but at equal pitch both ways (the bag
 // page's horizontal squeeze dodges the inventory's art; the menu pages have nothing to dodge):
-// on the reference screen each key is 120 across, the centres 220 apart in both axes (100 of
-// clear edge between neighbours), the cluster centred at (0.1493, 0.7222). dir is triPath's
-// order, for the glass keys' arrows; the art is the bag set's own D-pad art (bagd*)
+// on the reference screen each key is 125 across, the centres 135 apart in both axes (10 of
+// clear edge between neighbours, the title A / B pair's own gap), the cluster centred at
+// (0.1141, 0.7222). dir is triPath's order, for the glass keys' arrows; the art is the bag
+// set's own D-pad art (bagd*)
 static const struct { const char *art; int bit; int dir; CGFloat x, y, r; } k_tpad[] = {
-    {"bagdleft",  B_LEFT,  0, 0.0555, 0.7222, 0.0256},
-    {"bagdup",    B_UP,    1, 0.1493, 0.5185, 0.0256},
-    {"bagddown",  B_DOWN,  2, 0.1493, 0.9259, 0.0256},
-    {"bagdright", B_RIGHT, 3, 0.2432, 0.7222, 0.0256},
+    {"bagdleft",  B_LEFT,  0, 0.0565, 0.7222, 0.02666},
+    {"bagdup",    B_UP,    1, 0.1141, 0.5972, 0.02666},
+    {"bagddown",  B_DOWN,  2, 0.1141, 0.8472, 0.02666},
+    {"bagdright", B_RIGHT, 3, 0.1717, 0.7222, 0.02666},
 };
 #define TPAD_N (int)(sizeof k_tpad / sizeof k_tpad[0])
 static CGPoint tpadCenter(int j, CGRect b) {   // title D-pad key j's centre, in points (titleCenter's remap, so the cross keeps its shape on any screen)
@@ -441,10 +442,18 @@ static UIView *clearDisc(UIView *parent, CGFloat tint) {
 // directional lift to 0.092 at the top edge; nothing else on the face -- no specular blob, no sheen
 // wash, no arc line), a narrow bevel rim in the outer 5.3% of the radius lit from above (white to
 // 0.80 at the top, 0.10 at the sides, a dark glass edge, RGB 20/24/34, to 0.31 at the bottom) with
-// a dark hairline at the very edge (0.39), a faint refraction band (white 0.08) low inside the rim,
-// and a soft drop shadow under the disc (black 0.39, offset 2% of the diameter down). The four
-// sublayers (face gradient, conic rim gradient, refraction band, edge) are sized by
+// a dark hairline at the very edge (0.39), and a soft drop shadow under the disc (black 0.39,
+// offset 2% of the diameter down). There is no band inside the rim: a refraction band drawn low
+// inside it landed on the disc's upper half in the layer's coordinates and read as a grey stripe.
+// The three sublayers (face gradient, conic rim gradient, edge) are sized by
 // glassDiscLayout at the disc's radius; the view itself carries only the shadow.
+//
+// The image skins' art keeps its visible disc at 819 of its 880 canvas, while a drawn glass disc
+// fills its whole frame (and carries a shadow), so at the same table radius the glass keys read
+// larger than the image skins'. The glass BUTTON discs therefore draw at 0.93 of their nominal
+// radius, centred on the seat, their glyphs and press washes scaled with them; the stick and the
+// knob are not buttons and keep their own sizes.
+#define GLASS_BTN_F 0.93
 static UIView *glassDisc(UIView *parent) {
     UIView *v = [[UIView alloc] init];
     v.backgroundColor = UIColor.clearColor;
@@ -465,8 +474,6 @@ static UIView *glassDisc(UIView *parent) {
     rim.locations = @[@0, @0.25, @0.5, @0.75, @1];
     CAShapeLayer *rimMask = [CAShapeLayer layer]; rimMask.fillRule = kCAFillRuleEvenOdd; rim.mask = rimMask;
     [v.layer addSublayer:rim];
-    CAShapeLayer *refr = [CAShapeLayer layer]; refr.fillColor = [UIColor colorWithWhite:1 alpha:0.08].CGColor;
-    [v.layer addSublayer:refr];
     CAShapeLayer *edge = [CAShapeLayer layer]; edge.fillColor = nil;
     edge.strokeColor = [UIColor colorWithRed:22.0 / 255 green:26.0 / 255 blue:38.0 / 255 alpha:0.39].CGColor;
     [v.layer addSublayer:edge];
@@ -486,13 +493,7 @@ static void glassDiscLayout(UIView *v, CGFloat r) {   // size a glass disc's sub
     CGPathAddEllipseInRect(rp, NULL, b);
     CGPathAddEllipseInRect(rp, NULL, CGRectInset(b, 0.053 * r, 0.053 * r));   // the bevel band: the outer 5.3% of the radius
     CAShapeLayer *rimMask = (CAShapeLayer *)rim.mask; rimMask.frame = b; rimMask.path = rp; CGPathRelease(rp);
-    CAShapeLayer *refr = (CAShapeLayer *)v.layer.sublayers[2];
-    CGMutablePathRef xp = CGPathCreateMutable();   // the refraction band: between 0.74 and 0.90 of the radius, the lower half only (y is down: 0 to pi sweeps through the bottom)
-    CGPathAddArc(xp, NULL, r, r, 0.90 * r, 0, M_PI, true);
-    CGPathAddArc(xp, NULL, r, r, 0.74 * r, M_PI, 0, false);
-    CGPathCloseSubpath(xp);
-    refr.path = xp; CGPathRelease(xp);
-    CAShapeLayer *edge = (CAShapeLayer *)v.layer.sublayers[3];
+    CAShapeLayer *edge = (CAShapeLayer *)v.layer.sublayers[2];
     CGFloat lw = fmax(1, 0.014 * r); edge.lineWidth = lw;
     CGPathRef ep = CGPathCreateWithEllipseInRect(CGRectInset(b, lw / 2, lw / 2), NULL); edge.path = ep; CGPathRelease(ep);
     v.layer.shadowRadius = 0.12 * r; v.layer.shadowOffset = CGSizeMake(0, 0.04 * r);
@@ -1174,22 +1175,26 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             if (show) setPath(_editRing, circlePath([self editCentre:_editSel], [self editRadius:_editSel] * 1.12 + 4)); }
         if (_sGlassBox) {
             for (int i = 0; i < SKIN_N; i++) if (_sGlass[i]) { CGFloat r = skinR(i) * b.size.width; CGPoint c = skinCenter(i, b);
-                _sGlass[i].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); glassDiscLayout(_sGlass[i], r);
-                setPath(_sWash[i], circlePath(c, r));
-                if (_sLabel[i]) placeGlassLabel(_sLabel[i], c, silkGlyph(i).length > 1 ? r * 0.62 : r * 0.84);   // the restyle's glyph sizes: a single letter at 0.42 of the disc's height, a two-letter one at 0.31
-                else if (_sSym[i]) setPath(_sSym[i], k_skin[i].grp == SK_TOGGLE ? circlePath(c, r * 0.20) : symPath(c, r, k_skin[i].bit == B_PLUS));
-                if (k_skin[i].grp == SK_TOGGLE && _eyeLabel) placeGlassLabel(_eyeLabel, c, r * 0.62); }   // the eye's state word, sized as a two-letter glyph
+                CGFloat dr = r * GLASS_BTN_F;   // the drawn disc at 0.93 of the nominal radius (GLASS_BTN_F), its glyph and wash scaled with it
+                _sGlass[i].frame = CGRectMake(c.x - dr, c.y - dr, 2 * dr, 2 * dr); glassDiscLayout(_sGlass[i], dr);
+                setPath(_sWash[i], circlePath(c, dr));
+                if (_sLabel[i]) placeGlassLabel(_sLabel[i], c, silkGlyph(i).length > 1 ? dr * 0.62 : dr * 0.84);   // the restyle's glyph sizes: a single letter at 0.42 of the disc's height, a two-letter one at 0.31
+                else if (_sSym[i]) setPath(_sSym[i], k_skin[i].grp == SK_TOGGLE ? circlePath(c, dr * 0.20) : symPath(c, dr, k_skin[i].bit == B_PLUS));
+                if (k_skin[i].grp == SK_TOGGLE && _eyeLabel) placeGlassLabel(_eyeLabel, c, dr * 0.62); }   // the eye's state word, sized as a two-letter glyph
             for (int j = 0; j < BAG_N; j++) if (_bGlass[j]) { CGFloat r = k_bag[j].r * b.size.width; CGPoint c = bagCenter(j, b);
-                _bGlass[j].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); glassDiscLayout(_bGlass[j], r);
-                setPath(_bWash[j], circlePath(c, r));
-                if (_bLabel[j]) placeGlassLabel(_bLabel[j], c, r * 1.02);
-                else if (_bSym[j]) setPath(_bSym[j], triPath(c, r * 0.44, k_bag[j].dir)); }
+                CGFloat dr = r * GLASS_BTN_F;
+                _bGlass[j].frame = CGRectMake(c.x - dr, c.y - dr, 2 * dr, 2 * dr); glassDiscLayout(_bGlass[j], dr);
+                setPath(_bWash[j], circlePath(c, dr));
+                if (_bLabel[j]) placeGlassLabel(_bLabel[j], c, dr * 1.02);
+                else if (_bSym[j]) setPath(_bSym[j], triPath(c, dr * 0.44, k_bag[j].dir)); }
             for (int j = 0; j < TITLE_N; j++) { CGFloat r = k_title[j].r * b.size.width; CGPoint c = titleCenter(j, b);
-                _tGlass[j].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); glassDiscLayout(_tGlass[j], r);
-                setPath(_tWash[j], circlePath(c, r)); placeGlassLabel(_tLabel[j], c, r * 0.84); }
+                CGFloat dr = r * GLASS_BTN_F;
+                _tGlass[j].frame = CGRectMake(c.x - dr, c.y - dr, 2 * dr, 2 * dr); glassDiscLayout(_tGlass[j], dr);
+                setPath(_tWash[j], circlePath(c, dr)); placeGlassLabel(_tLabel[j], c, dr * 0.84); }
             for (int j = 0; j < TPAD_N; j++) { CGFloat r = k_tpad[j].r * b.size.width; CGPoint c = tpadCenter(j, b);
-                _pGlass[j].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); glassDiscLayout(_pGlass[j], r);
-                setPath(_pWash[j], circlePath(c, r)); setPath(_pSym[j], triPath(c, r * 0.44, k_tpad[j].dir)); }
+                CGFloat dr = r * GLASS_BTN_F;
+                _pGlass[j].frame = CGRectMake(c.x - dr, c.y - dr, 2 * dr, 2 * dr); glassDiscLayout(_pGlass[j], dr);
+                setPath(_pWash[j], circlePath(c, dr)); setPath(_pSym[j], triPath(c, dr * 0.44, k_tpad[j].dir)); }
             CGFloat gd = d * 0.9;   // the glass stick at 0.9 of the image skins' (its radius, stickR, scales the same way)
             _sStick.frame = CGRectMake(hc.x - gd / 2, hc.y - gd / 2, gd, gd); glassDiscLayout(_sStick, gd / 2);
             CGFloat kd2 = gd * 0.44; _sKnob.bounds = CGRectMake(0, 0, kd2, kd2); glassDiscLayout(_sKnob, kd2 / 2); _sKnob.center = hc;   // the Hades glass knob's fraction: a solid disc at the medallion's 0.67 reads far bigger than the art, whose cap sits inside transparent margins; here a glass cap of the same recipe
