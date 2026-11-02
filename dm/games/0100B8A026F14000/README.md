@@ -44,7 +44,7 @@ The [JP routes](../0100606026F12000/README.md#mac-routes) were used in #289: bri
 ## Found on this game
 
 - The existing [host Unreal allocator](../../../docs/reference/memory.md#unreals-fmallocbinned3-replaced-by-the-host-allocator) applies to this regional build at the verified offsets above.
-- The [bindless-phi fix](../../../docs/reference/shaders.md#bindless-reads-whose-handle-phi-also-carries-other-values) and [aligned buffer-texture copy](../../../docs/reference/rendering.md#buffer-textures-at-offsets-below-16-bytes) from #168 were confirmed on an iPhone Air in #304's particle-effect test.
+- The bindless-phi fix and [aligned buffer-texture copy](../../../docs/reference/rendering.md#buffer-textures-at-offsets-below-16-bytes) from #168 were confirmed on an iPhone Air in #304's particle-effect test.
 - **Resolved bring-up failures, #304:** the provisional 62 GB engine request failed guest-address-space reservation. A capped region without the regional allocator takeover then faulted at `main+0x1385c` (`sig=11`, address `0x30`) because the allocator vtable remained zero. Registering both the cut and takeover with the capped layout got past both failures.
 - **Historical image-extent abort, #304:** the old emulated image-atomic path compared a bound texture with the translator's guessed declaration and aborted in the first scene. Native Metal image atomics replaced that path in `f8642c48` ([image atomics](../../../docs/reference/shaders.md#image-atomics)); its old `imga_extent` patch is not carried here.
 
