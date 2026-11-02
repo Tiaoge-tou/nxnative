@@ -1284,12 +1284,13 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             _tpadBtn[j].contents = (id)(p ? p : skinImage(k_tpad[j].art)).CGImage;
             _tpadBtn[j].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
         // The drawn knobs' travel, each clamped on its own from the raw offset so the knob's rim just reaches its
-        // disc's rim at a full tilt: the image knob's visible cap is 0.0227 of the width across inside a disc face
-        // of radius 0.0720 (stickR is 0.074), so its centre may travel 0.67 of stickR; the glass knob is 0.44 of
-        // its disc across against the glass disc's own radius (stickR itself), so 0.56. The input path keeps the
+        // disc's inner wall at a full tilt: the image knob's visible cap measures 0.458 of its layer's radius and
+        // its layer is 0.67 of the disc's, so the cap is 0.307 of stickR, and the disc art's inner wall (its rim's
+        // inner edge) measures 0.700 of stickR, so its centre may travel 0.39 of stickR; the glass knob is 0.396 of
+        // its disc across against the glass disc's own radius (stickR itself), so 0.604. The input path keeps the
         // raw offset (knobOffset): only the drawing is clamped, each knob to its own reach
         CGFloat ol = hypot(o.x, o.y), sR = [self stickR:0];
-        CGPoint ko = o; CGFloat km = 0.67 * sR; if (ol > km) { ko.x *= km / ol; ko.y *= km / ol; }
+        CGPoint ko = o; CGFloat km = 0.39 * sR; if (ol > km) { ko.x *= km / ol; ko.y *= km / ol; }
         _skinKnob.position = CGPointMake(h.x + ko.x, h.y + ko.y); _skinKnob.opacity = _stick[0] ? 1.0 : 0.95;
         if (!_sSkinMode) {   // the glass controls: a key's wash lit while it is pressed (the eye's while the skill keys are hidden), the skill discs hidden with the eye off, the knob following the touch
             for (int i = 0; i < SKIN_N; i++) { if (!_sWash[i]) continue;
@@ -1301,7 +1302,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
                 if (_sSym[i]) _sSym[i].hidden = hid || k_skin[i].grp == SK_TOGGLE;   // the eye's drawn pupil dot is retired in the glass choice: its state word stands in its place
                 if (k_skin[i].grp == SK_TOGGLE && _eyeLabel) { _eyeLabel.hidden = hid; _eyeLabel.string = _skillOff ? @"OFF" : @"ON"; }
                 _sWash[i].hidden = hid; }
-            CGPoint go = o; CGFloat gm = 0.56 * sR; if (ol > gm) { go.x *= gm / ol; go.y *= gm / ol; }   // the glass knob's own reach (see the clamp above)
+            CGPoint go = o; CGFloat gm = 0.604 * sR; if (ol > gm) { go.x *= gm / ol; go.y *= gm / ol; }   // the glass knob's own reach (see the clamp above)
             _sKnob.center = CGPointMake(h.x + go.x, h.y + go.y);
             _sStick.hidden = _sKnob.hidden = [self padHidden] || _padMode == 4 || _padMode == 5 || _padMode == 7;   // the menu pages have the D-pad in the stick's place
             for (int j = 0; j < BAG_N; j++) { if (!_bWash[j]) continue;   // the bag keys as glass: shown only in the inventory, each key's wash lit while it is held (the X key only on the crests tab)
