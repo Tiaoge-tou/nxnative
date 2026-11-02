@@ -145,14 +145,14 @@ static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_sk
     {"attack",   B_Y,     SK_ALWAYS, 0.770, 0.770, 0.0416},   // needle attack: the fan's left key, level with the jump pivot
     {"jump",     B_B,     SK_ALWAYS, 0.898, 0.770, 0.0533},   // the fan's pivot at the bottom-right corner, the largest key
     {"dash",     B_ZR,    SK_ALWAYS, 0.808, 0.574, 0.0416},   // Swift Step: tap dashes, hold sprints; the fan's 45-degree key
-    {"tool",     B_R,     SK_SKILL,  0.675, 0.770, 0.0352},   // the equipped tool: the left column, level with attack; an eye-key skill key
-    {"needolin", B_X,     SK_SKILL,  0.898, 0.290, 0.0352},   // Needolin: above Bind, in its original round frame; an eye-key skill key (the eye hides it with the other two)
+    {"tool",     B_R,     SK_SKILL,  0.6055, 0.770, 0.0282},   // the equipped tool: in the attack row, leftmost of the three, a 45pt edge gap to Clawline at the reference size; an eye-key skill key
+    {"needolin", B_X,     SK_SKILL,  0.898, 0.2999, 0.0282},   // Needolin: above Bind in its column, a 45pt edge gap over it at the reference size, in its original round frame; an eye-key skill key (the eye hides it with the other two)
     {"bind",     B_A,     SK_ALWAYS, 0.898, 0.493, 0.0416},   // Bind (heal): the fan's top key, straight above the jump pivot
-    {"clawline", B_ZL,    SK_SKILL,  0.675, 0.574, 0.0352},   // Clawline: the left column, level with dash; an eye-key skill key
-    {"eye",      0,       SK_TOGGLE, 0.710, 0.082, 0.0224},   // show / hide the skill keys
-    {"map",      B_L,     SK_ALWAYS, 0.786, 0.082, 0.0224},   // quick map (the top row respaced evenly for four keys)
-    {"bag",      B_MINUS, SK_ALWAYS, 0.862, 0.082, 0.0224},   // inventory
-    {"pause",    B_PLUS,  SK_ALWAYS, 0.938, 0.082, 0.0224},
+    {"clawline", B_ZL,    SK_SKILL,  0.6810, 0.770, 0.0282},   // Clawline: in the attack row between tool and attack, a 45pt edge gap each side at the reference size; an eye-key skill key
+    {"eye",      0,       SK_TOGGLE, 0.670, 0.082, 0.0224},   // show / hide the skill keys
+    {"map",      B_L,     SK_ALWAYS, 0.746, 0.082, 0.0224},   // quick map (the top row respaced evenly for four keys, shifted left so pause shares the fan's column)
+    {"bag",      B_MINUS, SK_ALWAYS, 0.822, 0.082, 0.0224},   // inventory
+    {"pause",    B_PLUS,  SK_ALWAYS, 0.898, 0.082, 0.0224},   // in the fan's column, above Bind
     {"up",       B_UP,    SK_ALWAYS, 0.162, 0.628, 0.022},   // invisible in both skins (fully transparent art, no glass disc): the game's Up + R tool prompts read the D-pad, never the stick. On the stick disc's own up-pointing rim triangle, small enough that its hit circle (r x 1.35) stops well short of the disc centre, so a centred touch still starts the stick; skinCenter keeps it at raw fractions, anchored to the disc rather than the stacking cluster
 };
 #define SKIN_N (int)(sizeof k_skin / sizeof k_skin[0])
@@ -284,9 +284,10 @@ static CGFloat bagArtScale(void) {   // every bag key ships a badge version (its
 // ---- Title and settings layouts (pad modes 5, 6 and 7) ----
 // On the menu pages (mode 5: the title screen and the options branch's pages -- options, the save
 // select, sound, game options, extras -- and, while the game is paused, the pause menu, its
-// save-and-quit confirm and its own options branch) the combat pad gives way to the stick and two letter keys: A at the jump
-// key's seat sending A, B at the dash key's seat sending B -- the seats and their order are the player's
-// (A left, B right) -- so the menus take the stick and a confirm / back pair and nothing else covers the
+// save-and-quit confirm and its own options branch) the combat pad gives way to the stick and two letter keys, stacked in
+// the bag page's right-hand column: A at the bag page's A seat sending A, B at its B seat below it
+// sending B -- the pair renders exactly as the inventory's own A / B, so the menus take the stick
+// and a confirm / back pair and nothing else covers the
 // menu art. On the achievements page (mode 7) only B of the pair shows, at its own seat: the list
 // scrolls on the stick and B is the page's only way out. On the controller pages (mode 6: the game's controller diagram and its key-binding page)
 // every key shows at its own seat as its letter instead of its icon, the skill keys included, so each key
@@ -296,11 +297,11 @@ static CGFloat bagArtScale(void) {   // every bag key ships a badge version (its
 // dm/padskin-badge, made by dm/ios/tools/make_bagskin.py; the glass skin needs no extra art, its keys'
 // glyphs (silkGlyph) being the same letters
 static const struct { const char *art; int bit; CGFloat x, y, r; } k_title[] = {
-    {"leta", B_A, 0.785, 0.8198, 0.0390},   // A at the left seat (the jump key's), at the bag letters' radius
-    {"letb", B_B, 0.878, 0.8198, 0.0390},   // B at the right seat (the dash key's)
+    {"leta", B_A, 0.9316, 0.6389, 0.0390},   // A at the bag page's A seat (k_bag's baga row), so the pair stacks as the inventory's
+    {"letb", B_B, 0.9316, 0.8173, 0.0390},   // B at the bag page's B seat (k_bag's bagb row)
 };
 #define TITLE_N (int)(sizeof k_title / sizeof k_title[0])
-static CGPoint titleCenter(int j, CGRect b) {   // title key j's centre, in points (skinCenter's stacking: the seats sit on the combat bottom row)
+static CGPoint titleCenter(int j, CGRect b) {   // title key j's centre, in points (bagCenter's remap, so the pair lands on the bag page's seats on any screen)
     CGFloat y = k_title[j].y;
     if (y > 0.2) y = 0.822 + (y - 0.822) * SKIN_REF_HW * b.size.width / b.size.height;
     return CGPointMake(k_title[j].x * b.size.width, y * b.size.height);
