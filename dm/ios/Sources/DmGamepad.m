@@ -326,15 +326,15 @@ static CGFloat letArtScale(void) {   // every letter key ships a badge version o
 // ---- Title D-pad (pad modes 5 and 7: the menu pages' direction keys, in place of the stick) ----
 // Four separate keys in the bag page's plus arrangement, but at equal pitch both ways (the bag
 // page's horizontal squeeze dodges the inventory's art; the menu pages have nothing to dodge):
-// on the reference screen each key is 125 across, the centres 125 apart in both axes (the
-// four keys tangent, no clear edge between neighbours), the cluster centred at
-// (0.1099, 0.7222). dir is triPath's order, for the glass keys' arrows; the art is the bag
+// on the reference screen each key is 125 across, the centres 120 apart in both axes (the
+// four keys overlap by 5), the cluster centred at
+// (0.1077, 0.7222). dir is triPath's order, for the glass keys' arrows; the art is the bag
 // set's own D-pad art (bagd*)
 static const struct { const char *art; int bit; int dir; CGFloat x, y, r; } k_tpad[] = {
     {"bagdleft",  B_LEFT,  0, 0.0565, 0.7222, 0.02666},
-    {"bagdup",    B_UP,    1, 0.1099, 0.6065, 0.02666},
-    {"bagddown",  B_DOWN,  2, 0.1099, 0.8380, 0.02666},
-    {"bagdright", B_RIGHT, 3, 0.1632, 0.7222, 0.02666},
+    {"bagdup",    B_UP,    1, 0.1077, 0.6111, 0.02666},
+    {"bagddown",  B_DOWN,  2, 0.1077, 0.8333, 0.02666},
+    {"bagdright", B_RIGHT, 3, 0.1589, 0.7222, 0.02666},
 };
 #define TPAD_N (int)(sizeof k_tpad / sizeof k_tpad[0])
 static CGPoint tpadCenter(int j, CGRect b) {   // title D-pad key j's centre, in points (titleCenter's remap, so the cross keeps its shape on any screen)
@@ -441,7 +441,7 @@ static UIView *clearDisc(UIView *parent, CGFloat tint) {
 // A clear glass lens, matched to the approved preview: a near-clear face (white at 0.068 with a
 // directional lift to 0.092 at the top edge; nothing else on the face -- no specular blob, no sheen
 // wash, no arc line), a narrow bevel rim in the outer 5.3% of the radius lit from above (white to
-// 0.80 at the top, 0.10 at the sides, a dark glass edge, RGB 20/24/34, to 0.31 at the bottom) with
+// 0.45 at the top, 0.08 at the sides, a dark glass edge, RGB 20/24/34, to 0.31 at the bottom) with
 // a dark hairline at the very edge (0.39), and a soft drop shadow under the disc (black 0.39,
 // offset 2% of the diameter down). There is no band inside the rim: a refraction band drawn low
 // inside it landed on the disc's upper half in the layer's coordinates and read as a grey stripe.
@@ -466,11 +466,11 @@ static UIView *glassDisc(UIView *parent) {
     CAGradientLayer *rim = [CAGradientLayer layer];
     rim.type = kCAGradientLayerConic;
     rim.startPoint = CGPointMake(0.5, 0.5); rim.endPoint = CGPointMake(0.5, 0);   // location 0 at the top, sweeping clockwise: right side, bottom, left side
-    rim.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.80].CGColor,
-                   (id)[UIColor colorWithWhite:1 alpha:0.10].CGColor,
+    rim.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.45].CGColor,
+                   (id)[UIColor colorWithWhite:1 alpha:0.08].CGColor,
                    (id)[UIColor colorWithRed:20.0 / 255 green:24.0 / 255 blue:34.0 / 255 alpha:0.31].CGColor,
-                   (id)[UIColor colorWithWhite:1 alpha:0.10].CGColor,
-                   (id)[UIColor colorWithWhite:1 alpha:0.80].CGColor];
+                   (id)[UIColor colorWithWhite:1 alpha:0.08].CGColor,
+                   (id)[UIColor colorWithWhite:1 alpha:0.45].CGColor];
     rim.locations = @[@0, @0.25, @0.5, @0.75, @1];
     CAShapeLayer *rimMask = [CAShapeLayer layer]; rimMask.fillRule = kCAFillRuleEvenOdd; rim.mask = rimMask;
     [v.layer addSublayer:rim];
