@@ -30,7 +30,7 @@
 #include <stdatomic.h>
 
 enum { B_A = 0, B_B, B_X, B_Y, B_LS, B_RS, B_L, B_R, B_ZL, B_ZR, B_PLUS, B_MINUS, B_LEFT, B_UP, B_RIGHT, B_DOWN, B_N };
-enum { C_NONE = 0, C_STICK, C_DPAD, C_FACE, C_BTN, C_SWAP, C_GAME };   // which control a touch holds; C_GAME: none, the touch goes to the game's touch screen (finger slot << 8)
+enum { C_NONE = 0, C_STICK, C_DPAD, C_FACE, C_BTN, C_SWAP, C_GAME, C_EDIT };   // which control a touch holds; C_GAME: none, the touch goes to the game's touch screen (finger slot << 8); C_EDIT: the layout editor's drag (the key << 8)
 
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_touch_btn, g_shake_btn;
@@ -133,34 +133,74 @@ int dm_opmode(void);   // hle_oe.c: 0 = handheld
 // Drawn controls are replaced by image controls in the layout of the fan Android port of Silksong: a fixed stick disc
 // bottom-left (its medallion knob follows the touch), the action keys bottom-right in two rows, quick map / inventory / pause
 // small at the top-right. Centres are fractions of the whole screen, radii a fraction of its width. Keys follow the game's
-// Switch defaults. Two skill keys (grp SK_SKILL: tool, Clawline) do nothing until the skill is earned and
+// Switch defaults. Three skill keys (grp SK_SKILL: tool, Clawline, Needolin) do nothing until the skill is earned and
 // the pad cannot know the game's progress, so the eye key (grp SK_TOGGLE, not a game key) shows or hides them for
 // the session; they start hidden at each launch, the eye in its pressed state (the default the player asked
-// for, set explicitly in init).
+// for, set explicitly in init). Holding the eye key for 0.6s instead opens the layout editor: every key (and the
+// stick) can be dragged to a new centre and scaled, the result kept in NSUserDefaults (DmPadCustom, below).
 static BOOL padSkin(void) { const char *e = getenv("DM_PAD_SKIN"); return e && atoi(e); }
 static int silkSkinMode(void) { const char *e = getenv("DM_SILK_SKIN"); int m = e ? atoi(e) : 1; return m < 0 ? 0 : m > 3 ? 3 : m; }   // the launcher's button-skin choice for this pad: 0 glass, 1 the image skin, 2 the letter-badge skin (dm/padskin-badge), 3 the black-iron skin (dm/padskin-metal, the plain set's canvas, so no badge scaling); the image skin (1) when unset
 enum { SK_ALWAYS, SK_SKILL, SK_TOGGLE };
 static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_skin[] = {
-    {"attack",   B_Y,     SK_ALWAYS, 0.6919, 0.8198, 0.0389},   // needle attack
-    {"jump",     B_B,     SK_ALWAYS, 0.785, 0.8198, 0.0389},
-    {"dash",     B_ZR,    SK_ALWAYS, 0.878, 0.8198, 0.0389},   // Swift Step: tap dashes, hold sprints
-    {"tool",     B_R,     SK_SKILL,  0.878, 0.4156, 0.0389},   // the equipped tool: the cluster's top right (Needolin's old seat), in its original round frame; an eye-key skill key
-    {"needolin", B_X,     SK_ALWAYS, 0.783, 0.080, 0.023},   // Needolin: the top row, between map and bag, in the double-horn frame; always shown (not an eye-key skill key)
-    {"bind",     B_A,     SK_ALWAYS, 0.878, 0.6177, 0.0389},   // Bind (heal)
-    {"clawline", B_ZL,    SK_SKILL,  0.785, 0.6177, 0.0389},   // Clawline (swapped with Needolin)
-    {"eye",      0,       SK_TOGGLE, 0.672, 0.080, 0.023},   // show / hide the skill keys
-    {"map",      B_L,     SK_ALWAYS, 0.727, 0.080, 0.023},   // quick map (the top row respaced evenly for five keys)
-    {"bag",      B_MINUS, SK_ALWAYS, 0.838, 0.080, 0.023},   // inventory
-    {"pause",    B_PLUS,  SK_ALWAYS, 0.893, 0.080, 0.023},
+    {"attack",   B_Y,     SK_ALWAYS, 0.770, 0.770, 0.0416},   // needle attack: the fan's left key, level with the jump pivot
+    {"jump",     B_B,     SK_ALWAYS, 0.898, 0.770, 0.0533},   // the fan's pivot at the bottom-right corner, the largest key
+    {"dash",     B_ZR,    SK_ALWAYS, 0.808, 0.574, 0.0416},   // Swift Step: tap dashes, hold sprints; the fan's 45-degree key
+    {"tool",     B_R,     SK_SKILL,  0.675, 0.770, 0.0352},   // the equipped tool: the left column, level with attack; an eye-key skill key
+    {"needolin", B_X,     SK_SKILL,  0.898, 0.290, 0.0352},   // Needolin: above Bind, in its original round frame; an eye-key skill key (the eye hides it with the other two)
+    {"bind",     B_A,     SK_ALWAYS, 0.898, 0.493, 0.0416},   // Bind (heal): the fan's top key, straight above the jump pivot
+    {"clawline", B_ZL,    SK_SKILL,  0.675, 0.574, 0.0352},   // Clawline: the left column, level with dash; an eye-key skill key
+    {"eye",      0,       SK_TOGGLE, 0.710, 0.082, 0.0224},   // show / hide the skill keys
+    {"map",      B_L,     SK_ALWAYS, 0.786, 0.082, 0.0224},   // quick map (the top row respaced evenly for four keys)
+    {"bag",      B_MINUS, SK_ALWAYS, 0.862, 0.082, 0.0224},   // inventory
+    {"pause",    B_PLUS,  SK_ALWAYS, 0.938, 0.082, 0.0224},
     {"up",       B_UP,    SK_ALWAYS, 0.162, 0.628, 0.022},   // invisible in both skins (fully transparent art, no glass disc): the game's Up + R tool prompts read the D-pad, never the stick. On the stick disc's own up-pointing rim triangle, small enough that its hit circle (r x 1.35) stops well short of the disc centre, so a centred touch still starts the stick; skinCenter keeps it at raw fractions, anchored to the disc rather than the stacking cluster
 };
 #define SKIN_N (int)(sizeof k_skin / sizeof k_skin[0])
 #define SKIN_REF_HW 0.4615   // the screen the skin layout was measured on (19.5:9): its height as a fraction of its width
-static CGPoint skinCenter(int i, CGRect b) {   // the centre of skin key i, in points (the layout and the touch hit test share it)
+static CGPoint skinCenterRaw(int i, CGRect b) {   // the centre of skin key i from the table alone, in points (the layout and the touch hit test share it)
     CGFloat y = k_skin[i].y;
     if (y > 0.2 && k_skin[i].bit != B_UP)   // an action key: the rows stack up from the bottom row (y 0.822) in width fractions, so the cluster keeps its phone shape on any screen; the top row stays a height fraction (it hugs the top edge). The D-pad Up key is exempt: it is anchored to the stick disc, which sits at raw fractions
         y = 0.822 + (y - 0.822) * SKIN_REF_HW * b.size.width / b.size.height;
     return CGPointMake(k_skin[i].x * b.size.width, y * b.size.height);
+}
+// ---- Custom layout (the eye key's long-press editor) ----
+// The player can move every skin key (and the stick) and scale it between 0.6x and 1.6x; per key only the
+// centre's offset from the table (as screen fractions) and the size multiplier are kept, in NSUserDefaults
+// under DmPadCustom like DmPadLayout is, so an over-install keeps them and "restore defaults" is clearing the
+// key. skinCenter and skinR apply them, so the drawing, the hit test and the hit area all agree, in every skin
+// art set (the geometry is shared). The slot SKIN_N is the stick; the invisible Up key rides on it (its centre
+// and size follow the stick's), being anchored to the disc.
+static NSString *const k_custom_key = @"DmPadCustom";
+static CGFloat g_custDX[SKIN_N + 1], g_custDY[SKIN_N + 1], g_custS[SKIN_N + 1];
+static BOOL g_custReady;
+static void custLoad(void) {
+    if (g_custReady) return; g_custReady = YES;
+    for (int i = 0; i <= SKIN_N; i++) g_custS[i] = 1;
+    NSDictionary *d = [NSUserDefaults.standardUserDefaults dictionaryForKey:k_custom_key];
+    for (int i = 0; i <= SKIN_N; i++) {
+        NSDictionary *e = d[i == SKIN_N ? @"stick" : [NSString stringWithUTF8String:k_skin[i].art]];
+        if (!e) continue;
+        g_custDX[i] = [e[@"dx"] doubleValue]; g_custDY[i] = [e[@"dy"] doubleValue];
+        CGFloat s = [e[@"s"] doubleValue]; if (s >= 0.6 && s <= 1.6) g_custS[i] = s;
+    }
+}
+static void custSave(void) {
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    for (int i = 0; i <= SKIN_N; i++) if (g_custDX[i] || g_custDY[i] || g_custS[i] != 1)
+        d[i == SKIN_N ? @"stick" : [NSString stringWithUTF8String:k_skin[i].art]] = @{@"dx": @(g_custDX[i]), @"dy": @(g_custDY[i]), @"s": @(g_custS[i])};
+    [NSUserDefaults.standardUserDefaults setObject:d forKey:k_custom_key];
+}
+static int custSlot(int i) { return k_skin[i].bit == B_UP ? SKIN_N : i; }   // the Up key's slot is the stick's
+static CGFloat skinR(int i) { custLoad(); return k_skin[i].r * g_custS[custSlot(i)]; }   // skin key i's radius (a fraction of the width) with the player's size multiplier
+static CGPoint clampCentre(CGPoint c, CGFloat rp, CGRect b) {   // keep at least ~40% of the key (2 * rp across) on screen
+    CGFloat m = 0.2 * rp;
+    return CGPointMake(fmin(fmax(c.x, -m), b.size.width + m), fmin(fmax(c.y, -m), b.size.height + m));
+}
+static CGPoint skinCenter(int i, CGRect b) {   // the centre the pad draws and hit-tests at: the table's centre plus the player's custom offset
+    custLoad();
+    CGPoint c = skinCenterRaw(i, b); int s = custSlot(i);
+    c.x += g_custDX[s] * b.size.width; c.y += g_custDY[s] * b.size.height;
+    return clampCentre(c, skinR(i) * b.size.width, b);
 }
 #define SILK_BADGE_SCALE (1020.0 / 880.0)   // the badge set's canvas over the plain set's (the disc sits centred in the larger canvas, badge medallion below it)
 static BOOL silkBadged(const char *name) {   // the padskin keys the badge set bakes a letter medallion into: every k_skin art but the Up key (invisible in both skins, never badged); the eye carries its ON / OFF state word instead of a letter
@@ -395,6 +435,12 @@ static void pads_start(void);   // Physical controllers, below
     CAShapeLayer *_sSym[SKIN_N];                   // drawn glyphs: the - / + bars and the eye's pupil dot (text glyphs ride high, and an eye has no letter)
     UIView *_sStick, *_sKnob;                      // the glass stick disc and its knob
     BOOL _skillOff;                                // the skill keys (grp SK_SKILL) are hidden by the eye key
+    BOOL _editing;                                 // the layout editor is up (a long press on the eye key): the pad drives nothing, every key shows, drags rearrange it
+    int _editSel, _editItem;                       // the editor's selected key and the one being dragged (a k_skin index, SKIN_N = the stick, -1 = none)
+    UITouch *_editTouch; CGPoint _editGrab;        // the editor's drag in flight: its touch and where in the key it holds it
+    UITouch *_eyeTouch; CGPoint _eyePoint; NSTimer *_eyeTimer; BOOL _eyeFired, _eyeMoved;   // the eye key's touch, watched for the editor's long press (a drag of the key in the editor disarms it)
+    UIView *_editBar; UILabel *_editInfo; UIButton *_editMinus, *_editPlus, *_editReset, *_editDone;   // the editor's bar across the top: the selected key's size, its - / + steppers, restore defaults, done
+    CAShapeLayer *_editRing;                       // the ring around the editor's selected key
     CALayer *_skipKey, *_padKey;   // the cutscene keys: the skin's Skip medallion at the Bind key's place, its Pad medallion at the eye key's place (drawn in every skin mode, glass included)
     int _padMode; BOOL _padPeek;                   // the host's pad mode (hle_hid.c dm_pad_mode) and the player's recall of the pad for the rest of the mode
     int _padTab;                                   // the host's inventory tab (dm_pad_tab) as last polled: a change inside the inventory only re-runs refresh (the bag X key follows the crests tab)
@@ -460,6 +506,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             _skinDisc = imgLayer(_controls, "stick"); _skinDisc.opacity = 0.75;
             _skinKnob = imgLayer(_controls, "knob"); _skinKnob.opacity = 0.95;
             for (int i = 0; i < SKIN_N; i++) { _skinBtn[i] = imgLayer(_controls, k_skin[i].art); _skinBtn[i].opacity = 1.0; }
+            _editRing = shape(_controls); _editRing.fillColor = nil; _editRing.strokeColor = UIColor.whiteColor.CGColor; _editRing.lineWidth = 2; _editRing.shadowOpacity = 0; _editRing.hidden = YES;   // the layout editor's selection ring
             for (int i = 0; i < SKIN_N; i++) if (silkLetter(i)) { _letBtn[i] = imgLayer(_controls, silkLetter(i)); _letBtn[i].hidden = YES; }   // the controller pages' letter layers: applyPadMode shows each in its key's place
             for (int j = 0; j < TITLE_N; j++) { _titleBtn[j] = imgLayer(_controls, k_title[j].art); _titleBtn[j].hidden = YES; }   // the title screen's letter keys: applyPadMode shows them on the title screen
             for (int j = 0; j < BAG_N; j++) { _bagBtn[j] = imgLayer(_controls, k_bag[j].art); _bagBtn[j].hidden = YES; }   // the bag layout's keys: applyPadMode shows them while the inventory is open
@@ -491,6 +538,14 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             if (!_sSkinMode) { _skinDisc.hidden = YES; _skinKnob.hidden = YES; for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = YES; }
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _swap.hidden = YES; _swapLabel.hidden = YES; _ring.hidden = YES; _knob.hidden = YES;
+            _editBar = [[UIView alloc] initWithFrame:CGRectZero];   // the layout editor's bar: built once, shown only while editing (added last, above the glass box)
+            _editBar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55]; _editBar.layer.cornerRadius = 10; _editBar.hidden = YES;
+            [self addSubview:_editBar];
+            _editInfo = [[UILabel alloc] init]; _editInfo.textColor = UIColor.whiteColor; _editInfo.font = [UIFont systemFontOfSize:16]; [_editBar addSubview:_editInfo];
+            _editMinus = [self editButton:@"-" action:@selector(editMinusTapped)];
+            _editPlus = [self editButton:@"+" action:@selector(editPlusTapped)];
+            _editReset = [self editButton:[NSString stringWithUTF8String:"\xE6\x81\xA2\xE5\xA4\x8D\xE9\xBB\x98\xE8\xAE\xA4"] action:@selector(editResetTapped)];   // "restore defaults"
+            _editDone = [self editButton:[NSString stringWithUTF8String:"\xE5\xAE\x8C\xE6\x88\x90"] action:@selector(editDoneTapped)];   // "done"
             _padMode = dm_pad_mode(); _padTab = dm_pad_tab(); _padPage = dm_pad_page();   // the watcher's state as it stands: -1 (unpublished) until it derives its first mode
             [self applyPadMode];   // the pad starts in that state's own showing: hidden while the game loads to its title screen
         }
@@ -568,10 +623,12 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
     switch (b) { case B_A: return CGPointMake(c.x + g, c.y); case B_B: return CGPointMake(c.x, c.y + g); case B_X: return CGPointMake(c.x, c.y - g); default: return CGPointMake(c.x - g, c.y); } }
 - (CGPoint)stickHome {   // the left stick's ring centre; in skin mode the disc centre (a fraction of the whole screen)
     if (_hades) { CGRect b = self.bounds; return CGPointMake(0.168 * b.size.width, 0.664 * b.size.height); }
-    if (_skin) { CGRect b = self.bounds; return CGPointMake(0.162 * b.size.width, 0.742 * b.size.height); }
+    if (_skin) { CGRect b = self.bounds; custLoad();   // the skin's disc, plus the layout editor's custom offset for it
+        CGPoint c = CGPointMake((0.162 + g_custDX[SKIN_N]) * b.size.width, (0.742 + g_custDY[SKIN_N]) * b.size.height);
+        return clampCentre(c, [self stickR:0], b); }
     CGRect s = self.corner; return side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u); }
 - (CGPoint)stickCentre:(int)i { return i ? _rCentre : _hades && _stick[0] ? _lCentre : self.stickHome; }
-- (CGFloat)stickR:(int)i { if (_hades && !i) return 0.061 * self.bounds.size.width; if (_skin && !i) return 0.074 * self.bounds.size.width; return (i ? K_RSTICK_R : K_STICK_R) * self.u; }
+- (CGFloat)stickR:(int)i { if (_hades && !i) return 0.061 * self.bounds.size.width; if (_skin && !i) { custLoad(); return 0.074 * g_custS[SKIN_N] * self.bounds.size.width; } return (i ? K_RSTICK_R : K_STICK_R) * self.u; }
 - (BOOL)inRightArea:(CGPoint)p { CGRect b = self.bounds; return p.x >= CGRectGetMaxX(b) - b.size.width * K_RSWIPE; }
 - (CGPoint)dpadCenter { CGRect s = self.corner; CGFloat u = self.u; return side(s, 0, K_LOW_X * u, CGRectGetMaxY(s) - K_LOW_Y * u); }
 - (CGFloat)dpadR { return K_DPAD_R * self.u; }
@@ -592,7 +649,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     for (int i = 0; i < SKIN_N; i++) { if (_padMode != 6 && _skillOff && k_skin[i].grp == SK_SKILL) continue;
         if (_padMode == 6 && k_skin[i].grp == SK_TOGGLE) continue;
         CGPoint c = skinCenter(i, b);
-        if (dist(p, c) <= k_skin[i].r * b.size.width * 1.35) return i; }
+        if (dist(p, c) <= skinR(i) * b.size.width * 1.35) return i; }
     return -1;
 }
 - (int)bagBtnAt:(CGPoint)p {   // bag mode: the bag key under the point, or -1 (the X key takes no touch while it is hidden off the crests tab)
@@ -714,15 +771,21 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
             game |= [self gameBegin:t]; continue;
         }
         if (_skin) {   // skin mode: an image key, the disc (a fixed stick), else the game's touch screen
-            if ((_padMode == 2 || _padMode == 3) && !_padPeek && dist(p, skinCenter(7, self.bounds)) <= k_skin[7].r * self.bounds.size.width * 1.35) { _padPeek = YES; [self applyPadMode]; continue; }   // the Pad recall key: the pad comes back for the rest of the cutscene
-            if (_padMode == 3 && !_padPeek && dist(p, skinCenter(5, self.bounds)) <= k_skin[5].r * self.bounds.size.width * 1.35) { [_owner setObject:@(C_BTN | (uint64_t)B_A << 8) forKey:t]; continue; }   // the Skip key: A, through the usual input path
+            if (_editing) {   // the layout editor takes every touch: select a key (tap) and move it (drag); nothing reaches the game
+                int it = [self editItemAt:p];
+                if (it >= 0) { _editTouch = t; _editItem = it; _editSel = it; CGPoint c = [self editCentre:it]; _editGrab = CGPointMake(p.x - c.x, p.y - c.y); [_owner setObject:@(C_EDIT | (uint64_t)it << 8) forKey:t];
+                    if (it == 7) { _eyeTouch = t; _eyePoint = p; _eyeFired = NO; _eyeMoved = NO; [self armEyeTimer]; } }   // the eye key in the editor: a still hold leaves the editor (eyeLongPress), a drag just moves it
+                else _editSel = -1;
+                [self updateEditInfo]; [self setNeedsLayout]; continue; }
+            if ((_padMode == 2 || _padMode == 3) && !_padPeek && dist(p, skinCenter(7, self.bounds)) <= skinR(7) * self.bounds.size.width * 1.35) { _padPeek = YES; [self applyPadMode]; continue; }   // the Pad recall key: the pad comes back for the rest of the cutscene
+            if (_padMode == 3 && !_padPeek && dist(p, skinCenter(5, self.bounds)) <= skinR(5) * self.bounds.size.width * 1.35) { [_owner setObject:@(C_BTN | (uint64_t)B_A << 8) forKey:t]; continue; }   // the Skip key: A, through the usual input path
             if (_padMode == 4) { int bb = [self bagBtnAt:p]; if (bb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_bag[bb].bit << 8) forKey:t]; continue; } game |= [self gameBegin:t]; continue; }   // the bag layout: its nine keys take the touch (no stick: the disc is gone); every other touch is the game's
             if (_padMode == 5 || _padMode == 7) { int tb = [self titleBtnAt:p]; if (tb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_title[tb].bit << 8) forKey:t]; continue; }
                 if (!_stick[0] && dist(p, self.stickHome) <= [self stickR:0] * K_STICK_GRAB) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p; continue; }
                 game |= [self gameBegin:t]; continue; }   // the menu pages (and the achievements page, B alone through titleBtnAt): the stick and its letter keys take the touch; every other touch is the game's
             if ([self padHidden]) { game |= [self gameBegin:t]; continue; }   // hidden for a cutscene or a load: the touch is the game's
             int sb = [self skinBtnAt:p];
-            if (sb >= 0 && k_skin[sb].grp == SK_TOGGLE) { _skillOff = !_skillOff; [self refresh]; continue; }   // the eye key only flips the skill keys' visibility
+            if (sb >= 0 && k_skin[sb].grp == SK_TOGGLE) { _eyeTouch = t; _eyePoint = p; _eyeFired = NO; _eyeMoved = NO; [self armEyeTimer]; continue; }   // the eye key: a tap flips the skill keys' visibility when it lifts (endTouches); holding it for 0.6s opens the layout editor instead (eyeLongPress)
             if (sb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_skin[sb].bit << 8) forKey:t]; continue; }
             if (!_stick[0] && dist(p, self.stickHome) <= [self stickR:0] * K_STICK_GRAB) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p; continue; }
             game |= [self gameBegin:t]; continue;
@@ -749,7 +812,12 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     BOOL game = NO;
     for (UITouch *t in ts) {
         uint64_t v = [_owner objectForKey:t].unsignedLongLongValue; int c = (int)(v & 0xff); CGPoint p = [t locationInView:self];
-        if (c == C_FACE) [_faceOf setObject:@([self faceAt:p]) forKey:t];
+        if (t == _eyeTouch && dist(p, _eyePoint) > 12) { _eyeMoved = YES; [_eyeTimer invalidate]; _eyeTimer = nil; }   // the eye key's touch became a drag: no long press, and no tap when it lifts either
+        if (c == C_EDIT) { int it = (int)(v >> 8);   // the layout editor's drag: the item's centre follows the finger (clamped like skinCenter's), the offset from the table is what is kept
+            if (t == _editTouch && it == _editItem) { CGRect b = self.bounds; CGPoint raw = [self editRawCentre:it];
+                CGPoint want = clampCentre(CGPointMake(p.x - _editGrab.x, p.y - _editGrab.y), [self editRadius:it], b);
+                g_custDX[it] = (want.x - raw.x) / b.size.width; g_custDY[it] = (want.y - raw.y) / b.size.height; [self setNeedsLayout]; } }
+        else if (c == C_FACE) [_faceOf setObject:@([self faceAt:p]) forKey:t];
         else if (c == C_STICK) { _stickNow[v >> 8] = p;
             if ((v >> 8) == 1) { CGFloat d = dist(p, _rCentre), R = [self stickR:1];   // the right stick's centre follows a finger past its radius, so turning back responds at once
                 if (d > R) _rCentre = CGPointMake(p.x - (p.x - _rCentre.x) * R / d, p.y - (p.y - _rCentre.y) * R / d); } }
@@ -762,6 +830,10 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     BOOL swap = NO, game = NO;
     for (UITouch *t in ts) {
         uint64_t v = [_owner objectForKey:t].unsignedLongLongValue;
+        if (t == _eyeTouch) { [_eyeTimer invalidate]; _eyeTimer = nil; _eyeTouch = nil;   // the eye key's touch lifts: a plain tap (not a hold, not a drag, not in the editor) flips the skill keys' visibility
+            if (ended && !_eyeFired && !_eyeMoved && !_editing) { _skillOff = !_skillOff; [self refresh]; }
+            _eyeFired = NO; _eyeMoved = NO; }
+        if (t == _editTouch) { _editTouch = nil; _editItem = -1; custSave(); }   // the editor's drag ends: the offset is kept
         if (ended && (v & 0xff) == C_SWAP && [self inSwap:[t locationInView:self]]) swap = YES;   // layout button: counts only when released on the button
         if ((v & 0xff) == C_GAME && (v >> 8) < 16) { _game[v >> 8] = nil; game = YES; }
         [_owner removeObjectForKey:t]; [_faceOf removeObjectForKey:t]; for (int i = 0; i < 2; i++) if (t == _stick[i]) _stick[i] = nil;
@@ -772,7 +844,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:YES]; }
 - (void)touchesCancelled:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:NO]; }
-- (void)reset { [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [self pushGame]; [self recompute]; }
+- (void)reset { [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [_eyeTimer invalidate]; _eyeTimer = nil; _eyeTouch = nil; _editTouch = nil; _editItem = -1; [self pushGame]; [self recompute]; }
 // ---- Pad mode (skin mode): the host watches the game's state (hle_hid.c dm_pad_mode) and the pad hides while a cutscene or a load runs ----
 // Mode 1 (a load) hides the pad outright; modes 2 and 3 (a cutscene) show the Pad recall key at the eye key's place, and mode 3 (the
 // cutscene can be skipped) the Skip key at the Bind key's place. Recalling brings the whole pad back for the rest of the mode. While the
@@ -792,10 +864,60 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (BOOL)bagXShown { int t = dm_pad_tab(); return t < 0 || t == 1; }   // the bag's X key serves the crests tab alone: shown on that tab, and while the tab is unknown (the hero unread or a value out of range) -- never hidden on a guess
 - (BOOL)skinKeyHidden:(int)i {   // skin key i's icon layer in the current mode: the one rule applyPadMode and refresh share
     if (!_sSkinMode) return YES;   // the glass choice draws its own discs; the image layers stay hidden under it
+    if (_editing) return NO;   // the layout editor shows every key, the eye's hidden skill keys included
     if ([self padHidden] || _padMode == 4 || _padMode == 5 || _padMode == 7) return YES;
     if (_padMode == 6) { if (k_skin[i].grp == SK_TOGGLE) return YES; return silkLetter(i) != nil; }   // the controller pages: the letter layer takes the icon's place, and the eye hides outright (every key shows there anyway, so it has nothing to toggle)
     return _skillOff && k_skin[i].grp == SK_SKILL;
 }
+// ---- Layout editor (skin mode): a long press on the eye key rearranges the pad ----
+// While the editor is up the pad drives nothing: entering it releases every held touch (reset), its own
+// touches are taken by the editor branch of touchesBegan before any game path, and every key shows (the
+// eye's hidden skill keys dimmed, in the image skins) so they can be placed too. Changes are written to
+// NSUserDefaults as they are made, so leaving by Done or by another long press on the eye keeps them alike.
+- (UIButton *)editButton:(NSString *)title action:(SEL)sel {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+    [b setTitle:title forState:UIControlStateNormal]; [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    b.titleLabel.font = [UIFont systemFontOfSize:17]; b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.15]; b.layer.cornerRadius = 8;
+    [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside]; [_editBar addSubview:b]; return b;
+}
+- (void)setEditing:(BOOL)on {
+    if (!_skin || on == _editing) return;
+    _editing = on; _editSel = -1; _editItem = -1; _editTouch = nil;
+    if (on) [self reset];   // held touches end: nothing reaches the game while the pad is rearranged
+    _editBar.hidden = !on; _editRing.hidden = !on;
+    [self applyPadMode]; [self setNeedsLayout]; [self updateEditInfo];
+}
+- (void)armEyeTimer { [_eyeTimer invalidate]; _eyeTimer = [NSTimer scheduledTimerWithTimeInterval:0.6 target:self selector:@selector(eyeLongPress) userInfo:nil repeats:NO]; }
+- (void)eyeLongPress { if (_eyeTouch) { _eyeFired = YES; [self setEditing:!_editing]; } }   // holding the eye key toggles the layout editor; the touch's own lift then does nothing (endTouches checks _eyeFired)
+- (int)editItemAt:(CGPoint)p {   // the editor item under the point: a k_skin index, SKIN_N for the stick, or -1
+    CGRect b = self.bounds;
+    for (int i = 0; i < SKIN_N; i++) { if (k_skin[i].bit == B_UP) continue;   // the Up key rides on the stick: it is not edited on its own
+        if (dist(p, skinCenter(i, b)) <= fmax(skinR(i) * b.size.width * 1.35, 26)) return i; }
+    if (dist(p, self.stickHome) <= [self stickR:0] * 1.25) return SKIN_N;
+    return -1;
+}
+- (CGPoint)editCentre:(int)it { return it == SKIN_N ? self.stickHome : skinCenter(it, self.bounds); }
+- (CGPoint)editRawCentre:(int)it { CGRect b = self.bounds; return it == SKIN_N ? CGPointMake(0.162 * b.size.width, 0.742 * b.size.height) : skinCenterRaw(it, b); }
+- (CGFloat)editRadius:(int)it { return it == SKIN_N ? [self stickR:0] : skinR(it) * self.bounds.size.width; }
+- (void)updateEditInfo {
+    if (!_editInfo) return;
+    if (_editSel < 0) _editInfo.text = [NSString stringWithUTF8String:"\xE9\x80\x89\xE6\x8B\xA9\xE6\x8C\x89\xE9\x94\xAE"];   // "select a key"
+    else _editInfo.text = [NSString stringWithFormat:@"%s %.2fx", _editSel == SKIN_N ? "stick" : k_skin[_editSel].art, g_custS[_editSel]];
+    _editMinus.enabled = _editPlus.enabled = _editSel >= 0;
+    _editMinus.alpha = _editPlus.alpha = _editSel >= 0 ? 1 : 0.35;
+}
+- (void)editScaleBy:(CGFloat)d {
+    if (_editSel < 0) return;
+    g_custS[_editSel] = roundf(fmin(fmax(g_custS[_editSel] + d, 0.6f), 1.6f) * 20) / 20;
+    custSave(); [self setNeedsLayout]; [self updateEditInfo];
+}
+- (void)editMinusTapped { [self editScaleBy:-0.05]; }
+- (void)editPlusTapped { [self editScaleBy:0.05]; }
+- (void)editResetTapped {   // restore defaults: clear every custom value, live
+    for (int i = 0; i <= SKIN_N; i++) { g_custDX[i] = g_custDY[i] = 0; g_custS[i] = 1; }
+    custSave(); [self setNeedsLayout]; [self updateEditInfo]; [self refresh];
+}
+- (void)editDoneTapped { [self setEditing:NO]; }
 - (void)applyPadMode {
     BOOL bag = _padMode == 4;
     BOOL hide = [self padHidden] || bag;   // in the inventory the combat pad is gone either way; the bag layout replaces it
@@ -815,6 +937,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     int m = dm_pad_mode(), t = dm_pad_tab(), pg = dm_pad_page();
     if (m == _padMode && t == _padTab && pg == _padPage) return;
     if (m == _padMode) { _padTab = t; _padPage = pg; [self refresh]; return; }   // a tab or page switch inside one mode: no reset, only the showing follows
+    if (_editing) [self setEditing:NO];   // a mode change ends the edit: the pad it was rearranging gives way
     _padMode = m; _padTab = t; _padPage = pg; _padPeek = NO;
     [self reset];   // held touches end with the mode change: their keys may be hidden now
     [self applyPadMode];
@@ -884,21 +1007,26 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     _controls.frame = self.layer.bounds;
     if (_skin) {   // the skin's image controls, at fractions of the whole screen (k_skin); the drawn ones stay hidden
-        CGRect b = self.bounds; CGFloat d = 0.148 * b.size.width; CGPoint hc = self.stickHome;
+        CGRect b = self.bounds; custLoad(); CGFloat d = 0.148 * b.size.width * g_custS[SKIN_N]; CGPoint hc = self.stickHome;
         _skinDisc.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d);
         CGFloat kd = d * 0.67; _skinKnob.bounds = CGRectMake(0, 0, kd, kd); _skinKnob.position = hc;
-        for (int i = 0; i < SKIN_N; i++) { CGFloat dd = k_skin[i].r * 2 * b.size.width * silkArtScale(k_skin[i].art); CGPoint c = skinCenter(i, b);
+        for (int i = 0; i < SKIN_N; i++) { CGFloat dd = skinR(i) * 2 * b.size.width * silkArtScale(k_skin[i].art); CGPoint c = skinCenter(i, b);
             _skinBtn[i].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
-        for (int i = 0; i < SKIN_N; i++) if (_letBtn[i]) { CGFloat dd = k_skin[i].r * 2 * b.size.width * letArtScale(); CGPoint c = skinCenter(i, b);
+        for (int i = 0; i < SKIN_N; i++) if (_letBtn[i]) { CGFloat dd = skinR(i) * 2 * b.size.width * letArtScale(); CGPoint c = skinCenter(i, b);
             _letBtn[i].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // a letter layer sits exactly where its key's icon sits
         for (int j = 0; j < TITLE_N; j++) { CGFloat dd = k_title[j].r * 2 * b.size.width * letArtScale(); CGPoint c = titleCenter(j, b);
             _titleBtn[j].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
         for (int j = 0; j < BAG_N; j++) { CGFloat dd = k_bag[j].r * 2 * b.size.width * bagArtScale(); CGPoint c = bagCenter(j, b);
             _bagBtn[j].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
-        if (_skipKey) { CGPoint c = skinCenter(5, b); CGFloat dd = k_skin[5].r * 2 * b.size.width; _skipKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Skip medallion at the Bind key's place, at its size
-        if (_padKey) { CGPoint c = skinCenter(7, b); CGFloat dd = k_skin[7].r * 2 * b.size.width; _padKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Pad medallion at the eye key's place, at its size
+        if (_skipKey) { CGPoint c = skinCenter(5, b); CGFloat dd = skinR(5) * 2 * b.size.width; _skipKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Skip medallion at the Bind key's place, at its size
+        if (_padKey) { CGPoint c = skinCenter(7, b); CGFloat dd = skinR(7) * 2 * b.size.width; _padKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Pad medallion at the eye key's place, at its size
+        if (_editBar) { CGFloat bw = fmin(600, b.size.width - 16); _editBar.frame = CGRectMake((b.size.width - bw) / 2, self.safeAreaInsets.top + 6, bw, 46);
+            _editInfo.frame = CGRectMake(12, 0, 190, 46); _editMinus.frame = CGRectMake(212, 3, 40, 40); _editPlus.frame = CGRectMake(260, 3, 40, 40);
+            _editReset.frame = CGRectMake(bw - 200, 3, 96, 40); _editDone.frame = CGRectMake(bw - 96, 3, 88, 40); }
+        if (_editRing) { BOOL show = _editing && _editSel >= 0; _editRing.hidden = !show;
+            if (show) setPath(_editRing, circlePath([self editCentre:_editSel], [self editRadius:_editSel] * 1.12 + 4)); }
         if (_sGlassBox) {
-            for (int i = 0; i < SKIN_N; i++) if (_sGlass[i]) { CGFloat r = k_skin[i].r * b.size.width; CGPoint c = skinCenter(i, b);
+            for (int i = 0; i < SKIN_N; i++) if (_sGlass[i]) { CGFloat r = skinR(i) * b.size.width; CGPoint c = skinCenter(i, b);
                 _sGlass[i].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); _sGlass[i].layer.cornerRadius = r;
                 setPath(_sWash[i], circlePath(c, r));
                 if (_sLabel[i]) placeLabel(_sLabel[i], c, r * 0.81);   // a notch below the bag labels' r * 1.02 in the loop below: the letter set shrank a notch (make_bagskin's ink 305 against 383 before), and the glass glyphs are the same letters
@@ -969,7 +1097,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             BOOL on = (_btnBits >> k_skin[i].bit) & 1;
             UIImage *p = on ? skinPressedImage(i) : nil;
             _skinBtn[i].contents = (id)(p ? p : skinImage(k_skin[i].art)).CGImage;
-            _skinBtn[i].opacity = 1.0;
+            _skinBtn[i].opacity = (_editing && _skillOff && k_skin[i].grp == SK_SKILL) ? 0.45 : 1.0;   // in the editor the eye's hidden skill keys show dimmed: shown (the editor shows every key), but marked as the hidden ones
             _skinBtn[i].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
         if (_sSkinMode) for (int j = 0; j < BAG_N; j++) {   // the bag keys, shown only in the inventory, press like skin keys: the _p art and a dip while held (the X key only on the crests tab)
             _bagBtn[j].hidden = _padMode != 4 || (j == BAG_X && ![self bagXShown]);
@@ -1004,6 +1132,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
                 BOOL hid = [self padHidden] || _padMode == 4 || (_skillOff && k_skin[i].grp == SK_SKILL && _padMode != 6) || (_padMode == 6 && k_skin[i].grp == SK_TOGGLE);   // the whole key hides, letter and symbol with the disc: the glyph layers live in the overlay, not in the disc view; the controller pages show the skill keys too, their letters being the point, and hide the eye, which has nothing to toggle there
                 if (_padMode == 5) hid = i != 1 && i != 2;   // the title screen: only the jump and dash seats' discs, relabelled A and B in applyPadMode
                 if (_padMode == 7) hid = i != 2;   // the achievements page: the dash seat's disc alone, as B
+                if (_editing) hid = NO;   // the layout editor shows every glass disc too
                 if (_sGlass[i]) _sGlass[i].hidden = hid;
                 if (_sLabel[i]) _sLabel[i].hidden = hid;
                 if (_sSym[i]) _sSym[i].hidden = hid;
@@ -1121,7 +1250,7 @@ static BOOL pads_slotted(GCController *gone) {
     GCController *c = note.object, *gone = [note.name isEqual:GCControllerDidDisconnectNotification] ? c : nil;
     if (c && (!c.extendedGamepad || g_merge)) LOG("controller %s: %s%s", gone ? "disconnected" : "connected", pad_name(c), c.extendedGamepad ? "" : " (no extended gamepad profile: not used)");
     BOOL any = g_merge ? pads_merged(gone) : pads_slotted(gone);
-    dispatch_async(dispatch_get_main_queue(), ^{ self->_padOff = any; self->_controls.hidden = any; self->_glassBox.hidden = any; if (self->_sGlassBox) self->_sGlassBox.hidden = self->_sSkinMode >= 1 || any; [self reset]; });   // the touch gamepad hides while any controller is in use
+    dispatch_async(dispatch_get_main_queue(), ^{ self->_padOff = any; self->_controls.hidden = any; self->_glassBox.hidden = any; if (self->_sGlassBox) self->_sGlassBox.hidden = self->_sSkinMode >= 1 || any; if (any) [self setEditing:NO]; [self reset]; });   // the touch gamepad hides while any controller is in use
 }
 @end
 
