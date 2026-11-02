@@ -142,13 +142,13 @@ static BOOL padSkin(void) { const char *e = getenv("DM_PAD_SKIN"); return e && a
 static int silkSkinMode(void) { const char *e = getenv("DM_SILK_SKIN"); int m = e ? atoi(e) : 1; return m < 0 ? 0 : m > 3 ? 3 : m; }   // the launcher's button-skin choice for this pad: 0 glass, 1 the image skin, 2 the letter-badge skin (dm/padskin-badge), 3 the black-iron skin (dm/padskin-metal, the plain set's canvas, so no badge scaling); the image skin (1) when unset
 enum { SK_ALWAYS, SK_SKILL, SK_TOGGLE };
 static const struct { const char *art; int bit; int grp; CGFloat x, y, r; } k_skin[] = {
-    {"attack",   B_Y,     SK_ALWAYS, 0.770, 0.770, 0.0416},   // needle attack: the fan's left key, level with the jump pivot
-    {"jump",     B_B,     SK_ALWAYS, 0.898, 0.770, 0.0533},   // the fan's pivot at the bottom-right corner, the largest key
-    {"dash",     B_ZR,    SK_ALWAYS, 0.808, 0.574, 0.0416},   // Swift Step: tap dashes, hold sprints; the fan's 45-degree key
-    {"tool",     B_R,     SK_SKILL,  0.6055, 0.770, 0.0282},   // the equipped tool: in the attack row, leftmost of the three, a 45pt edge gap to Clawline at the reference size; an eye-key skill key
-    {"needolin", B_X,     SK_SKILL,  0.898, 0.2999, 0.0282},   // Needolin: above Bind in its column, a 45pt edge gap over it at the reference size, in its original round frame; an eye-key skill key (the eye hides it with the other two)
-    {"bind",     B_A,     SK_ALWAYS, 0.898, 0.493, 0.0416},   // Bind (heal): the fan's top key, straight above the jump pivot
-    {"clawline", B_ZL,    SK_SKILL,  0.6810, 0.770, 0.0282},   // Clawline: in the attack row between tool and attack, a 45pt edge gap each side at the reference size; an eye-key skill key
+    {"attack",   B_Y,     SK_ALWAYS, 0.7859, 0.770, 0.0374},   // needle attack: the fan's left key, level with the jump pivot
+    {"jump",     B_B,     SK_ALWAYS, 0.898, 0.770, 0.0480},   // the fan's pivot at the bottom-right corner, the largest key
+    {"dash",     B_ZR,    SK_ALWAYS, 0.8188, 0.5983, 0.0374},   // Swift Step: tap dashes, hold sprints; the fan's 45-degree key
+    {"tool",     B_R,     SK_SKILL,  0.6468, 0.770, 0.0254},   // the equipped tool: in the attack row, leftmost of the three, a 30pt edge gap to Clawline at the reference size; an eye-key skill key
+    {"needolin", B_X,     SK_SKILL,  0.898, 0.3631, 0.0254},   // Needolin: above Bind in its column, a 30pt edge gap over it at the reference size, in its original round frame; an eye-key skill key (the eye hides it with the other two)
+    {"bind",     B_A,     SK_ALWAYS, 0.898, 0.5271, 0.0374},   // Bind (heal): the fan's top key, straight above the jump pivot
+    {"clawline", B_ZL,    SK_SKILL,  0.7103, 0.770, 0.0254},   // Clawline: in the attack row between tool and attack, a 30pt edge gap each side at the reference size; an eye-key skill key
     {"eye",      0,       SK_TOGGLE, 0.670, 0.082, 0.0224},   // show / hide the skill keys
     {"map",      B_L,     SK_ALWAYS, 0.746, 0.082, 0.0224},   // quick map (the top row respaced evenly for four keys, shifted left so pause shares the fan's column)
     {"bag",      B_MINUS, SK_ALWAYS, 0.822, 0.082, 0.0224},   // inventory
@@ -440,7 +440,7 @@ static void pads_start(void);   // Physical controllers, below
     int _editSel, _editItem;                       // the editor's selected key and the one being dragged (a k_skin index, SKIN_N = the stick, -1 = none)
     UITouch *_editTouch; CGPoint _editGrab;        // the editor's drag in flight: its touch and where in the key it holds it
     UITouch *_eyeTouch; CGPoint _eyePoint; NSTimer *_eyeTimer; BOOL _eyeFired, _eyeMoved;   // the eye key's touch, watched for the editor's long press (a drag of the key in the editor disarms it)
-    UIView *_editBar; UILabel *_editInfo; UIButton *_editMinus, *_editPlus, *_editReset, *_editDone;   // the editor's bar across the top: the selected key's size, its - / + steppers, restore defaults, done
+    UIView *_editBar; UILabel *_editInfo; UIButton *_editMinus, *_editPlus, *_editReset, *_editDone;   // the editor's bar at the top centre, clear of every key: the selected key's size, its - / + steppers, restore defaults, done
     CAShapeLayer *_editRing;                       // the ring around the editor's selected key
     CALayer *_skipKey, *_padKey;   // the cutscene keys: the skin's Skip medallion at the Bind key's place, its Pad medallion at the eye key's place (drawn in every skin mode, glass included)
     int _padMode; BOOL _padPeek;                   // the host's pad mode (hle_hid.c dm_pad_mode) and the player's recall of the pad for the rest of the mode
@@ -542,7 +542,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             _editBar = [[UIView alloc] initWithFrame:CGRectZero];   // the layout editor's bar: built once, shown only while editing (added last, above the glass box)
             _editBar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55]; _editBar.layer.cornerRadius = 10; _editBar.hidden = YES;
             [self addSubview:_editBar];
-            _editInfo = [[UILabel alloc] init]; _editInfo.textColor = UIColor.whiteColor; _editInfo.font = [UIFont systemFontOfSize:16]; [_editBar addSubview:_editInfo];
+            _editInfo = [[UILabel alloc] init]; _editInfo.textColor = UIColor.whiteColor; _editInfo.font = [UIFont systemFontOfSize:15]; _editInfo.adjustsFontSizeToFitWidth = YES; _editInfo.minimumScaleFactor = 0.75; [_editBar addSubview:_editInfo];   // the readout shrinks to fit the compact bar
             _editMinus = [self editButton:@"-" action:@selector(editMinusTapped)];
             _editPlus = [self editButton:@"+" action:@selector(editPlusTapped)];
             _editReset = [self editButton:[NSString stringWithUTF8String:"\xE6\x81\xA2\xE5\xA4\x8D\xE9\xBB\x98\xE8\xAE\xA4"] action:@selector(editResetTapped)];   // "restore defaults"
@@ -1021,9 +1021,9 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             _bagBtn[j].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
         if (_skipKey) { CGPoint c = skinCenter(5, b); CGFloat dd = skinR(5) * 2 * b.size.width; _skipKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Skip medallion at the Bind key's place, at its size
         if (_padKey) { CGPoint c = skinCenter(7, b); CGFloat dd = skinR(7) * 2 * b.size.width; _padKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Pad medallion at the eye key's place, at its size
-        if (_editBar) { CGFloat bw = fmin(600, b.size.width - 16); _editBar.frame = CGRectMake((b.size.width - bw) / 2, self.safeAreaInsets.top + 6, bw, 46);
-            _editInfo.frame = CGRectMake(12, 0, 190, 46); _editMinus.frame = CGRectMake(212, 3, 40, 40); _editPlus.frame = CGRectMake(260, 3, 40, 40);
-            _editReset.frame = CGRectMake(bw - 200, 3, 96, 40); _editDone.frame = CGRectMake(bw - 96, 3, 88, 40); }
+        if (_editBar) { CGFloat bw = 0.35 * b.size.width; _editBar.frame = CGRectMake(0.28 * b.size.width, self.safeAreaInsets.top + 6, bw, 46);   // the top centre is key-free (the top row's leftmost key, the eye, starts at 0.648 of the width): the bar stays inside x 0.28-0.63 of the width, compact, so it never covers a key
+            _editInfo.frame = CGRectMake(8, 0, bw - 238, 46); _editMinus.frame = CGRectMake(bw - 224, 6, 34, 34); _editPlus.frame = CGRectMake(bw - 184, 6, 34, 34);
+            _editReset.frame = CGRectMake(bw - 144, 6, 76, 34); _editDone.frame = CGRectMake(bw - 62, 6, 54, 34); }
         if (_editRing) { BOOL show = _editing && _editSel >= 0; _editRing.hidden = !show;
             if (show) setPath(_editRing, circlePath([self editCentre:_editSel], [self editRadius:_editSel] * 1.12 + 4)); }
         if (_sGlassBox) {
