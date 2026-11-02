@@ -1197,7 +1197,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
                 setPath(_pWash[j], circlePath(c, dr)); setPath(_pSym[j], triPath(c, dr * 0.44, k_tpad[j].dir)); }
             CGFloat gd = d * 0.9;   // the glass stick at 0.9 of the image skins' (its radius, stickR, scales the same way)
             _sStick.frame = CGRectMake(hc.x - gd / 2, hc.y - gd / 2, gd, gd); glassDiscLayout(_sStick, gd / 2);
-            CGFloat kd2 = gd * 0.44; _sKnob.bounds = CGRectMake(0, 0, kd2, kd2); glassDiscLayout(_sKnob, kd2 / 2); _sKnob.center = hc;   // the Hades glass knob's fraction: a solid disc at the medallion's 0.67 reads far bigger than the art, whose cap sits inside transparent margins; here a glass cap of the same recipe
+            CGFloat kd2 = gd * 0.396; _sKnob.bounds = CGRectMake(0, 0, kd2, kd2); glassDiscLayout(_sKnob, kd2 / 2); _sKnob.center = hc;   // the Hades glass knob's fraction: a solid disc at the medallion's 0.67 reads far bigger than the art, whose cap sits inside transparent margins; here a glass cap of the same recipe
         }
         [CATransaction commit]; [self refresh]; return;
     }
