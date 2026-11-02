@@ -214,6 +214,11 @@ static inline MTL4VisibilityOptions resource_vis(void) { return MTL4VisibilityOp
 // Residency churn by call site (the power line every 300 frames, mtl_res_stats): each commit with changes is a kernel call whose cost grows with what was added or removed
 enum { RS_SITES = 16 }; static struct { int line; uint64_t n, bytes; } g_rs_site[RS_SITES]; static uint64_t g_rs_rm, g_rs_commits, g_rs_commit_ns;
 #define res_add(r) res_add_at((r), __LINE__)
+// DM_NVN_RES_EAGER=1: commit the residency set on the spot in res_add, instead of at the next flush / submit-time
+// res_commit: a bisect for the iOS 26 green screen -- the green frames' content, format, binding and shaders are
+// identical on a green and a healthy machine (TEXRAW / PASSDUMP), so suspicion falls on the window between a
+// texture entering the residency set and that addition being committed. Default off: behaviour is unchanged
+static int res_eager(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_NVN_RES_EAGER"); v = e && atoi(e); } return v; }
 // Both run on guest threads too (pool_res from mtl_addr, uploads), whose implicit autorelease pools never drain; containsObject: / removeObject: on a weak NSHashTable leave the object
 // autoreleased in the calling thread's pool (measured in a standalone test: the object outlived its last strong reference until the thread ended), so each has a pool of its own
 static void res_add_at(id<MTLAllocation> allocation, int line) { @autoreleasepool {
@@ -227,6 +232,7 @@ static void res_add_at(id<MTLAllocation> allocation, int line) { @autoreleasepoo
     [g_res addAllocation:(id<MTLAllocation>)r];
     [g_res_objects addObject:r];
     g_res_dirty = 1;
+    if (res_eager()) { uint64_t t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); [g_res commit]; g_res_dirty = 0; g_rs_commits++; g_rs_commit_ns += clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0; }   // DM_NVN_RES_EAGER: no window between the addition and its commit (g_res_mu is already held here, so res_commit itself cannot be called)
     pthread_mutex_unlock(&g_res_mu);
 } }
 static void res_remove(id<MTLAllocation> r) { @autoreleasepool {
@@ -435,6 +441,7 @@ void mtl_init(void) {
     }
     [g_q addResidencySet:g_res];
     [g_q4 addResidencySet:g_res];
+    if (res_eager()) MLOG("[nvn-mtl] residency eager: every residency addition is committed on the spot (DM_NVN_RES_EAGER)");
     { void crash_set_wait_dump(void (*fn)(void)); void mtl_wait_state_dump(void); crash_set_wait_dump(mtl_wait_state_dump); }
     g_alloc_n = 3;
     for (int i = 0; i < 3; i++) {
