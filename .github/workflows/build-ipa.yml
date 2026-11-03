@@ -139,14 +139,16 @@ jobs:
             P=$(dirname "$(find "$GB" -name 'main.patched.bin' | head -1)")
             R=$(find "$GB" -name 'RomFS.img' | head -1)
             BD=$(find "$GB" -type d -name 'b-*' -path '*shader/ios*' | head -1)
-            echo "$TID parts: patched=$P romfs=$R msl=$(dirname "$BD")"
+            GD=""
+            if [ -f "$GB/profile/$TID/c1_full.tsv" ]; then GD="$GB/profile/$TID"; fi   # a derived profile (the shader step wrote its tables there, not into the repo profile)
+            echo "$TID parts: patched=$P romfs=$R msl=$(dirname "$BD") gd=${GD:-repo}"
             [ -n "$P" ] && [ -n "$R" ] && [ -n "$BD" ] || { echo "::error::parts missing for $TID"; exit 1; }
             case "$TID" in
-              010013C00E930000) SILK_PATCHED="$P"; SILK_ROMFS="$R"; SILK_MSL=$(dirname "$BD"); SILK_ENV="$RUNNER_TEMP/env-$TID.txt" ;;
-              0100A00019DE0000) HADES_PATCHED="$P"; HADES_ROMFS="$R"; HADES_MSL=$(dirname "$BD"); HADES_ENV="$RUNNER_TEMP/env-$TID.txt" ;;
+              010013C00E930000) SILK_PATCHED="$P"; SILK_ROMFS="$R"; SILK_MSL=$(dirname "$BD"); SILK_ENV="$RUNNER_TEMP/env-$TID.txt"; SILK_GD="$GD" ;;
+              0100A00019DE0000) HADES_PATCHED="$P"; HADES_ROMFS="$R"; HADES_MSL=$(dirname "$BD"); HADES_ENV="$RUNNER_TEMP/env-$TID.txt"; HADES_GD="$GD" ;;
             esac
           done
-          export SILK_PATCHED SILK_ROMFS SILK_MSL SILK_ENV HADES_PATCHED HADES_ROMFS HADES_MSL HADES_ENV
+          export SILK_PATCHED SILK_ROMFS SILK_MSL SILK_ENV SILK_GD HADES_PATCHED HADES_ROMFS HADES_MSL HADES_ENV HADES_GD
           W="$RUNNER_TEMP/shell-work" DM_LANG="$LANGCODE" \
             bash dm/ios/tools/build_shell_ipa.sh "$GITHUB_WORKSPACE/out/shell.ipa" \
             2>&1 | tee "$GITHUB_WORKSPACE/out/logs/build-shell.log"

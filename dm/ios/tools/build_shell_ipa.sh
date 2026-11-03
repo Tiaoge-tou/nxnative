@@ -11,6 +11,9 @@
 # from two ordinary build_ipa_from_nsp.py runs; this script only assembles. Usage: build_shell_ipa.sh <out.ipa>
 #   Environment: W=shell work folder (required); per game <P>_PATCHED, <P>_MSL (the folder holding b-<chain>),
 #   <P>_ROMFS (its RomFS.img), <P>_ENV (its env.txt), with <P> = SILK / HADES; FONT_PY as in build_ipa.sh.
+#   <P>_GD names the profile folder the game's build actually used when it differs from the repo one (the
+#   NSP script derives a profile into the build folder for a package version its build rows do not name,
+#   and the shader step writes c1_full.tsv there); default: the repo profile dm/games/<title ID>.
 set -u
 cd "$(dirname "$0")/.." || exit 1
 IOS_SOURCE=$PWD; IOS=$PWD; DM=$(cd .. && pwd)
@@ -34,12 +37,12 @@ grep -q 'DM_SHELL_PROTO' "$DM/host/gen/$SILK/game_profile.h" || die "the generat
 # Embedded guest modules, one gen_embed run per game under its section prefix; the two .S files concatenate
 F=""
 for spec in "$SILK s" "$HADES h"; do set -- $spec; TID=$1; PFX=$2
-  if [ "$TID" = "$SILK" ]; then PATCHED=$SILK_PATCHED; else PATCHED=$HADES_PATCHED; fi
+  if [ "$TID" = "$SILK" ]; then PATCHED=$SILK_PATCHED; GD=${SILK_GD:-}; else PATCHED=$HADES_PATCHED; GD=${HADES_GD:-}; fi
   MODS=$(gp $TID modules)
   for f in $MODS; do [ -f "$PATCHED/$f.patched.bin" ] && [ -f "$PATCHED/$f.fixups.tsv" ] || die "no rewritten module $PATCHED/$f"; done
   Fp=$(DM_EMBED_PREFIX=$PFX python3 tools/gen_embed.py "$PATCHED" Gen/embed-$TID.S $MODS) || die "gen_embed $TID"
   cat Gen/embed-$TID.S >> Gen/embed.S; F="$F $Fp"
-  GD=$(python3 "$DM/games/game.py" dir "$TID") || die "profile dir $TID"
+  [ -n "$GD" ] || GD=$(python3 "$DM/games/game.py" dir "$TID") || die "profile dir $TID"
   cp "$PATCHED"/*.fixups.tsv "$PATCHED"/*.gates.tsv "$PATCHED"/*.cuts.tsv "$PATCHED"/*.obs.tsv Gen/dm/$TID/ || die "copy rewriter tables $TID"
   if [ -f "$PATCHED/nro.tsv" ]; then cp "$PATCHED/nro.tsv" Gen/dm/$TID/ || die "copy the NRO table $TID"; fi
   cp "$GD/shader_map.tsv" "$GD/pso_manifest.tsv" "$GD/c1_full.tsv" Gen/dm/$TID/ || die "copy shader tables $TID (a full dmsh_build.py run of this game must have made c1_full.tsv)"

@@ -22,13 +22,17 @@ static const struct dm_game_prof prof_silk = {
 };
 
 static const char *const mods_hades[] = {"main", "sdk"};
-static const struct dm_disp_ver vers_hades[] = {{"5219053e5eb156be80fbb2f303779531", "0.0.126424"}};
+// Two rows: the base build the repo profile registers, and the v589824 update's main (build ID from its
+// main.fixups.tsv), which is the one that actually runs — a single-game build packs that version from a
+// derived profile whose only display row is the update's (1.0.137848), so the shell must carry it too.
+static const struct dm_disp_ver vers_hades[] = {{"5219053e5eb156be80fbb2f303779531", "0.0.126424"},
+                                                {"8ce1ac48e9fa74479051f3520e632df4", "1.0.137848"}};
 static const struct dm_game_prof prof_hades = {
     .id = "0100A00019DE0000", .name = "Hades II", .program_id = 0x0100A00019DE0000ull,
     .modules = mods_hades, .nmod = 2,
     .romfs_marker = "Audio/Switch/Music.bank",
     .mem_reserve = 0x100000000ull, .mem_alias = 0x10000000ull, .mem_used = 0x6c00000ull, .sys_resource = 0x2000000ull,
-    .display_versions = vers_hades, .n_display_versions = 1,
+    .display_versions = vers_hades, .n_display_versions = 2,
     .pad_layout = 1,
     .serve_patch = "RunLogic.lua@1782a:34343332>#00000000>#00000000@17846:30383031>30383031>30323730",
     .display_wide = 1, .pad_skin_toggle = 0,
