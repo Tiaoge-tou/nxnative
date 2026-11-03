@@ -76,6 +76,7 @@ jobs:
             echo "Size verified: $1 ($ACTUAL bytes)"
             mkdir -p "$3"
             unzip -q "$RUNNER_TEMP/$1" -d "$3"
+            rm -rf "$3/__MACOSX"   # AppleDouble sidecars (._*.nsz) are not game files; the nsz decompressor chokes on them
             rm -f "$RUNNER_TEMP/$1"
           }
           fetch silksong.zip 2852569814 "$RUNNER_TEMP/src-silk"
@@ -85,7 +86,7 @@ jobs:
       - name: Decompress any .nsz files to .nsp
         run: |
           set -eu
-          NSZ_LIST=$(find "$RUNNER_TEMP/src-silk" "$RUNNER_TEMP/src-hades" -maxdepth 3 -iname '*.nsz')
+          NSZ_LIST=$(find "$RUNNER_TEMP/src-silk" "$RUNNER_TEMP/src-hades" -maxdepth 3 -iname '*.nsz' -not -path '*/__MACOSX/*' -not -name '._*')
           if [ -z "$NSZ_LIST" ]; then echo "No .nsz files, skipping."; exit 0; fi
           python3 -m venv "$RUNNER_TEMP/nsz-venv"
           "$RUNNER_TEMP/nsz-venv/bin/pip" install -q nsz
