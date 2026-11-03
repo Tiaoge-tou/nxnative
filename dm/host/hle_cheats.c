@@ -1731,7 +1731,10 @@ static void report_build(void) {
 
 // This build's display version from the profile's build rows (by the whole main build ID), as GetDisplayVersion answers it
 static void profile_version(void) {
-#ifdef DM_GAME_DISPLAY_VERSIONS
+#ifdef DM_SHELL_PROTO   // shell build: the selected game's build rows (dm_prof.h)
+    const char *bid = dm_main_build();
+    for (int j = 0; j < g_dm_prof->n_display_versions; j++) if (!strcasecmp(bid, g_dm_prof->display_versions[j].build)) snprintf(g_version, sizeof g_version, "%s", g_dm_prof->display_versions[j].ver);
+#elif defined(DM_GAME_DISPLAY_VERSIONS)
     static const struct { const char *build, *ver; } k[] = {DM_GAME_DISPLAY_VERSIONS};
     const char *bid = dm_main_build();
     for (unsigned j = 0; j < sizeof k / sizeof *k; j++) if (!strcasecmp(bid, k[j].build)) snprintf(g_version, sizeof g_version, "%s", k[j].ver);

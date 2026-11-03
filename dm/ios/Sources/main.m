@@ -23,6 +23,17 @@ int dm_main(int argc, char **argv);   // dm/host/main.c compiled in with -Dmain=
 UIViewController *front_ios_root(void);
 void front_ios_focus_event(int ev);
 
+#ifdef DM_SHELL_PROTO
+// Shell build (two games in one app; dm/host/dm_prof.h): the player picks a game first, then boot_env runs
+// scoped to it. g_scope_doc is that game's Documents folder (Documents/games/<title ID>: its romfs.img, save,
+// env.txt, log.txt and pso_user.tsv live there and nowhere else), g_scope_id the romfs.id it must match
+// (the bundle's dm/<title ID>/romfs.id). Both stay nil until a game is picked; single-game builds never set them.
+void dm_prof_select(const char *tid);   // dm/host/dm_prof.c
+static NSString *g_scope_doc, *g_scope_id, *g_sel_tid;
+static const char *const k_shell_tids[] = {"010013C00E930000", "0100A00019DE0000"};
+static const char *const k_shell_names[] = {"Hollow Knight: Silksong", "Hades II"};
+#endif
+
 static char *g_argv[4]; static int g_argc;
 
 // Documents/romfs.img, one RomFS image file (dm/tools/romfs_image.py, scripts/push_romfs.sh): only a complete one counts. Its index is written last and ends the file, so a copy cut off partway is skipped
@@ -37,7 +48,12 @@ static int romfs_image_complete(NSString *path) {
 // A build made with DM_COPY_ROMFS=NO carries <App>/romfs.id (dm/host/romfs_identity.h): only a Documents/romfs.img with that identity is used. No romfs.id (the default build): any complete image
 static int romfs_identity_accepts(NSString *img) {
     romfs_id want, got;
-    int rc = romfs_id_check([NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs.id"].fileSystemRepresentation, img.fileSystemRepresentation, &want, &got);
+#ifdef DM_SHELL_PROTO
+    NSString *idp = g_scope_id ?: [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs.id"];
+#else
+    NSString *idp = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs.id"];
+#endif
+    int rc = romfs_id_check(idp.fileSystemRepresentation, img.fileSystemRepresentation, &want, &got);
     if (rc != ROMFS_ID_OK && rc != ROMFS_ID_NONE) fprintf(stderr, "[RED] boot: Documents/%s is not the image this build needs (verdict %d); not used\n", img.lastPathComponent.UTF8String, rc);
     return rc == ROMFS_ID_OK || rc == ROMFS_ID_NONE;
 }
@@ -55,7 +71,11 @@ static NSArray<NSString *> *romfs_document_images(NSString *doc) {
 }
 static NSString *romfs_locate(void) {
     NSFileManager *fm = NSFileManager.defaultManager;
+#ifdef DM_SHELL_PROTO
+    NSString *doc = g_scope_doc ?: NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+#else
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+#endif
     for (NSString *img in romfs_document_images(doc)) {
         if (!romfs_image_complete(img) || !romfs_identity_accepts(img)) continue;
         // A folder copy from before images is now dead weight of up to many GB (often cut off partway). Deleting its 300,000 files here took longer than iOS allows an app to start
@@ -83,7 +103,11 @@ static NSString *romfs_locate(void) {
 static void aoc_locate(void) {
     if (getenv("DM_AOC_DIR")) return;
     NSFileManager *fm = NSFileManager.defaultManager;
+#ifdef DM_SHELL_PROTO
+    NSString *doc = g_scope_doc ?: NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+#else
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+#endif
     for (NSString *d in @[[doc stringByAppendingPathComponent:@"aoc"], [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"aoc"]]) {
         BOOL dir = NO;
         if (![fm fileExistsAtPath:d isDirectory:&dir] || !dir) continue;
@@ -103,7 +127,12 @@ static char g_device_message[320];
 const char *front_ios_device_message(void) { return g_device_message[0] ? g_device_message : NULL; }
 static void romfs_identity_report(NSString *doc) {
     romfs_id want, got;
-    int rc = romfs_id_check([NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs.id"].fileSystemRepresentation,
+#ifdef DM_SHELL_PROTO
+    NSString *idp = g_scope_id ?: [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs.id"];
+#else
+    NSString *idp = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs.id"];
+#endif
+    int rc = romfs_id_check(idp.fileSystemRepresentation,
                             (romfs_document_images(doc).firstObject ?: [doc stringByAppendingPathComponent:@"romfs.img"]).fileSystemRepresentation, &want, &got);
     if (rc == ROMFS_ID_OK || rc == ROMFS_ID_NONE) return;
     romfs_id_message(rc, &want, &got, NSBundle.mainBundle.bundleIdentifier.UTF8String ?: "<bundle ID>", g_boot_message, sizeof g_boot_message);
@@ -114,6 +143,16 @@ static int boot_env(void) {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
     NSString *res = NSBundle.mainBundle.resourcePath;
+#ifdef DM_SHELL_PROTO
+    if (g_sel_tid) {   // shell build: everything below is scoped to the picked game (its Documents folder, its bundle tables)
+        doc = g_scope_doc;
+        setenv("DM_SHELL_TID", g_sel_tid.UTF8String, 1);   // the launcher and the pad namespace their saved choices by it (LauncherSettings.swift, DmGamepad.m)
+    }
+#endif
+    NSString *dmdir = [res stringByAppendingPathComponent:@"dm"];   // the picked game's tables in a shell build: dm/<title ID>
+#ifdef DM_SHELL_PROTO
+    if (g_sel_tid) dmdir = [dmdir stringByAppendingPathComponent:g_sel_tid];
+#endif
     for (NSString *d in @[@"save", @"temp"]) [fm createDirectoryAtPath:[doc stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
     // Keep game files and scratch data out of device backups (Documents is backed up by default; a RomFS placed there is many GB). Saves, logs and the pipeline list stay in the backup
     for (NSString *d in [@[@"romfs", @"aoc", @"temp"] arrayByAddingObjectsFromArray:[romfs_document_images(doc) valueForKey:@"lastPathComponent"]]) {
@@ -138,7 +177,7 @@ static int boot_env(void) {
     NSDictionary *settings_file = settings_data ? [NSJSONSerialization JSONObjectWithData:settings_data options:0 error:nil] : nil;
     for (NSDictionary *row in settings_file[@"settings"]) if ([row[@"env"] isKindOfClass:NSString.class]) [launcher_keys addObject:row[@"env"]];
 #endif
-    for (NSString *ef in @[[doc stringByAppendingPathComponent:@"env.txt"], [[res stringByAppendingPathComponent:@"dm"] stringByAppendingPathComponent:@"env.txt"]]) {
+    for (NSString *ef in @[[doc stringByAppendingPathComponent:@"env.txt"], [dmdir stringByAppendingPathComponent:@"env.txt"]]) {
         NSString *txt = [NSString stringWithContentsOfFile:ef encoding:NSUTF8StringEncoding error:nil];
         for (NSString *raw in [txt componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
             NSString *ln = [raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]; NSRange eq = [ln rangeOfString:@"="];
@@ -165,12 +204,19 @@ static int boot_env(void) {
     setenv("DM_ROMFS", romfs.fileSystemRepresentation, 0);
     setenv("DM_SAVE", [doc stringByAppendingPathComponent:@"save"].fileSystemRepresentation, 0);
     setenv("DM_TEMP", [doc stringByAppendingPathComponent:@"temp"].fileSystemRepresentation, 0);
-    NSString *dm = [res stringByAppendingPathComponent:@"dm"];
+    NSString *dm = dmdir;
     setenv("DM_NVN_SHMAP", [dm stringByAppendingPathComponent:@"shader_map.tsv"].fileSystemRepresentation, 0);
-    setenv("DM_MSL_DIR", [res stringByAppendingPathComponent:@"msl"].fileSystemRepresentation, 0);
-    setenv("DM_FONT_DIR", [dm stringByAppendingPathComponent:@"font"].fileSystemRepresentation, 0);   // Shared-font stand-ins (standard.ttf / nintendo_ext.ttf): iOS lacks the macOS font path
+    NSString *msldir = [res stringByAppendingPathComponent:@"msl"];   // a shell build keeps each game's libraries under msl/<title ID> (build_shell_ipa.sh)
+#ifdef DM_SHELL_PROTO
+    if (g_sel_tid) msldir = [msldir stringByAppendingPathComponent:g_sel_tid];
+#endif
+    setenv("DM_MSL_DIR", msldir.fileSystemRepresentation, 0);
+    setenv("DM_FONT_DIR", [[res stringByAppendingPathComponent:@"dm"] stringByAppendingPathComponent:@"font"].fileSystemRepresentation, 0);   // Shared-font stand-ins (standard.ttf / nintendo_ext.ttf): iOS lacks the macOS font path; the font folder stays at dm/font in a shell build too (it is game-independent)
     aoc_locate();   // add-on content: Documents/aoc, else <App>/aoc; an empty Documents/aoc explicitly selects no DLC
     NSString *pso = [res stringByAppendingPathComponent:@"pso"];   // the pipeline archive made offline (build_ipa.sh, dm/gfx/tools/pso_offline.py): the shader pairs' bases, which the device then does not build
+#ifdef DM_SHELL_PROTO
+    if (g_sel_tid) pso = [pso stringByAppendingPathComponent:g_sel_tid];
+#endif
     if ([fm fileExistsAtPath:pso]) setenv("DM_PSO_BUNDLE", pso.fileSystemRepresentation, 0);
     chdir(doc.fileSystemRepresentation);
     g_argv[0] = strdup("dmhost"); g_argv[1] = strdup(dm.fileSystemRepresentation); g_argc = 2;
@@ -202,6 +248,54 @@ int front_ios_boot_ok(void) { return g_boot_ok; }
 }
 @end
 
+#ifdef DM_SHELL_PROTO
+// The shell's game picker: two plain buttons, shown before anything boots. Picking one selects its runtime
+// profile and runs boot_env scoped to it, then swaps in the usual game front end. Switching games means
+// quitting the app and picking the other one (the host preloads one game's modules per process).
+@interface DmShellChooser : UIViewController
+@property (weak, nonatomic) UIWindow *win;
+@end
+@implementation DmShellChooser
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.blackColor;
+    UIStackView *stack = [[UIStackView alloc] initWithFrame:self.view.bounds];
+    stack.axis = UILayoutConstraintAxisVertical; stack.alignment = UIStackViewAlignmentCenter;
+    stack.distribution = UIStackViewDistributionEqualSpacing; stack.spacing = 24;
+    stack.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    stack.layoutMargins = UIEdgeInsetsMake(120, 40, 120, 40); stack.layoutMarginsRelativeArrangement = YES;
+    UILabel *title = [UILabel new]; title.text = @"Choose a game"; title.textColor = UIColor.whiteColor;
+    title.font = [UIFont boldSystemFontOfSize:28]; [stack addArrangedSubview:title];
+    for (int i = 0; i < 2; i++) {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+        [b setTitle:@(k_shell_names[i]) forState:UIControlStateNormal];
+        [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+        b.titleLabel.font = [UIFont systemFontOfSize:22];
+        b.layer.borderColor = UIColor.grayColor.CGColor; b.layer.borderWidth = 1; b.layer.cornerRadius = 10;
+        b.contentEdgeInsets = UIEdgeInsetsMake(18, 28, 18, 28);
+        b.tag = i; [b addTarget:self action:@selector(pick:) forControlEvents:UIControlEventTouchUpInside];
+        [stack addArrangedSubview:b];
+    }
+    UILabel *note = [UILabel new];
+    note.text = @"Game files: put each game's romfs.img in Files > this app > games > its title ID folder.\nTo play the other game, quit the app and pick it here.";
+    note.textColor = UIColor.grayColor; note.font = [UIFont systemFontOfSize:14]; note.numberOfLines = 0;
+    note.textAlignment = NSTextAlignmentCenter; [stack addArrangedSubview:note];
+    [self.view addSubview:stack];
+}
+- (void)pick:(UIButton *)b {
+    const char *tid = k_shell_tids[b.tag];
+    dm_prof_select(tid);
+    g_sel_tid = @(tid);
+    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+    g_scope_doc = [[doc stringByAppendingPathComponent:@"games"] stringByAppendingPathComponent:g_sel_tid];
+    [NSFileManager.defaultManager createDirectoryAtPath:g_scope_doc withIntermediateDirectories:YES attributes:nil error:nil];
+    g_scope_id = [[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"dm"] stringByAppendingPathComponent:[g_sel_tid stringByAppendingPathComponent:@"romfs.id"]];
+    g_boot_ok = boot_env();
+    self.win.rootViewController = front_ios_root();
+}
+@end
+#endif
+
 // Scene lifecycle: create the window + hand focus events to front_ios.m
 @interface SceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property (strong, nonatomic) UIWindow *window;
@@ -209,7 +303,12 @@ int front_ios_boot_ok(void) { return g_boot_ok; }
 @implementation SceneDelegate
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)o {
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+#ifdef DM_SHELL_PROTO
+    DmShellChooser *chooser = [DmShellChooser new]; chooser.win = self.window;
+    self.window.rootViewController = chooser;   // boot_env runs when a game is picked (DmShellChooser pick:)
+#else
     self.window.rootViewController = front_ios_root();
+#endif
     [self.window makeKeyAndVisible];
 }
 - (void)sceneWillResignActive:(UIScene *)s { front_ios_focus_event(0); }
@@ -219,6 +318,11 @@ int front_ios_boot_ok(void) { return g_boot_ok; }
 @end
 
 int main(int argc, char **argv) {
+#ifdef DM_SHELL_PROTO
+    // Shell build: nothing boots until the picker runs boot_env for the chosen game (DmShellChooser pick:)
+    @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(App.class)); }
+#else
     @autoreleasepool { g_boot_ok = boot_env(); }
     @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(App.class)); }
+#endif
 }

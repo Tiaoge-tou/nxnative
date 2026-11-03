@@ -42,9 +42,12 @@ final class LauncherModel: ObservableObject {
     @Published var values: [String: String] = [:]
 
     private let defaults: UserDefaults
+    private let keyPrefix: String   // "launcher." normally; a shell build's picked game (DM_SHELL_TID, set by main.m) namespaces its saved choices per game
 
     init(_ settings: [Setting], defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        let shellTid = ProcessInfo.processInfo.environment["DM_SHELL_TID"]
+        keyPrefix = shellTid.map { "launcher.\($0)." } ?? "launcher."
         self.settings = settings
         let env = ProcessInfo.processInfo.environment
         fromLaunch = Set((env["DM_ENV_LAUNCH_KEYS"] ?? "").split(separator: " ").map(String.init))
@@ -53,7 +56,7 @@ final class LauncherModel: ObservableObject {
         if ignoreSaved { fputs("launcher: saved choices ignored (DM_SAVED_CHOICES=0)\n", stderr) }
         for s in settings {
             if fixed.contains(s.env), let v = env[s.env] { values[s.env] = v; continue }
-            let saved = ignoreSaved ? nil : defaults.object(forKey: "launcher." + s.env) as? String   // a string, as launcher.c reads it: not string(forKey:), which turns a number into one
+            let saved = ignoreSaved ? nil : defaults.object(forKey: keyPrefix + s.env) as? String   // a string, as launcher.c reads it: not string(forKey:), which turns a number into one
             values[s.env] = saved.flatMap { s.accepts($0) ? $0 : nil } ?? s.def   // a saved choice the game no longer offers: its default
         }
     }
@@ -99,7 +102,7 @@ final class LauncherModel: ObservableObject {
         for s in settings {
             let v = values[s.env] ?? s.def
             if fixed.contains(s.env) { fputs("launcher: \(s.env) kept at \(v) (\(fromLaunch.contains(s.env) ? "launch environment" : "env file"))\n", stderr); continue }
-            if !ignoreSaved { if s.isDefault(v) { defaults.removeObject(forKey: "launcher." + s.env) } else { defaults.set(v, forKey: "launcher." + s.env) } }
+            if !ignoreSaved { if s.isDefault(v) { defaults.removeObject(forKey: keyPrefix + s.env) } else { defaults.set(v, forKey: keyPrefix + s.env) } }
             setenv(s.env, v, 1); fputs("launcher: \(s.env)=\(v)\(s.isDefault(v) ? "" : " (changed)")\n", stderr)
         }
     }

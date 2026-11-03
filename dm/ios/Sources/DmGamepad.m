@@ -127,6 +127,10 @@ static const CGFloat
     K_CLICK_X = 102, K_CLICK_R = 17;                // L3 / R3: centre from the outer edge (level with ZL / ZR), radius
 static const int k_btns[] = {B_ZL, B_L, B_ZR, B_R, B_MINUS, B_PLUS, B_LS, B_RS};   // keys locked at touch-down (L3 / R3 only in the 3D layout)
 static NSString *const k_layout_key = @"DmPadLayout";   // NSUserDefaults: 0 = 2D, 1 = 3D, 2 = Tap (DM_GAME_PAD_LAYOUT's numbers)
+static NSString *padDefaultsKey(NSString *base) {   // a shell build namespaces the pad's saved keys by the picked game (DM_SHELL_TID, set by main.m at boot); unset = the plain key, as ever
+    const char *t = getenv("DM_SHELL_TID");
+    return t ? [NSString stringWithFormat:@"%s.%@", t, base] : base;
+}
 int dm_opmode(void);   // hle_oe.c: 0 = handheld
 
 // ---- Skin layout (DM_PAD_SKIN=1 in dm/env.txt or Documents/env.txt; art in dm/padskin, staged into the bundle by build_ipa.sh) ----
@@ -179,7 +183,7 @@ static BOOL g_custReady;
 static void custLoad(void) {
     if (g_custReady) return; g_custReady = YES;
     for (int i = 0; i <= SKIN_N; i++) g_custS[i] = 1;
-    NSDictionary *d = [NSUserDefaults.standardUserDefaults dictionaryForKey:k_custom_key];
+    NSDictionary *d = [NSUserDefaults.standardUserDefaults dictionaryForKey:padDefaultsKey(k_custom_key)];
     for (int i = 0; i <= SKIN_N; i++) {
         NSDictionary *e = d[i == SKIN_N ? @"stick" : [NSString stringWithUTF8String:k_skin[i].art]];
         if (!e) continue;
@@ -191,7 +195,7 @@ static void custSave(void) {
     NSMutableDictionary *d = [NSMutableDictionary dictionary];
     for (int i = 0; i <= SKIN_N; i++) if (g_custDX[i] || g_custDY[i] || g_custS[i] != 1)
         d[i == SKIN_N ? @"stick" : [NSString stringWithUTF8String:k_skin[i].art]] = @{@"dx": @(g_custDX[i]), @"dy": @(g_custDY[i]), @"s": @(g_custS[i])};
-    [NSUserDefaults.standardUserDefaults setObject:d forKey:k_custom_key];
+    [NSUserDefaults.standardUserDefaults setObject:d forKey:padDefaultsKey(k_custom_key)];
 }
 static int custSlot(int i) { return k_skin[i].bit == B_UP ? SKIN_N : i; }   // the Up key's slot is the stick's
 static CGFloat skinR(int i) { custLoad(); return k_skin[i].r * g_custS[custSlot(i)]; }   // skin key i's radius (a fraction of the width) with the player's size multiplier
@@ -719,7 +723,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _swap.hidden = YES; _swapLabel.hidden = YES; _ring.hidden = YES; _knob.hidden = YES;
         }
-        NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:k_layout_key];
+        NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:padDefaultsKey(k_layout_key)];
         int l = saved ? (int)saved.integerValue : DM_GAME_PAD_LAYOUT;
         if (l == 2 && dm_opmode() != 0) l = 0;   // Tap only in handheld mode (env.txt's DM_OPMODE may have changed it)
         _full = l == 1; _tap = l == 2;
@@ -745,7 +749,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
     int l = _tap ? 0 : _full ? (dm_opmode() == 0 ? 2 : 0) : 1;
     [self reset];
     _full = l == 1; _tap = l == 2;
-    [NSUserDefaults.standardUserDefaults setObject:@(l) forKey:k_layout_key];
+    [NSUserDefaults.standardUserDefaults setObject:@(l) forKey:padDefaultsKey(k_layout_key)];
     [self applyLayout]; [self setNeedsLayout];
 }
 

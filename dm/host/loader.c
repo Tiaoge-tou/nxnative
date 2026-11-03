@@ -708,7 +708,12 @@ static int nro_pieces(const char *name, const uint8_t **x0, unsigned long *z0, c
 }
 static void map_image(module_t *m, const char *dir) {
     (void)dir;
+#ifdef DM_SHELL_PROTO   // shell build: the selected game's sections carry its one-letter prefix (gen_embed.py DM_EMBED_PREFIX; dm_prof.h)
+    const char *pfx = g_dm_prof->seg_prefix;
+    char sx0[17], sx1[17], dm[17]; snprintf(sx0, sizeof sx0, "__dm%s%sx0", pfx, m->name); snprintf(sx1, sizeof sx1, "__dm%s%sx1", pfx, m->name); snprintf(dm, sizeof dm, "__DM%s%sW", pfx, m->name);
+#else
     char sx0[17], sx1[17], dm[17]; snprintf(sx0, sizeof sx0, "__dm%sx0", m->name); snprintf(sx1, sizeof sx1, "__dm%sx1", m->name); snprintf(dm, sizeof dm, "__DM%sW", m->name);
+#endif
     unsigned long z0 = 0, zw = 0, z1 = 0;
     const uint8_t *x0 = NULL, *w = NULL, *x1 = NULL;
     if (m->nro) { if (!nro_pieces(m->name, &x0, &z0, &w, &zw, &x1, &z1)) die("NRO %s: not in the embedded NRO table (__DATA,__dm_nro_tab)", m->name); }
@@ -717,7 +722,11 @@ static void map_image(module_t *m, const char *dir) {
     // The back patch area (patch_nso.py TWO) is a fourth section, __dm<name>x2; NROs never have one (nro_pieces holds three pieces)
     unsigned long z2 = 0; const uint8_t *x2 = NULL;
     if (m->back_len) {
+#ifdef DM_SHELL_PROTO
+        char sx2[17]; snprintf(sx2, sizeof sx2, "__dm%s%sx2", pfx, m->name);
+#else
         char sx2[17]; snprintf(sx2, sizeof sx2, "__dm%sx2", m->name);
+#endif
         if (m->nro || !(x2 = getsectiondata(IMAGE_MH, "__TEXT", sx2, &z2)) || z2 != m->back_len || ((uintptr_t)x2 & 0x3FFF)) die("embedded back patch area %s missing or wrong", sx2);
     }
     // Patch area before the base (patch_off < 0): W ends at the end of data (FILE_IMAGE_LEN); bss and the key page are zero pages from vm_allocate and are not in the executable
