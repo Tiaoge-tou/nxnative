@@ -53,6 +53,8 @@ typedef struct {
     unsigned ue_malloc_slot;   // the slot of its name getter, which names the slot layout
     struct { char name[32]; uint64_t off; } ue_cvar[8];   // Unreal console variables found by their registered names (patch_nso.py, ue_cvar.py; UE_CVAR:<name>): each one's TAutoConsoleVariable
     int n_ue_cvar;
+    uint64_t fps_target_ptr;   // a target frame rate the game steps by, an int32 at [main + fps_target_ptr] + fps_target_field (patch_nso.py, fps_target.py; hle_fpslock.c); 0 = none
+    uint32_t fps_target_field;
     uint64_t fps_state_off;    // frame step state page (patch_nso.py FRAME_STEP: Tears of the Kingdom 1.4.3 and Breath of the Wild 1.9.0 main); 0 = none
     uint64_t fill_d_off, fill_h_off;   // display-mode size words (docked / handheld) the loader fills with the screen's widths when the game starts (patch_nso.py HOST_FILLS); 0 = none
     uint64_t fill_w_off;       // a resolution record (four words: a world size at a 576-line reference, then the handheld size) whose world word the loader widens to the screen's aspect on a screen wider than the stock frame (patch_nso.py HOST_FILLS 'W'); 0 = none

@@ -2,6 +2,7 @@
 // fps_target (DM_FPS_TARGET overrides; 0 = leave the game's own limit) -- or, for an int32 frame-rate field only, the display rate while the front end's measured
 // 120 Hz drives the pacing (dm_display_hz, hle_nvn.c), the game's own value going back when the mode releases -- the same key that drives Tears of the Kingdom's frame step (loader.c install_fps_state). Called on every present
 // (hle_nvn.c); the game sets the values after boot and may set them again, so each is written whenever it differs. Fixed addresses: each row runs only on the main build it was found in (AGENTS.md).
+// A target frame rate the game steps by needs no row either: the rewriter finds it by its readers in any build (dm/tools/fps_target.py, main's fixups FPS_TARGET_PTR / FPS_TARGET_FIELD).
 // Unreal Engine needs no row: the rewriter finds its console variables by their registered names in any build (dm/tools/ue_cvar.py, main's fixups UE_CVAR:<name>), and the host writes
 // the frame limit, the profile's ue_fps_cvar (t.MaxFPS, or a game's own variable its settings apply to t.MaxFPS: SHIN MEGAMI TENSEI V: Vengeance's Project.FrameRateLimit), and the
 // present interval, rhi.SyncInterval (nvn.SyncInterval in UE 4.18's Switch RHI: DRAGON QUEST XI S). Each is a TAutoConsoleVariable whose +0x10 points to its value, the game thread's
@@ -21,7 +22,7 @@
 enum { FPS_F32, VSYNCS_I32, MS_F32, FPS_I32, TICKS_U32, SECS_F32, MODE_U32, FPS_F64 };
 #define MS_MARGIN 0.5f
 static float ms_want(int fps) { return 1000.0f / (float)fps - (fps == 60 ? MS_MARGIN : 0); }
-typedef struct { const char *build, *what; uint64_t ptr_off; uint32_t field; uint8_t kind, copies; uint32_t scale; } lock_t;
+typedef struct { const char *build, *what; uint64_t ptr_off; uint32_t field; uint8_t kind, copies; uint32_t scale; uint8_t display_rate; } lock_t;
 static const lock_t k_locks[] = {
     // Pokemon Brilliant Diamond 1.3.0: Unity's Application.targetFrameRate. Its icall registration (main+0xe34e60) resolves to main+0xdc8e70 -> +0x5fa640,
     // which stores w0 at main+0x4afc868; the getter at +0x5fa630 reads the same int32. The game sets 30 when entering the field; display pacing alone does not remove that cap.
@@ -39,7 +40,7 @@ static const lock_t k_locks[] = {
     // get/set_targetFrameRate (entries 415/416) to main+0x1b0c080 / +0x1b0c090, three-instruction accessors of the int32 at main+0x8020db0. The field ships as
     // -1 (pace to the display) and the game's platform code reports a 60 Hz display whatever the screen does (Screen::get_currentResolution builds its 60/1
     // refresh from immediates), so only the display-rate target raises it: 120 while the measured rate drives the pacing, -1 back when it releases
-    { "fc9ea4ccc955d5799f37752b2d730b31", "Unity targetFrameRate", 0, 0x8020db0, FPS_I32, 1 },
+    { "fc9ea4ccc955d5799f37752b2d730b31", "Unity targetFrameRate", 0, 0x8020db0, FPS_I32, 1, 0, 1 },
     // Need for Speed: Hot Pursuit Remastered 1.0.3: Criterion's frame timing. A uint32 in main's bss (main+0xf0043c) selects the engine's 60 fps mode, in which it takes its frame time from
     // the timer object at [main+0xed96a8]: +0x30 the frame in system ticks (19.2 MHz, 640,000 at 30 fps) and +0x28 a tenth of it; the game's own step, at [main+0xeffc60] +0x30 (2D) and +0x50
     // (3D), is a float of seconds per frame. Its limiter, a spin on the system tick at main+0x483588..+0x4835a4, is cut by the rewriter (patches.py). From masagrator's FPSLocker config for this
@@ -186,6 +187,15 @@ static void fb_tick(int target, const char *src) {
     }
 }
 
+// The row of a target frame rate the game steps by, at the place the rewriter found (dm/tools/fps_target.py; main's fixups FPS_TARGET_PTR, FPS_TARGET_FIELD): an int32 frame rate in the
+// object a global points to, which the game's readers divide 60.0 by to step it, and which the game sets to 30 or 60 itself. Fire Emblem Fortune's Weave's gxc graphics object holds it
+// (+0x1dc; its present asks for interval 60 / target), so at 60 the game asks for interval 1 and steps by 1.0 a frame. 0 rows: not found in this main
+static int target_row(const module_t *m, lock_t *out) {
+    if (!m->fps_target_ptr) return 0;
+    *out = (lock_t){ "", "target frame rate", m->fps_target_ptr, m->fps_target_field, FPS_I32, 1, 0 };
+    return 1;
+}
+
 // The Unreal rows of this main: the profile's frame-limit variable and the present intervals, at the objects the rewriter found (0 rows: not an Unreal main). *missing: an Unreal main
 // (the rewriter found some of its variables) without the profile's frame-limit variable
 static int ue_rows(const module_t *m, lock_t *out, int *missing) {
@@ -201,24 +211,26 @@ static int ue_rows(const module_t *m, lock_t *out, int *missing) {
 }
 
 // The running main's engine limiters, found once: by the first present (dm_fps_lock_tick) or by the graphics layer's present cap, which may ask first (dm_fps_lock_engine, from the acquire)
-static lock_t ue[3]; static const lock_t *rows[NLOCKS + 3]; static int nrow, nier, ue_missing; static uint8_t *base; static uint32_t display;
+static lock_t ue[3], target_lock; static const lock_t *rows[NLOCKS + 4]; static int nrow, nier, ue_missing; static uint8_t *base; static uint32_t display;
 static pthread_once_t g_found = PTHREAD_ONCE_INIT;
 static void lock_find(void) {
     for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) {
         for (int k = 0; k < (int)(sizeof k_nier_dr / sizeof *k_nier_dr); k++) if (!strcmp(g_mod[i].build_id, k_nier_dr[k].build)) { base = g_mod[i].base; nier = 1; display = k_nier_dr[k].display; }
         for (int k = 0; k < NLOCKS; k++) if (!strcmp(g_mod[i].build_id, k_locks[k].build)) { rows[nrow++] = &k_locks[k]; base = g_mod[i].base; }
+        if (target_row(&g_mod[i], &target_lock)) { rows[nrow++] = &target_lock; base = g_mod[i].base; }
         int nue = ue_rows(&g_mod[i], ue, &ue_missing);
         for (int k = 0; k < nue; k++) { rows[nrow++] = &ue[k]; base = g_mod[i].base; }
     }
     fb_find();
 }
-// Whether the host writes fps_target into an engine limiter of this main (a row for its build, NieR's frame interval, Unreal's variables or Frostbite's simulation rate, found by name).
+// Whether the host writes fps_target into an engine limiter of this main (a row for its build, NieR's frame interval, a target frame rate found by its readers, Unreal's variables or
+// Frostbite's simulation rate, found by name).
 // Without one, and without a frame step state page, nothing makes the game follow the cap, so the graphics layer keeps the game's own present interval (hle_nvn.c fps_present_cap):
 // presenting at a cap the game does not step by runs a fixed-step game fast or slow (Tears of the Kingdom 1.4.2 at 2x with DM_FPS_TARGET=60)
 int dm_fps_lock_engine(void) { pthread_once(&g_found, lock_find); return nrow || nier || fb.n; }
 void dm_fps_lock_tick(void) {
     dynamic_resolution_tick();   // separate from the FPS cap
-    static int state = -2, nlog[NLOCKS + 3], fixed, disp[NLOCKS + 3], target; static const char *src;
+    static int state = -2, nlog[NLOCKS + 4], fixed, disp[NLOCKS + 4], target; static const char *src;
     if (state == -1) return;
     if (state == -2) {
         state = -1; pthread_once(&g_found, lock_find);
@@ -232,7 +244,7 @@ void dm_fps_lock_tick(void) {
             if (nier) LOG("main: NieR frame interval left as the game sets it (%s)", src);
             if (fb.n) LOG("main: Frostbite simulation rate left as the game sets it (%s)", src);
             int display_rows = 0;
-            for (int r = 0; r < nrow; r++) if (rows[r]->kind == FPS_I32) display_rows = 1;
+            for (int r = 0; r < nrow; r++) if (rows[r]->display_rate) display_rows = 1;   // only a row marked for it: a found target-frame-rate row steps by 60 / its field, so the display rate must never drive it
             if (!display_rows) return;   // no fixed target and no display-rate field to serve: the tick stops here, as upstream's no-target path does
         }
         fixed = t; target = t; state = 0;
@@ -268,6 +280,7 @@ void dm_fps_lock_tick(void) {
         const lock_t *L = rows[r]; uint64_t obj = (uint64_t)(uintptr_t)base;
         if (L->ptr_off && (!rd((uint64_t)(uintptr_t)(base + L->ptr_off), &obj, sizeof obj) || !obj)) continue;   // not created yet
         if (L->kind == FPS_F64) {
+            if (!target) continue;   // no fixed target, and this row takes none from the display rate: leave it, never write 0
             for (int c = 0; c < L->copies; c++) {
                 uint64_t a = obj + L->field + 8 * (uint64_t)c; double cur, want = target;
                 if (!rd(a, &cur, sizeof cur)) break;
@@ -281,7 +294,7 @@ void dm_fps_lock_tick(void) {
         for (int c = 0; c < L->copies; c++) {
             uint64_t a = obj + L->field + 4 * (uint64_t)c; uint32_t cur, want; char was[16];
             if (!rd(a, &cur, sizeof cur)) break;
-            int target = L->kind == FPS_I32 && !fixed ? dtgt : fixed, tsrc = target && !fixed;   // tsrc: the target is the display rate's
+            int target = L->display_rate && !fixed ? dtgt : fixed, tsrc = target && !fixed;   // tsrc: the target is the display rate's
             if (!target) {   // the display rate released (or no target at all): a value it wrote goes back to the game's own -1
                 if (disp[r] && (int32_t)cur == 120) { uint32_t *p = (uint32_t *)(uintptr_t)a; dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, 0xffffffffu, __ATOMIC_RELAXED); disp[r] = 0; LOG("main: %s 120 → -1 (the display rate released; the game's own pacing is back)", L->what); }
                 continue;
