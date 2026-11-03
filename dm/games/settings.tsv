@@ -20,6 +20,7 @@ SS_DISPLAY_HZ	choice	60=60 帧,120=120 帧	60	DM_GAME_DISPLAY_HZ!=0	Game	帧率	
 DM_RENDER_SCALE	range	0.5:1.0:0.05	1.0	fixups:RENDER_SCALE	Game	渲染缩放	低于 100% 更流畅，画面稍糊	level=basic
 DM_OPMODE	choice	1=底座,0=掌机	DM_GAME_OPMODE	always	Game	主机模式	底座 = 1080p 电视模式；掌机 = 720p，部分游戏的触屏功能仅掌机模式可用	level=basic
 DM_PRESENT_UPSCALE	choice	off=标准,metalfx=MetalFX	off	always	Game	超分	更吃 GPU，可能增加发热。	
+DM_UPSCALER	choice	game=Game's own,metalfx=MetalFX	game	DM_GAME_UPSCALER_N!=0	Game	游戏超分
 DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	游戏语言	游戏内文本语言	level=basic
 DM_FULLSCREEN	choice	0=Window,1=Fullscreen	0	platform:mac	Game	Display mode		level=basic
 DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	platform:ios	Game	帧数计数器	左上角显示实时帧数	
