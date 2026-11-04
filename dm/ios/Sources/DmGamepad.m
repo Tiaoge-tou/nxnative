@@ -417,7 +417,7 @@ static BOOL hadesBadged(const char *name) {   // the hadesskin keys the badge se
 static CGFloat hadesArtF(const char *name) {   // a key's art fraction: in badge mode a badged key's canvas is 594 for the same 448 disc, so its layer grows to keep the disc itself at the plain skin's size and place
     return hadesSkinMode() == 2 && hadesBadged(name) ? 448.0 / 594.0 : HADES_ART_F;
 }
-static CGPoint hadesCenter(int i, CGRect b) {   // the centre of Hades key i, in points
+static CGPoint hadesCenterRaw(int i, CGRect b) {   // the centre of Hades key i from the table alone, in points
     CGFloat y = k_hades[i].y;
     if (k_hades[i].kind == H_FACE && k_hades[i].bit != B_Y) {   // a fan key: its y is an offset from Y's centre in width fractions
         static int yi = -1;
@@ -425,6 +425,41 @@ static CGPoint hadesCenter(int i, CGRect b) {   // the centre of Hades key i, in
         y = k_hades[yi].y + y * b.size.width / b.size.height;
     }
     return CGPointMake(k_hades[i].x * b.size.width, y * b.size.height);
+}
+// ---- Custom layout for the Hades pad (the - key's long-press editor) ----
+// The same editor the skin pad has, over this table: every key (and the stick) can be dragged to a new
+// centre and scaled between 0.6x and 1.6x; per key only the centre's offset from the table (as screen
+// fractions) and the size multiplier are kept, in NSUserDefaults under DmPadCustomHades — the skin pad's
+// store is DmPadCustom, and the two stay apart (each game is its own app, and the tables' keys differ).
+// hadesCenter and hadesR apply them, so the drawing, the hit test and the hit area all agree, in every
+// Hades skin choice (the geometry is shared). The slot HADES_N is the stick. A fan key's offset is its
+// own: it does not follow Y when Y itself is moved, as the skin rows do not follow their anchor either.
+static NSString *const k_hcustom_key = @"DmPadCustomHades";
+static CGFloat g_hcustDX[HADES_N + 1], g_hcustDY[HADES_N + 1], g_hcustS[HADES_N + 1];
+static BOOL g_hcustReady;
+static void hcustLoad(void) {
+    if (g_hcustReady) return; g_hcustReady = YES;
+    for (int i = 0; i <= HADES_N; i++) g_hcustS[i] = 1;
+    NSDictionary *d = [NSUserDefaults.standardUserDefaults dictionaryForKey:k_hcustom_key];
+    for (int i = 0; i <= HADES_N; i++) {
+        NSDictionary *e = d[i == HADES_N ? @"stick" : [NSString stringWithUTF8String:k_hadesArt[i]]];
+        if (!e) continue;
+        g_hcustDX[i] = [e[@"dx"] doubleValue]; g_hcustDY[i] = [e[@"dy"] doubleValue];
+        CGFloat s = [e[@"s"] doubleValue]; if (s >= 0.6 && s <= 1.6) g_hcustS[i] = s;
+    }
+}
+static void hcustSave(void) {
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    for (int i = 0; i <= HADES_N; i++) if (g_hcustDX[i] || g_hcustDY[i] || g_hcustS[i] != 1)
+        d[i == HADES_N ? @"stick" : [NSString stringWithUTF8String:k_hadesArt[i]]] = @{@"dx": @(g_hcustDX[i]), @"dy": @(g_hcustDY[i]), @"s": @(g_hcustS[i])};
+    [NSUserDefaults.standardUserDefaults setObject:d forKey:k_hcustom_key];
+}
+static CGFloat hadesR(int i) { hcustLoad(); return k_hades[i].r * g_hcustS[i]; }   // Hades key i's radius (a fraction of the width) with the player's size multiplier
+static CGPoint hadesCenter(int i, CGRect b) {   // the centre the pad draws and hit-tests at: the table's centre plus the player's custom offset
+    hcustLoad();
+    CGPoint c = hadesCenterRaw(i, b);
+    c.x += g_hcustDX[i] * b.size.width; c.y += g_hcustDY[i] * b.size.height;
+    return clampCentre(c, hadesR(i) * b.size.width, b);
 }
 static UIView *clearDisc(UIView *parent, CGFloat tint) {
     // A plain translucent disc: a black fill at the given alpha and a thin light rim, nothing else.
@@ -572,10 +607,12 @@ static void pads_start(void);   // Physical controllers, below
     CAShapeLayer *_sSym[SKIN_N];                   // drawn glyphs: the - / + bars and the eye's pupil dot (text glyphs ride high, and an eye has no letter)
     UIView *_sStick, *_sKnob;                      // the glass stick disc and its knob
     BOOL _skillOff;                                // the skill keys (grp SK_SKILL) are hidden by the eye key
-    BOOL _editing;                                 // the layout editor is up (a long press on the eye key): the pad drives nothing, every key shows, drags rearrange it
-    int _editSel, _editItem;                       // the editor's selected key and the one being dragged (a k_skin index, SKIN_N = the stick, -1 = none)
+    BOOL _editing;                                 // the layout editor is up (a long press on the eye key, or on the Hades - key): the pad drives nothing, every key shows, drags rearrange it
+    int _editSel, _editItem;                       // the editor's selected key and the one being dragged (an index in the active table — k_skin or k_hades — the table's count = the stick, -1 = none)
     UITouch *_editTouch; CGPoint _editGrab;        // the editor's drag in flight: its touch and where in the key it holds it
     UITouch *_eyeTouch; CGPoint _eyePoint; NSTimer *_eyeTimer; BOOL _eyeFired, _eyeMoved;   // the eye key's touch, watched for the editor's long press (a drag of the key in the editor disarms it)
+    UITouch *_minusTouch; CGPoint _minusPoint; NSTimer *_minusTimer; BOOL _minusFired, _minusMoved;   // the Hades - key's touch, watched for the editor's long press the eye's way; the key is a game key, so its press is held back while the watch runs and a tap is pulsed at the lift (pulseMinus)
+    UITouch *_minusPulseTouch; NSTimer *_minusPulseTimer;   // a - tap's pulse in flight: its owner entry is kept for a few frames so the game sees the press
     UIView *_editBar; UILabel *_editInfo; UIButton *_editMinus, *_editPlus, *_editReset, *_editDone;   // the editor's bar at the top centre, clear of every key: the selected key's size, its - / + steppers, restore defaults, done
     CAShapeLayer *_editRing;                       // the ring around the editor's selected key
     CALayer *_skipKey, *_padKey;   // the cutscene keys: the skin's Skip medallion at the Bind key's place, its Pad medallion at the eye key's place (drawn in every skin mode, glass included)
@@ -646,7 +683,6 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             _skinDisc = imgLayer(_controls, "stick"); _skinDisc.opacity = 0.75;
             _skinKnob = imgLayer(_controls, "knob"); _skinKnob.opacity = 0.95;
             for (int i = 0; i < SKIN_N; i++) { _skinBtn[i] = imgLayer(_controls, k_skin[i].art); _skinBtn[i].opacity = 1.0; }
-            _editRing = shape(_controls); _editRing.fillColor = nil; _editRing.strokeColor = UIColor.whiteColor.CGColor; _editRing.lineWidth = 2; _editRing.shadowOpacity = 0; _editRing.hidden = YES;   // the layout editor's selection ring
             for (int i = 0; i < SKIN_N; i++) if (silkLetter(i)) { _letBtn[i] = imgLayer(_controls, silkLetter(i)); _letBtn[i].hidden = YES; }   // the controller pages' letter layers: applyPadMode shows each in its key's place
             for (int j = 0; j < TITLE_N; j++) { _titleBtn[j] = imgLayer(_controls, k_title[j].art); _titleBtn[j].hidden = YES; }   // the title screen's letter keys: applyPadMode shows them on the title screen
             for (int j = 0; j < BAG_N; j++) { _bagBtn[j] = imgLayer(_controls, k_bag[j].art); _bagBtn[j].hidden = YES; }   // the bag layout's keys: applyPadMode shows them while the inventory is open
@@ -692,14 +728,6 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             if (!_sSkinMode) { _skinDisc.hidden = YES; _skinKnob.hidden = YES; for (int i = 0; i < SKIN_N; i++) _skinBtn[i].hidden = YES; }
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _ring.hidden = YES; _knob.hidden = YES;
-            _editBar = [[UIView alloc] initWithFrame:CGRectZero];   // the layout editor's bar: built once, shown only while editing (added last, above the glass box)
-            _editBar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55]; _editBar.layer.cornerRadius = 10; _editBar.hidden = YES;
-            [self addSubview:_editBar];
-            _editInfo = [[UILabel alloc] init]; _editInfo.textColor = UIColor.whiteColor; _editInfo.font = [UIFont systemFontOfSize:15]; _editInfo.adjustsFontSizeToFitWidth = YES; _editInfo.minimumScaleFactor = 0.75; [_editBar addSubview:_editInfo];   // the readout shrinks to fit the compact bar
-            _editMinus = [self editButton:@"-" action:@selector(editMinusTapped)];
-            _editPlus = [self editButton:@"+" action:@selector(editPlusTapped)];
-            _editReset = [self editButton:[NSString stringWithUTF8String:"\xE6\x81\xA2\xE5\xA4\x8D\xE9\xBB\x98\xE8\xAE\xA4"] action:@selector(editResetTapped)];   // "restore defaults"
-            _editDone = [self editButton:[NSString stringWithUTF8String:"\xE5\xAE\x8C\xE6\x88\x90"] action:@selector(editDoneTapped)];   // "done"
             _padMode = dm_pad_mode(); _padTab = dm_pad_tab(); _padPage = dm_pad_page();   // the watcher's state as it stands: -1 (unpublished) until it derives its first mode
             [self applyPadMode];   // the pad starts in that state's own showing: hidden while the game loads to its title screen
         }
@@ -734,6 +762,17 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             }
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _ring.hidden = YES; _knob.hidden = YES;
+        }
+        if (_skin || _hades) {   // the layout editor's furniture, shared by both pads (the skin's eye key opens it, the Hades - key opens it): built once, shown only while editing
+            _editRing = shape(_controls); _editRing.fillColor = nil; _editRing.strokeColor = UIColor.whiteColor.CGColor; _editRing.lineWidth = 2; _editRing.shadowOpacity = 0; _editRing.hidden = YES;   // the layout editor's selection ring
+            _editBar = [[UIView alloc] initWithFrame:CGRectZero];   // the layout editor's bar: built once, shown only while editing (added last, above the glass box)
+            _editBar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55]; _editBar.layer.cornerRadius = 10; _editBar.hidden = YES;
+            [self addSubview:_editBar];
+            _editInfo = [[UILabel alloc] init]; _editInfo.textColor = UIColor.whiteColor; _editInfo.font = [UIFont systemFontOfSize:15]; _editInfo.adjustsFontSizeToFitWidth = YES; _editInfo.minimumScaleFactor = 0.75; [_editBar addSubview:_editInfo];   // the readout shrinks to fit the compact bar
+            _editMinus = [self editButton:@"-" action:@selector(editMinusTapped)];
+            _editPlus = [self editButton:@"+" action:@selector(editPlusTapped)];
+            _editReset = [self editButton:[NSString stringWithUTF8String:"\xE6\x81\xA2\xE5\xA4\x8D\xE9\xBB\x98\xE8\xAE\xA4"] action:@selector(editResetTapped)];   // "restore defaults"
+            _editDone = [self editButton:[NSString stringWithUTF8String:"\xE5\xAE\x8C\xE6\x88\x90"] action:@selector(editDoneTapped)];   // "done"
         }
         _menu = [DmMenuButton buttonWithType:UIButtonTypeCustom];
         _menu.backgroundColor = k_idle; _menu.layer.borderColor = k_line.CGColor; _menu.layer.borderWidth = 1.5;
@@ -808,7 +847,9 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
 - (CGPoint)facePos:(int)b { CGPoint c = self.faceCenter; CGFloat g = self.faceGap;
     switch (b) { case B_A: return CGPointMake(c.x + g, c.y); case B_B: return CGPointMake(c.x, c.y + g); case B_X: return CGPointMake(c.x, c.y - g); default: return CGPointMake(c.x - g, c.y); } }
 - (CGPoint)stickHome {   // the left stick's ring centre; in skin mode the disc centre (a fraction of the whole screen)
-    if (_hades) { CGRect b = self.bounds; return CGPointMake(0.168 * b.size.width, 0.664 * b.size.height); }
+    if (_hades) { CGRect b = self.bounds; hcustLoad();   // the Hades stick's home, plus the layout editor's custom offset for it
+        CGPoint c = CGPointMake((0.168 + g_hcustDX[HADES_N]) * b.size.width, (0.664 + g_hcustDY[HADES_N]) * b.size.height);
+        return clampCentre(c, [self stickR:0], b); }
     if (_skin) { CGRect b = self.bounds; custLoad();   // the skin's disc, plus the layout editor's custom offset for it
         CGPoint c = CGPointMake((0.162 + g_custDX[SKIN_N]) * b.size.width, (0.742 + g_custDY[SKIN_N]) * b.size.height);
         return clampCentre(c, [self stickR:0], b); }
@@ -819,7 +860,7 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
     }
     CGRect s = self.corner; return side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u); }
 - (CGPoint)stickCentre:(int)i { return i ? _rCentre : _hades && _stick[0] ? _lCentre : self.stickHome; }
-- (CGFloat)stickR:(int)i { if (_hades && !i) return 0.061 * self.bounds.size.width; if (_skin && !i) { custLoad(); return 0.074 * g_custS[SKIN_N] * self.bounds.size.width * (_sSkinMode ? 1 : 0.9); } return (i ? K_RSTICK_R : K_STICK_R) * self.u; }   // the glass choice's stick runs at 0.9 of the image skins': the disc, the knob's travel and the touch grab all read this radius, and the Up key's rim anchor scales with it (skinCenterRaw)
+- (CGFloat)stickR:(int)i { if (_hades && !i) { hcustLoad(); return 0.061 * g_hcustS[HADES_N] * self.bounds.size.width; } if (_skin && !i) { custLoad(); return 0.074 * g_custS[SKIN_N] * self.bounds.size.width * (_sSkinMode ? 1 : 0.9); } return (i ? K_RSTICK_R : K_STICK_R) * self.u; }   // the glass choice's stick runs at 0.9 of the image skins': the disc, the knob's travel and the touch grab all read this radius, and the Up key's rim anchor scales with it (skinCenterRaw)
 - (BOOL)inRightArea:(CGPoint)p { CGRect b = _layout.controls; return p.x >= CGRectGetMaxX(b) - b.size.width * K_RSWIPE; }
 - (CGPoint)dpadCenter {
     if (self.portraitControls) {
@@ -879,7 +920,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     CGRect b = self.bounds;
     for (int i = 0; i < HADES_N; i++) {
         CGPoint c = hadesCenter(i, b);
-        if (dist(p, c) <= k_hades[i].r * b.size.width * 1.4) return i; }
+        if (dist(p, c) <= hadesR(i) * b.size.width * 1.4) return i; }
     return -1;
 }
 - (CGFloat)buttonDistance:(int)b point:(CGPoint)p {
@@ -1000,7 +1041,14 @@ int front_web_touch(void);
         if (_padOff) { game |= [self gameBegin:t]; continue; }
         CGPoint p = [t locationInView:self];
         if (_hades) {   // Hades mode: a glass key, the floating left stick (a touch in the left half), the right stick (the right third), else the game's touch screen
+            if (_editing) {   // the layout editor takes every touch: select a key (tap) and move it (drag); nothing reaches the game
+                int it = [self editItemAt:p];
+                if (it >= 0) { _editTouch = t; _editItem = it; _editSel = it; CGPoint c = [self editCentre:it]; _editGrab = CGPointMake(p.x - c.x, p.y - c.y); [_owner setObject:@(C_EDIT | (uint64_t)it << 8) forKey:t];
+                    if (it < HADES_N && k_hades[it].bit == B_MINUS) { _minusTouch = t; _minusPoint = p; _minusFired = NO; _minusMoved = NO; [self armMinusTimer]; } }   // the - key in the editor: a still hold leaves the editor (minusLongPress), a drag just moves it
+                else _editSel = -1;
+                [self updateEditInfo]; [self setNeedsLayout]; continue; }
             int hb = [self hadesBtnAt:p];
+            if (hb >= 0 && k_hades[hb].bit == B_MINUS) { _minusTouch = t; _minusPoint = p; _minusFired = NO; _minusMoved = NO; [self armMinusTimer]; continue; }   // the - key: its press is held back while the long-press watch runs — a tap is pulsed when it lifts (endTouches), holding it for 0.6s opens the layout editor instead (minusLongPress), so the game never sees the hold
             if (hb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_hades[hb].bit << 8) forKey:t]; continue; }
             if (!_stick[0] && p.x < self.bounds.size.width * 0.5) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p; _lCentre = p; continue; }
             if (!_stick[1] && [self inRightArea:p]) { [_owner setObject:@(C_STICK | 1ull << 8) forKey:t]; _stick[1] = t; _stickNow[1] = p; _rCentre = p; continue; }
@@ -1049,10 +1097,12 @@ int front_web_touch(void);
     for (UITouch *t in ts) {
         uint64_t v = [_owner objectForKey:t].unsignedLongLongValue; int c = (int)(v & 0xff); CGPoint p = [t locationInView:self];
         if (t == _eyeTouch && dist(p, _eyePoint) > 12) { _eyeMoved = YES; [_eyeTimer invalidate]; _eyeTimer = nil; }   // the eye key's touch became a drag: no long press, and no tap when it lifts either
+        if (t == _minusTouch && dist(p, _minusPoint) > 12) { _minusMoved = YES; [_minusTimer invalidate]; _minusTimer = nil; }   // the - key's touch became a drag: no long press, and no tap when it lifts either (in the editor the C_EDIT drag below still moves the key)
         if (c == C_EDIT) { int it = (int)(v >> 8);   // the layout editor's drag: the item's centre follows the finger (clamped like skinCenter's), the offset from the table is what is kept
             if (t == _editTouch && it == _editItem) { CGRect b = self.bounds; CGPoint raw = [self editRawCentre:it];
                 CGPoint want = clampCentre(CGPointMake(p.x - _editGrab.x, p.y - _editGrab.y), [self editRadius:it], b);
-                g_custDX[it] = (want.x - raw.x) / b.size.width; g_custDY[it] = (want.y - raw.y) / b.size.height; [self setNeedsLayout]; } }
+                CGFloat *dxs = [self editDXs], *dys = [self editDYs];
+                dxs[it] = (want.x - raw.x) / b.size.width; dys[it] = (want.y - raw.y) / b.size.height; [self setNeedsLayout]; } }
         else if (c == C_FACE) [_faceOf setObject:@([self faceAt:p]) forKey:t];
         else if (c == C_STICK) { _stickNow[v >> 8] = p;
             if ((v >> 8) == 1) { CGFloat d = dist(p, _rCentre), R = [self stickR:1];   // the right stick's centre follows a finger past its radius, so turning back responds at once
@@ -1063,22 +1113,26 @@ int front_web_touch(void);
     [self recompute];
 }
 - (void)endTouches:(NSSet<UITouch *> *)ts tapped:(BOOL)ended {
-    BOOL game = NO;
+    BOOL game = NO; UITouch *minusTapTouch = nil;
     for (UITouch *t in ts) {
         uint64_t v = [_owner objectForKey:t].unsignedLongLongValue;
         if (t == _eyeTouch) { [_eyeTimer invalidate]; _eyeTimer = nil; _eyeTouch = nil;   // the eye key's touch lifts: a plain tap (not a hold, not a drag, not in the editor) flips the skill keys' visibility
             if (ended && !_eyeFired && !_eyeMoved && !_editing) { _skillOff = !_skillOff; [self refresh]; }
             _eyeFired = NO; _eyeMoved = NO; }
-        if (t == _editTouch) { _editTouch = nil; _editItem = -1; custSave(); }   // the editor's drag ends: the offset is kept
+        if (t == _minusTouch) { [_minusTimer invalidate]; _minusTimer = nil; _minusTouch = nil;   // the - key's touch lifts: a plain tap (not a hold, not a drag, not in the editor) is pulsed to the game below, after this loop's cleanup (pulseMinus)
+            if (ended && !_minusFired && !_minusMoved && !_editing) minusTapTouch = t;
+            _minusFired = NO; _minusMoved = NO; }
+        if (t == _editTouch) { _editTouch = nil; _editItem = -1; [self editSave]; }   // the editor's drag ends: the offset is kept
         if ((v & 0xff) == C_GAME && (v >> 8) < 16) { _game[v >> 8] = nil; game = YES; }
         [_owner removeObjectForKey:t]; [_faceOf removeObjectForKey:t]; for (int i = 0; i < 2; i++) if (t == _stick[i]) _stick[i] = nil;
     }
+    if (minusTapTouch) [self pulseMinus:minusTapTouch];
     if (game) [self pushGame];
     [self recompute];
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:YES]; }
 - (void)touchesCancelled:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:NO]; }
-- (void)reset { [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [_eyeTimer invalidate]; _eyeTimer = nil; _eyeTouch = nil; _editTouch = nil; _editItem = -1; [self pushGame]; [self recompute]; }
+- (void)reset { [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [_eyeTimer invalidate]; _eyeTimer = nil; _eyeTouch = nil; [_minusTimer invalidate]; _minusTimer = nil; _minusTouch = nil; [_minusPulseTimer invalidate]; _minusPulseTimer = nil; _minusPulseTouch = nil; _editTouch = nil; _editItem = -1; [self pushGame]; [self recompute]; }
 // ---- Pad mode (skin mode): the host watches the game's state (hle_hid.c dm_pad_mode) and the pad hides while a cutscene or a load runs ----
 // Mode 1 (a load) hides the pad outright; modes 2 and 3 (a cutscene) show the Pad recall key at the eye key's place, and mode 3 (the
 // cutscene can be skipped) the Skip key at the Bind key's place. Recalling brings the whole pad back for the rest of the mode. While the
@@ -1104,7 +1158,7 @@ int front_web_touch(void);
     if (_padMode == 6) return silkLetter(i) != nil;   // the controller pages: the letter layer takes the icon's place; the eye has no letter, so its icon shows there (its tap still flips the skill keys' state for the play pages)
     return _skillOff && k_skin[i].grp == SK_SKILL;
 }
-// ---- Layout editor (skin mode): a long press on the eye key rearranges the pad ----
+// ---- Layout editor: a long press on the eye key (skin pad) or the - key (Hades pad) rearranges the pad ----
 // While the editor is up the pad drives nothing: entering it releases every held touch (reset), its own
 // touches are taken by the editor branch of touchesBegan before any game path, and every key shows (the
 // eye's hidden skill keys dimmed, in the image skins) so they can be placed too. Changes are written to
@@ -1116,7 +1170,7 @@ int front_web_touch(void);
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside]; [_editBar addSubview:b]; return b;
 }
 - (void)setEditing:(BOOL)on {
-    if (!_skin || on == _editing) return;
+    if (!(_skin || _hades) || on == _editing) return;
     _editing = on; _editSel = -1; _editItem = -1; _editTouch = nil;
     if (on) [self reset];   // held touches end: nothing reaches the game while the pad is rearranged
     _editBar.hidden = !on; _editRing.hidden = !on;
@@ -1124,33 +1178,58 @@ int front_web_touch(void);
 }
 - (void)armEyeTimer { [_eyeTimer invalidate]; _eyeTimer = [NSTimer scheduledTimerWithTimeInterval:0.6 target:self selector:@selector(eyeLongPress) userInfo:nil repeats:NO]; }
 - (void)eyeLongPress { if (_eyeTouch) { _eyeFired = YES; [self setEditing:!_editing]; } }   // holding the eye key toggles the layout editor; the touch's own lift then does nothing (endTouches checks _eyeFired)
-- (int)editItemAt:(CGPoint)p {   // the editor item under the point: a k_skin index, SKIN_N for the stick, or -1
+- (void)armMinusTimer { [_minusTimer invalidate]; _minusTimer = [NSTimer scheduledTimerWithTimeInterval:0.6 target:self selector:@selector(minusLongPress) userInfo:nil repeats:NO]; }
+- (void)minusLongPress { if (_minusTouch) { _minusFired = YES; [self setEditing:!_editing]; } }   // holding the Hades - key toggles the layout editor, the eye's way; the touch's own lift then does nothing (endTouches checks _minusFired)
+- (void)pulseMinus:(UITouch *)t {   // a - tap, delivered as a short press: the press was held back while the long-press watch ran, so it is registered now (endTouches, after its cleanup) and released a few frames later (minusPulseEnd), long enough for the game's poll to see it
+    if (_minusPulseTouch && _minusPulseTouch != t) [_owner removeObjectForKey:_minusPulseTouch];   // a re-tap inside the last pulse's few frames: the old press ends here, the new one takes its place
+    _minusPulseTouch = t;
+    [_owner setObject:@(C_BTN | (uint64_t)B_MINUS << 8) forKey:t];
+    [_minusPulseTimer invalidate]; _minusPulseTimer = [NSTimer scheduledTimerWithTimeInterval:0.07 target:self selector:@selector(minusPulseEnd) userInfo:nil repeats:NO];
+}
+- (void)minusPulseEnd { _minusPulseTimer = nil; if (_minusPulseTouch) { [_owner removeObjectForKey:_minusPulseTouch]; _minusPulseTouch = nil; } [self recompute]; }
+// The editor's active table: the skin's k_skin or Hades' k_hades, with its own custom store; item indices are
+// the table's, and the table's count is the stick's slot in both.
+- (int)editCount { return _hades ? HADES_N : SKIN_N; }
+- (CGFloat *)editDXs { return _hades ? g_hcustDX : g_custDX; }
+- (CGFloat *)editDYs { return _hades ? g_hcustDY : g_custDY; }
+- (CGFloat *)editSs { if (_hades) hcustLoad(); else custLoad(); return _hades ? g_hcustS : g_custS; }
+- (void)editSave { if (_hades) hcustSave(); else custSave(); }
+- (const char *)editName:(int)it { return it == [self editCount] ? "stick" : _hades ? k_hadesArt[it] : k_skin[it].art; }
+- (int)editItemAt:(CGPoint)p {   // the editor item under the point: a key index in the active table, the table's count for the stick, or -1
     CGRect b = self.bounds;
+    if (_hades) {
+        for (int i = 0; i < HADES_N; i++)
+            if (dist(p, hadesCenter(i, b)) <= fmax(hadesR(i) * b.size.width * 1.35, 26)) return i;
+        if (dist(p, self.stickHome) <= [self stickR:0] * 1.25) return HADES_N;
+        return -1;
+    }
     for (int i = 0; i < SKIN_N; i++) { if (k_skin[i].bit == B_UP) continue;   // the Up key rides on the stick: it is not edited on its own
         if (dist(p, skinCenter(i, b)) <= fmax(skinR(i) * b.size.width * 1.35, 26)) return i; }
     if (dist(p, self.stickHome) <= [self stickR:0] * 1.25) return SKIN_N;
     return -1;
 }
-- (CGPoint)editCentre:(int)it { return it == SKIN_N ? self.stickHome : skinCenter(it, self.bounds); }
-- (CGPoint)editRawCentre:(int)it { CGRect b = self.bounds; return it == SKIN_N ? CGPointMake(0.162 * b.size.width, 0.742 * b.size.height) : skinCenterRaw(it, b); }
-- (CGFloat)editRadius:(int)it { return it == SKIN_N ? [self stickR:0] : skinR(it) * self.bounds.size.width; }
+- (CGPoint)editCentre:(int)it { return it == [self editCount] ? self.stickHome : _hades ? hadesCenter(it, self.bounds) : skinCenter(it, self.bounds); }
+- (CGPoint)editRawCentre:(int)it { CGRect b = self.bounds; if (it == [self editCount]) return _hades ? CGPointMake(0.168 * b.size.width, 0.664 * b.size.height) : CGPointMake(0.162 * b.size.width, 0.742 * b.size.height); return _hades ? hadesCenterRaw(it, b) : skinCenterRaw(it, b); }
+- (CGFloat)editRadius:(int)it { return it == [self editCount] ? [self stickR:0] : (_hades ? hadesR(it) : skinR(it)) * self.bounds.size.width; }
 - (void)updateEditInfo {
     if (!_editInfo) return;
     if (_editSel < 0) _editInfo.text = [NSString stringWithUTF8String:"\xE9\x80\x89\xE6\x8B\xA9\xE6\x8C\x89\xE9\x94\xAE"];   // "select a key"
-    else _editInfo.text = [NSString stringWithFormat:@"%s %.2fx", _editSel == SKIN_N ? "stick" : k_skin[_editSel].art, g_custS[_editSel]];
+    else _editInfo.text = [NSString stringWithFormat:@"%s %.2fx", [self editName:_editSel], [self editSs][_editSel]];
     _editMinus.enabled = _editPlus.enabled = _editSel >= 0;
     _editMinus.alpha = _editPlus.alpha = _editSel >= 0 ? 1 : 0.35;
 }
 - (void)editScaleBy:(CGFloat)d {
     if (_editSel < 0) return;
-    g_custS[_editSel] = roundf(fmin(fmax(g_custS[_editSel] + d, 0.6f), 1.6f) * 20) / 20;
-    custSave(); [self setNeedsLayout]; [self updateEditInfo];
+    CGFloat *ss = [self editSs];
+    ss[_editSel] = roundf(fmin(fmax(ss[_editSel] + d, 0.6f), 1.6f) * 20) / 20;
+    [self editSave]; [self setNeedsLayout]; [self updateEditInfo];
 }
 - (void)editMinusTapped { [self editScaleBy:-0.05]; }
 - (void)editPlusTapped { [self editScaleBy:0.05]; }
 - (void)editResetTapped {   // restore defaults: clear every custom value, live
-    for (int i = 0; i <= SKIN_N; i++) { g_custDX[i] = g_custDY[i] = 0; g_custS[i] = 1; }
-    custSave(); [self setNeedsLayout]; [self updateEditInfo]; [self refresh];
+    CGFloat *dxs = [self editDXs], *dys = [self editDYs], *ss = [self editSs];
+    for (int i = 0; i <= [self editCount]; i++) { dxs[i] = dys[i] = 0; ss[i] = 1; }
+    [self editSave]; [self setNeedsLayout]; [self updateEditInfo]; [self refresh];
 }
 - (void)editDoneTapped { [self setEditing:NO]; }
 - (void)applyPadMode {
@@ -1246,6 +1325,11 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         _label[b].contentsScale = scale; [_label[b] setNeedsDisplay];
     }
     _controls.frame = self.layer.bounds;
+    if (_editBar) { CGRect eb = self.bounds; CGFloat bw = 0.35 * eb.size.width; _editBar.frame = CGRectMake(0.28 * eb.size.width, self.safeAreaInsets.top + 6, bw, 46);   // the top centre is key-free on both pads (the skin's top row starts at 0.648 of the width, Hades' at 0.691): the bar stays inside x 0.28-0.63 of the width, compact, so it never covers a key
+        _editInfo.frame = CGRectMake(8, 0, bw - 238, 46); _editMinus.frame = CGRectMake(bw - 224, 6, 34, 34); _editPlus.frame = CGRectMake(bw - 184, 6, 34, 34);
+        _editReset.frame = CGRectMake(bw - 144, 6, 76, 34); _editDone.frame = CGRectMake(bw - 62, 6, 54, 34); }
+    if (_editRing) { BOOL show = _editing && _editSel >= 0; _editRing.hidden = !show;
+        if (show) setPath(_editRing, circlePath([self editCentre:_editSel], [self editRadius:_editSel] * 1.12 + 4)); }
     if (_skin) {   // the skin's image controls, at fractions of the whole screen (k_skin); the drawn ones stay hidden
         CGRect b = self.bounds; custLoad(); CGFloat d = 0.148 * b.size.width * g_custS[SKIN_N]; CGPoint hc = self.stickHome;
         _skinDisc.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d);
@@ -1262,11 +1346,6 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             _bagBtn[j].frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }
         if (_skipKey) { CGPoint c = skinCenter(5, b); CGFloat dd = skinR(5) * 2 * b.size.width; _skipKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Skip medallion at the Bind key's place, at its size
         if (_padKey) { CGPoint c = skinCenter(7, b); CGFloat dd = skinR(7) * 2 * b.size.width; _padKey.frame = CGRectMake(c.x - dd / 2, c.y - dd / 2, dd, dd); }   // the Pad medallion at the eye key's place, at its size
-        if (_editBar) { CGFloat bw = 0.35 * b.size.width; _editBar.frame = CGRectMake(0.28 * b.size.width, self.safeAreaInsets.top + 6, bw, 46);   // the top centre is key-free (the top row's leftmost key, the eye, starts at 0.648 of the width): the bar stays inside x 0.28-0.63 of the width, compact, so it never covers a key
-            _editInfo.frame = CGRectMake(8, 0, bw - 238, 46); _editMinus.frame = CGRectMake(bw - 224, 6, 34, 34); _editPlus.frame = CGRectMake(bw - 184, 6, 34, 34);
-            _editReset.frame = CGRectMake(bw - 144, 6, 76, 34); _editDone.frame = CGRectMake(bw - 62, 6, 54, 34); }
-        if (_editRing) { BOOL show = _editing && _editSel >= 0; _editRing.hidden = !show;
-            if (show) setPath(_editRing, circlePath([self editCentre:_editSel], [self editRadius:_editSel] * 1.12 + 4)); }
         if (_sGlassBox) {
             for (int i = 0; i < SKIN_N; i++) if (_sGlass[i]) { CGFloat r = skinR(i) * b.size.width; CGPoint c = skinCenter(i, b);
                 CGFloat dr = r * GLASS_BTN_F;   // the drawn disc at 0.93 of the nominal radius (GLASS_BTN_F), its glyph and wash scaled with it
@@ -1298,14 +1377,14 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     if (_hades) {   // the glass discs at fractions of the whole screen (k_hades); the stick disc is placed by refresh (it floats)
         CGRect b = self.bounds;
         _glassBox.frame = b;
-        for (int i = 0; i < HADES_N; i++) { CGFloat r = k_hades[i].r * b.size.width;
+        for (int i = 0; i < HADES_N; i++) { CGFloat r = hadesR(i) * b.size.width;
             CGPoint c = hadesCenter(i, b);
             _hGlass[i].frame = CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r); _hGlass[i].layer.cornerRadius = r;
             setPath(_hWash[i], circlePath(c, r));
             if (_hLabel[i]) placeLabel(_hLabel[i], c, r * 1.02);
             else if (_hSym[i]) setPath(_hSym[i], symPath(c, r, k_hades[i].bit == B_PLUS));
             else setPath(_hTri[k_hades[i].dir], triPath(c, r * 0.44, k_hades[i].dir)); }
-        for (int i = 0; i < HADES_N; i++) if (_hArt[i]) { CGFloat r = k_hades[i].r * b.size.width;
+        for (int i = 0; i < HADES_N; i++) if (_hArt[i]) { CGFloat r = hadesR(i) * b.size.width;
             CGPoint c = hadesCenter(i, b); CGFloat s = 2 * r / hadesArtF(k_hadesArt[i]);
             _hArt[i].frame = CGRectMake(c.x - s / 2, c.y - s / 2, s, s); }
         [CATransaction commit]; [self refresh]; return;
