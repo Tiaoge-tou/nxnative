@@ -24,7 +24,6 @@ DM_UPSCALER	choice	game=Game's own,metalfx=MetalFX	game	DM_GAME_UPSCALER_N!=0	Ga
 DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	游戏语言	游戏内文本语言	level=basic
 
 DM_FULLSCREEN	choice	0=Window,1=Fullscreen	0	platform:mac	Game	Display mode		level=basic
-DM_PICTURE_FIT	choice	fit=适配,fill=填充	fit	platform:ios	Game	画面	填充会裁剪游戏的 16:9 画面以铺满屏幕，靠近边缘的血条、字幕或地图可能被裁掉；不裁剪的全屏画面需要逐游戏补丁。	
 DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	platform:ios	Game	帧数计数器	左上角显示实时帧数	
 DM_TOUCH_HAPTICS	toggle	-	1	platform:ios	Controls	触控反馈	按下触屏按键时轻震一下	
 DM_RUMBLE	toggle	-	1	always	Controls	游戏震动	游戏内震动传到手机或手柄	level=basic
