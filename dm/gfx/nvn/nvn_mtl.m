@@ -923,15 +923,18 @@ void mtl_sub_begin(void) {
     g_cb = rec_cb_new();
     // Do not wait for the GPU mid-frame (hot real device: with a fixed rotation of 3, when the GPU cannot keep up every frame blocks here, and the submit thread runs at low frequency after waking, instruction count −18% but CPU time +49%):
     // pick an allocator the GPU has finished with; if all are in use create a new one; only at the cap wait for the oldest one. How far ahead it runs is bounded by the wait where the game acquires the swapchain texture, same as the old interface.
-    int alloc_i = -1; uint64_t done = g_done;
-    for (int i = 0; i < g_alloc_n; i++) if (g_alloc_fence[i] <= done) { alloc_i = i; break; }
-    if (alloc_i < 0 && g_alloc_n < ALLOC_MAX) { NSError *ae = nil; MTL4CommandAllocatorDescriptor *ad = [NSClassFromString(@"MTL4CommandAllocatorDescriptor") new];
-        g_alloc4[g_alloc_n] = [g_dev newCommandAllocatorWithDescriptor:ad error:&ae]; if (!g_alloc4[g_alloc_n]) MDIE("failed to create a new MTL4CommandAllocator: %s", ae.localizedDescription.UTF8String);
-        alloc_i = g_alloc_n++; g_alloc_grown++; }
-    if (alloc_i < 0) { alloc_i = 0; for (int i = 1; i < g_alloc_n; i++) if (g_alloc_fence[i] < g_alloc_fence[alloc_i]) alloc_i = i; g_alloc_waits++; mtl_wait_at(g_alloc_fence[alloc_i], UINT64_MAX, WS_ALLOC); }
+    int alloc_i = 0; uint64_t done = g_done;
+    if (!g_classic) {   // The classic part (mtl_init, a device without Metal 4) made no allocator and this device cannot create one; nothing is presented either, so the buffer stays unbegun and the submission is walked for its CPU-side effects only (a run-time shader capture boot reads the compiles it triggers, hle_glslc.c)
+        alloc_i = -1;
+        for (int i = 0; i < g_alloc_n; i++) if (g_alloc_fence[i] <= done) { alloc_i = i; break; }
+        if (alloc_i < 0 && g_alloc_n < ALLOC_MAX) { NSError *ae = nil; MTL4CommandAllocatorDescriptor *ad = [NSClassFromString(@"MTL4CommandAllocatorDescriptor") new];
+            g_alloc4[g_alloc_n] = [g_dev newCommandAllocatorWithDescriptor:ad error:&ae]; if (!g_alloc4[g_alloc_n]) MDIE("failed to create a new MTL4CommandAllocator: %s", ae.localizedDescription.UTF8String);
+            alloc_i = g_alloc_n++; g_alloc_grown++; }
+        if (alloc_i < 0) { alloc_i = 0; for (int i = 1; i < g_alloc_n; i++) if (g_alloc_fence[i] < g_alloc_fence[alloc_i]) alloc_i = i; g_alloc_waits++; mtl_wait_at(g_alloc_fence[alloc_i], UINT64_MAX, WS_ALLOC); }
+        [g_alloc4[alloc_i] reset];
+        [g_cb beginCommandBufferWithAllocator:g_alloc4[alloc_i]];
+    }
     g_alloc_cur = alloc_i;
-    [g_alloc4[alloc_i] reset];
-    [g_cb beginCommandBufferWithAllocator:g_alloc4[alloc_i]];
     g_commit_blocks = [NSMutableArray array];
     // The overflow buffer created when the previous submission ran out of slots (see g_vis_n >= VIS_SLOTS): retire it. It used to be just cleared here and stayed in the residency set for good (from d2r-mobile 2eb575877)
     if (g_vis && !vis_in_ring(g_vis)) defer_obj_release(g_vis);
@@ -10625,7 +10628,7 @@ static void mdi_wait(void) {
     if (!ok) RED_ONCE(97, "indirect-count multi-draw: the GPU did not finish within 10 s; the count is read anyway");
     else drw_drained();
     g_cb = rec_cb_new();
-    [g_cb beginCommandBufferWithAllocator:g_alloc4[g_alloc_cur]];
+    if (!g_classic) [g_cb beginCommandBufferWithAllocator:g_alloc4[g_alloc_cur]];   // no Metal 4 allocator under the classic part (mtl_sub_begin)
     if (!g_mdi_waits++) MLOG("indirect-count multi-draw: first wait for the GPU-written count at frame %llu pass %llu", (unsigned long long)atomic_load(&g_cur_frame), g_stat_pass);
 }
 static uint32_t mdi_count(uint64_t cnt) {
@@ -12187,7 +12190,7 @@ static void sub_cut(void) {
     rec_commit(g_cb, o);
     if (rec_on()) rec_publish();   // the segment reaches the encode thread now, not when its block of records fills
     g_cb = rec_cb_new();
-    [g_cb beginCommandBufferWithAllocator:g_alloc4[g_alloc_cur]];   // one allocator encodes several command buffers in sequence; it is reset only once its fence (the last segment) has passed, when a later submission starts
+    if (!g_classic) [g_cb beginCommandBufferWithAllocator:g_alloc4[g_alloc_cur]];   // one allocator encodes several command buffers in sequence; it is reset only once its fence (the last segment) has passed, when a later submission starts (no Metal 4 allocator under the classic part, mtl_sub_begin)
     g_cut_draw0 = g_stat_draw;
     if (!g_cuts++) MLOG("segmented submission: first segment submitted at frame %llu pass %llu", (unsigned long long)f, (unsigned long long)g_stat_pass);
 }
