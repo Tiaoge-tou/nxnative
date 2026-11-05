@@ -53,6 +53,11 @@ on:
         type: boolean
         required: false
         default: false
+      aoc_external:
+        description: "Leave the DLC (aoc) images out of the IPA and upload them as a separate artifact instead (the one-time DLC datapack; placed in Documents/aoc/ on the device)"
+        type: boolean
+        required: false
+        default: false
       source:
         description: "Where the game files come from: drive = the zip at NSP_ZIP_URL; quark = pull the .nsp/.nsz files straight from your Quark drive (needs the QUARK_COOKIE secret); hf = the zip named by hf_file from the Hugging Face dataset repo (needs the HF_TOKEN secret); parts = a zip split into <2 GB parts held as release assets in the private parts repo (parts_repo/parts_tag name the release, parts_sha256 optionally verifies the joined zip; needs the PARTS_TOKEN secret, a read-only token for that repo only)"
         type: choice
@@ -462,6 +467,10 @@ jobs:
             ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
             echo "Hades build: DM_PAD_HADES=1"
           fi
+          if [ "${{ inputs.aoc_external }}" = "true" ]; then
+            ARGS+=(--aoc-external)
+            echo "DLC pack: external (left out of the IPA, uploaded as its own artifact)"
+          fi
           python3 scripts/build_ipa_from_nsp.py "${ARGS[@]}" 2>&1 | tee build.log
           # Guard: an internal tool failure must not pass silently (empty out/).
           test -s "$GITHUB_WORKSPACE/out/game.ipa" || { echo "::error::Build finished without producing out/game.ipa — see build.log"; exit 1; }
@@ -508,6 +517,22 @@ jobs:
         with:
           name: nxnative-romfs-img
           path: out-img/RomFS.img
+          retention-days: 7
+
+      - name: Copy the extracted DLC images (external datapack)
+        if: ${{ success() && inputs.aoc_external }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out-aoc"
+          find "$RUNNER_TEMP/game" -path '*_build/aoc/*.img' -exec cp {} "$GITHUB_WORKSPACE/out-aoc/" \;
+          ls -lh "$GITHUB_WORKSPACE/out-aoc"
+          [ -n "$(ls -A "$GITHUB_WORKSPACE/out-aoc")" ] || { echo "::error::aoc_external was requested but no DLC image was extracted"; exit 1; }
+
+      - name: Upload DLC image artifact
+        if: ${{ success() && inputs.aoc_external }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nxnative-aoc
+          path: out-aoc/*.img
           retention-days: 7
 
       - name: Split the full IPA for download
