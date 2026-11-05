@@ -242,11 +242,11 @@ def modules_supplying(exefs, want, modules, hooks=None):   # the modules left ou
 
 
 # ---- Shader sources: decided from the game files at every build, not kept in the profile (scripts/build_ipa_from_nsp.py; shader_split.py reads what those steps write) ----
-def shader_sources(imports, glsl_src, glslc_mods, spirv, unreal_paks, trinity_packs=0, legacy_paks=0, gl_names=0, gl_src=0, gl_files=0, oodle_pkz=0, nro_imports=frozenset(), oodle_gfpak=0, oodle_ue3=0, frostbite=False, romfs_glsl=0):
+def shader_sources(imports, glsl_src, glslc_mods, spirv, unreal_paks, trinity_packs=0, legacy_paks=0, gl_names=0, gl_src=0, gl_files=0, oodle_pkz=0, nro_imports=frozenset(), oodle_gfpak=0, oodle_ue3=0, frostbite=False, romfs_glsl=0, nro_glsl=0):
     """{name: (value, reason)}: graphics (vulkan when main imports Vulkan functions and not nvnBootstrapLoader; gl when it imports eglCreateWindowSurface and names glShaderSource, so it compiles
     GLSL through OpenGL (gl_names: how often main has that name; Absolum imports the same EGL functions for SDL3 but renders with NVN and names no GL function); else nvn; vkGetInstanceProcAddr
     alone is SDL's Vulkan loader, which Balatro's LÖVE links and never uses), vk_capture (a Vulkan game without SPIR-V files generates its shaders at run time), gl_capture (an OpenGL game with no
-    GLSL source where gl_shaders.py looks, gl_src strings in main and gl_files files in the RomFS: it puts its shaders together at run time, LÖVE from its Lua), glslc_capture (main holds GLSL sources and calls glslcCompile in a module the game loads: it compiles some shaders at run time), ue_decode (Unreal paks keep the shaders Oodle-compressed
+    GLSL source where gl_shaders.py looks, gl_src strings in main and gl_files files in the RomFS: it puts its shaders together at run time, LÖVE from its Lua), glslc_capture (GLSL sources in main, in RomFS files or in the NROs the game loads, and glslcCompile called in a module the game loads: it compiles some shaders at run time), ue_decode (Unreal paks keep the shaders Oodle-compressed
     in their shader code archives, which only the game's own Oodle decodes), oodle_packs (Trinity packs, oodle_pkz PlatinumGames PKZ archives, oodle_gfpak Game Freak GFPAK archives with Oodle Kraken entries, oodle_ue3 Unreal Engine 3 packages with Oodle chunks
     or frostbite Frostbite superbundles, whose cas files are Oodle Leviathan:
     Oodle-compressed file by file, which the shader split decodes with the game's own decoder in the Mac host's tool mode), ue_legacy (Unreal paks whose shaders are inline in the cooked packages:
@@ -272,8 +272,9 @@ def shader_sources(imports, glsl_src, glslc_mods, spirv, unreal_paks, trinity_pa
                                 'main imports nvnBootstrapLoader'),
             'vk_capture': (vulkan and not spirv, 'no SPIR-V file in the RomFS: the game generates its shaders at run time (Super Mario Galaxy), captured by booting it on the Mac'),
             'gl_capture': (gl and not gl_src and not gl_files, 'no GLSL source in the RomFS or main: the game puts its shaders together at run time (LÖVE: Balatro), captured by booting it on the Mac'),
-            'glslc_capture': (not vulkan and not gl and bool(glsl_src or romfs_glsl) and 'glslcCompile' in imports and bool(glslc_mods) or nro_glslc,
+            'glslc_capture': (not vulkan and not gl and bool(glsl_src or romfs_glsl or nro_glsl) and 'glslcCompile' in imports and bool(glslc_mods) or nro_glslc,
                               f'the NROs the game loads call glslcCompile in {", ".join(glslc_mods)}: shaders compiled at run time (Portal), captured by booting it on the Mac' if nro_glslc and not ((glsl_src or romfs_glsl) and 'glslcCompile' in imports) else
+                              f'the NROs the game loads hold {nro_glsl} GLSL sources and main calls glslcCompile in {", ".join(glslc_mods) or "no module it loads"}: shaders compiled at run time (The Binding of Isaac: Repentance), captured by booting it on the Mac' if nro_glsl and not glsl_src and not romfs_glsl else
                               f'the RomFS holds {romfs_glsl} GLSL source files and main calls glslcCompile in {", ".join(glslc_mods) or "no module it loads"}: shaders compiled at run time (Turrican Anthology Vol. I), captured by booting it on the Mac' if romfs_glsl and not glsl_src else
                               f'main holds {glsl_src} GLSL sources and calls glslcCompile in {", ".join(glslc_mods) or "no module it loads"}: shaders compiled at run time (Fire Emblem: Three Houses), captured by booting it on the Mac'),
             'ue_decode': (not vulkan and not gl and bool(unreal_paks), f'{unreal_paks} Unreal pak(s): the shaders are Oodle-compressed in their shader code archives (Octopath Traveler 0), decoded by booting the game on the Mac'),
@@ -294,6 +295,16 @@ def romfs_nro_imports(romfs):   # the names the loose NROs in a RomFS import (th
                 b = Path(d, n).read_bytes()
                 if b[0x10:0x14] == b'NRO0': out |= {s for s, defined, _ in nso_syms.dynsyms(b) if not defined}
     return out
+
+
+def romfs_nro_glsl(romfs):   # complete GLSL sources held in the loose NROs themselves (The Binding of Isaac: Repentance: 68 in its two game modules, 44 + 24; main and the RomFS files hold none)
+    n = 0
+    for d, _, names in os.walk(romfs):
+        for name in names:
+            if name.endswith('.nro'):
+                b = Path(d, name).read_bytes()
+                if b[0x10:0x14] == b'NRO0': n += glsl_sources(b)
+    return n
 
 
 UE3_TAG = bytes.fromhex('c1832a9e')   # an Unreal package's tag (shader_split.py ue3_package)
@@ -317,7 +328,9 @@ def build_sources(exefs, romfs, modules):
     defines = lambda m: (exefs / m).exists() and any(s == 'glslcCompile' and defined for s, defined, _ in nso_syms.dynsyms(nso(exefs / m)[0]))
     # GLSL source files in the RomFS that the game compiles itself with GLSLC (Turrican Anthology Vol. I: shaders/*.vert / *.frag, no GLSL string in main)
     romfs_glsl = romfs_glsl_files(romfs) if 'glslcCompile' in imports and not glsl_src else 0
-    glslc_mods = [m for m in modules if m != 'main' and (glsl_src or romfs_glsl) and 'glslcCompile' in imports and defines(m)]
+    # GLSL sources in the NROs the game loads, which main compiles with its glslcCompile at run time (The Binding of Isaac: Repentance: the sources are text in its game modules)
+    nro_glsl = romfs_nro_glsl(romfs) if 'glslcCompile' in imports and not glsl_src else 0
+    glslc_mods = [m for m in modules if m != 'main' and (glsl_src or romfs_glsl or nro_glsl) and 'glslcCompile' in imports and defines(m)]
     if 'glslcCompile' in nro_imp:   # an NRO compiles (Portal's materialsystem.nro): the GLSLC module is one nro_modules adds to a provisional profile, so any of the ExeFS's counts
         glslc_mods = sorted({*glslc_mods, *(p.name for p in exefs.iterdir() if p.name.startswith('subsdk') and defines(p.name))}, key=load_order)
     spirv = 0
@@ -358,7 +371,7 @@ def build_sources(exefs, romfs, modules):
                 oodle_ue3 += h[i + 16 + 8 * nb:i + 17 + 8 * nb] == b'\x8c'
     import frostbite   # Frostbite's superbundles (EA SPORTS FC 27): every item of the cas files is Oodle Leviathan, decoded with the game's own decoder
     return shader_sources(imports, glsl_src, glslc_mods, spirv, len(uepak.unreal_paks(str(romfs), inline=False)), trinity, len(uepak.unreal_paks(str(romfs), inline=True)), gl_names, gl_src, gl_files, oodle_pkz, nro_imp,
-                          oodle_gfpak=oodle_gfpak, oodle_ue3=oodle_ue3, frostbite=frostbite.is_frostbite(str(romfs)), romfs_glsl=romfs_glsl)
+                          oodle_gfpak=oodle_gfpak, oodle_ue3=oodle_ue3, frostbite=frostbite.is_frostbite(str(romfs)), romfs_glsl=romfs_glsl, nro_glsl=nro_glsl)
 
 
 def va_heap(sysres, imports):   # virtual address memory (an NPDM system resource) and a heap: the alias / heap split is a starting point the heap check corrects (Wonder, Tears of the Kingdom; Engage's pool is its own measurement)

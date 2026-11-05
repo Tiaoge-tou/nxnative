@@ -63,6 +63,15 @@ class GlslSources(unittest.TestCase):
             (root / 'shaders/empty.frag').write_bytes(b'')
             self.assertEqual(pg.romfs_glsl_files(root), 2)
 
+    def test_nro_held_sources_count(self):   # The Binding of Isaac: Repentance: the GLSL is text inside its game NROs, not in main or in .vert / .frag files
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); (root / '.nro').mkdir()
+            nro = bytearray(0x80); nro[0x10:0x14] = b'NRO0'
+            (root / '.nro/game.nro').write_bytes(bytes(nro) + b'#version 450\nvoid main() {}\0#version 450\nvoid main (void) {}\0')
+            (root / '.nro/notanro.nro').write_bytes(b'#version 450\nvoid main() {}\0')   # no NRO0 header: not a module the game loads
+            (root / 'loose.vert').write_bytes(b'#version 450\nvoid main() {}\n')   # a RomFS file, not an NRO: romfs_glsl_files' count, not this one
+            self.assertEqual(pg.romfs_nro_glsl(root), 2)
+
 
 class Npdm(unittest.TestCase):
     def npdm(self, flags):

@@ -44,6 +44,16 @@ class NroGraphics(unittest.TestCase):
         self.assertEqual(s['graphics'][0], 'nvn')
         self.assertFalse(s['glslc_capture'][0])
 
+    def test_nro_held_glsl_sources_need_the_capture(self):   # The Binding of Isaac: Repentance: main holds no GLSL and calls glslcCompile; the sources are text in its two game NROs, which import no glslcCompile themselves
+        s = pg.shader_sources({'nvnBootstrapLoader', 'glslcCompile'}, 0, ['subsdk0'], 0, 0, nro_glsl=68)
+        self.assertEqual(s['graphics'][0], 'nvn')
+        self.assertTrue(s['glslc_capture'][0])
+        self.assertIn('NROs the game loads hold 68 GLSL sources', s['glslc_capture'][1])
+
+    def test_nro_held_glsl_sources_need_a_module_that_defines_glslc(self):
+        s = pg.shader_sources({'nvnBootstrapLoader', 'glslcCompile'}, 0, [], 0, 0, nro_glsl=68)
+        self.assertFalse(s['glslc_capture'][0])
+
     def test_load_order(self):
         self.assertEqual(sorted(['sdk', 'subsdk2', 'main', 'subsdk0', 'subsdk10'], key=pg.load_order), ['main', 'subsdk0', 'subsdk2', 'subsdk10', 'sdk'])
 
