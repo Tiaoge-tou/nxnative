@@ -436,7 +436,8 @@ void mtl_init(void) {
     g_q = [g_dev newCommandQueue];
     // A device without Metal 4 (the paravirtualized GPU of a virtual Mac, such as GitHub's macos-26 runner: no residency set, no MTL4CommandQueue) cannot run the NVN layer. The GL and
     // Vulkan layers draw on classic queues of their own and need only the device (mtl_device_classic): there the classic part starts and presents are dropped, which is all a
-    // run-time shader capture needs (the NSP script's capture_shaders boots headless; GitHub issue #112: Balatro's capture aborted here)
+    // run-time shader capture needs (the NSP script's capture_shaders boots headless; GitHub issue #112: Balatro's capture aborted here). An NVN game's own capture boot
+    // (capture_glslc, DM_GLSLC_CAPTURE) asks for the same fallback through its environment: it presents nothing either, and the compiles it saves never touch Metal
     NSError *re = nil; const char *no4 = NULL;
     if (getenv("DM_TEST_NO_METAL4")) no4 = "DM_TEST_NO_METAL4";   // test switch: as on a virtual Mac; not set in the product
     else if (![g_dev supportsFamily:MTLGPUFamilyMetal4]) no4 = "no Metal 4 GPU family";
@@ -459,7 +460,7 @@ void mtl_init(void) {
     }
     if (no4) {
         const char *why = re ? re.localizedDescription.UTF8String : "";
-        if (!g_classic_ok) MDIE("the Metal device %s has no Metal 4 (%s%s%s), which the NVN layer needs; a virtual Mac's paravirtualized GPU has none", g_dev.name.UTF8String, no4, *why ? ": " : "", why);
+        if (!g_classic_ok && !getenv("DM_GLSLC_CAPTURE")) MDIE("the Metal device %s has no Metal 4 (%s%s%s), which the NVN layer needs; a virtual Mac's paravirtualized GPU has none", g_dev.name.UTF8String, no4, *why ? ": " : "", why);
         g_res = nil; g_q4 = nil; g_classic = 1;
         g_ev = [g_dev newSharedEvent];
         g_keep = [NSMutableArray array];

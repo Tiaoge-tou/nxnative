@@ -139,6 +139,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Fix:** `shader_split.py` reads zip archives member by member in parallel ranges (`zip_jobs` / `zip_shaders`; `zipfile`), each member scanned like a loose file, whole GLSLC outputs included. `profile_guess.py` `shader_sources` asks for the run-time GLSLC capture when an NRO the game loads imports `glslcCompile` and a subsdk defines it (`glslc_capture`). Portal's map: 242 keys from the `.nvsb` files and 13 from the capture, 229 vertex and pixel pairs.
 - **Found on:** [Portal](../../dm/games/01007BB017812000/README.md). No other profile's RomFS has a zip archive holding shaders.
 
+### GLSL sources held in the game's NROs, and a GLSLC capture boot on a Mac without Metal 4
+
+- **Symptom:** an NVN game's split finds no shaders and no run-time capture is taken: no BNSH / BAHS, no GLSLC outputs, no GLSL sources in `main`, no `.vert` / `.frag` files in the RomFS.
+- **Cause:** The Binding of Isaac: Repentance keeps its shader sources as text in the two game NROs it loads at run time (`Repentance.nro` 44 complete sources, `AfterbirthPlus.nro` 24; GLSL 430 vertex and fragment effects), which main compiles with the `glslcCompile` it imports (subsdk0, GLSLC). The capture rule counted sources only in `main` and in RomFS files, and its NRO route asked for an NRO importing `glslcCompile` itself; Isaac's NROs import only `glslcSetAllocator`, so no route fired and the split ran with nothing.
+- **Fix:** `profile_guess.py` counts the complete GLSL sources in the loose NROs (`romfs_nro_glsl`; `build_sources` reads them when main imports `glslcCompile` and holds no sources of its own) and `shader_sources` takes the run-time GLSLC capture on that count (`nro_glsl`). The capture boot on a virtual Mac then needs the NVN layer's classic fallback: its paravirtualized GPU has no Metal 4 and `mtl_init` stopped the boot before the first compile, so a boot with `DM_GLSLC_CAPTURE` set takes the classic part like the GL and Vulkan layers' capture boots do (`mtl_device_classic`); it presents nothing, and the compiles it saves never touch Metal.
+- **Found on:** The Binding of Isaac: Repentance (010021C000222000, provisional profile).
+
 ### LZ4-chained zip members behind a VZIP preamble, and shader binaries of one stage
 
 - **Symptom:** a Switch 2 game's RomFS is one `data.zip` that does not start with a zip's local header, zipfile reads a member of it only to stop on `Bad CRC-32`, and the split finds no shader: every member is listed as stored, yet most are smaller on disk than their file size.
