@@ -1587,9 +1587,12 @@ def boot_mac(host, patched, henv, rd, log, secs, done=lambda: False):
 
 
 def host_stopped(log, rc, secs):   # a capture run whose host stopped by itself before the capture was complete: the game crashed or gave up, and the IPA will too (a provisional profile's IPA is still built)
-    with open(log, errors='replace') as f: tail = ''.join(collections.deque(f, maxlen=12)).rstrip('\n')
-    PROG.say(f'[RED] the game stopped after {secs:.0f} s in the Mac host (exit {rc}): its shaders are incomplete and the IPA will not get further; ---- last lines of {log} ----\n'
-             + tail)
+    with open(log, errors='replace') as f: lines = f.readlines()
+    # the host's exit dump (its thread listing) ends the log, so a short tail shows only that: the lines that name the failure are pulled out of the whole log as well
+    key = [l for l in lines if any(m in l for m in ('CRASH', 'FATAL', '[RED]', 'abort', 'MDIE'))][:60]
+    tail = ''.join(lines[-100:]).rstrip('\n')
+    PROG.say(f'[RED] the game stopped after {secs:.0f} s in the Mac host (exit {rc}): its shaders are incomplete and the IPA will not get further; ---- failure lines of {log} ----\n'
+             + ''.join(key).rstrip('\n') + f'\n---- last lines of {log} ----\n' + tail)
 
 
 def capture_glslc(repo, dirs, pkg_ver, patched, work, env, logs, g):
