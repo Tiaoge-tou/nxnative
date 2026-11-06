@@ -448,19 +448,23 @@ static UIView *clearDisc(UIView *parent, CGFloat tint) {
 
 // ---- Isaac layout (DM_PAD_ISAAC=1 in an env file) ----
 // The Binding of Isaac's own touch pad: image keys only (the game's official iOS art, redrawn by the
-// player; dm/padisaac, staged into the bundle by build_ipa.sh), no drawn fallback and no layout editor.
+// player; dm/padisaac, staged into the bundle by build_ipa.sh), no drawn fallback. A long press on the
+// + key opens the layout editor over it (the custom store below), the same editor the skin pad has.
 // The art carries its own opacity (the player's set bakes it in -- the stick base at 35%, the dark
 // discs at 75%, the glyphs full), so the layers render at full opacity and nothing multiplies it again.
 // The host watches the game's page fields and publishes the layout (dm_isaac_pad_mode, hle_isaacpad.c):
 // 0 menu A (the title and save pages), 1 menu B (the main menu and the character page), 2 the game,
 // 3 menu C (the death page: the diary). The pause page still publishes as the game -- no probe has
-// found a field for it. The menus get a D-pad cross at the left and the paper confirm / back keys at
+// found a field for it. The menus get a D-pad cross at the left and the paper confirm / return keys at
 // the right (menu B adds an X key at the top right, for the daily run and the seed entry; menu C gets
-// the letter A / B discs instead of the paper keys, and no X); the game gets a fixed stick at the left,
-// the shooting diamond at the right, a two-key row at the bottom centre (ZL's tool inside, L's bomb
-// outside) and the - / + pair at the top right. There are no R / ZR keys (the game binds nothing the
-// player asked for to them here). The game's keys sit at the player's final scale: three quarters of
-// the first fitting's frames, the diamond re-pitched to a true diamond (equal pixel pitch both axes).
+// the letter A / B discs instead of the paper keys, and no X); the game gets a stick at the left,
+// the shooting diamond at the right, the ZL / L pair left of the diamond on the B key's own line
+// and the - / + pair at the top right. There are no R / ZR keys (the game binds nothing the
+// player asked for to them here). The keys sit at the player's final fitting: the game keys at
+// three quarters of the first fitting's frames, the diamond re-pitched to a true diamond (equal
+// pixel pitch both axes, 145 px at the final fitting), the menus' cross and menu C's letters at
+// three quarters of theirs, menu B's X at three quarters, and the menus' return paper a tenth
+// larger than the back paper it replaced.
 // Centres are fractions of the whole screen (x of its width, y of its height) and sizes the art frame's
 // width as a fraction of the screen's width (the frames are square), the layout the player measured.
 // The top-right pair is the one exception: those two arts carry different transparent margins, so each
@@ -474,21 +478,21 @@ enum { IA_MENU_A, IA_MENU_B, IA_GAME, IA_MENU_C };   // the layouts, dm_isaac_pa
 #define IA_IN_C (1 << IA_MENU_C)
 static const struct { const char *art; int bit; int modes; CGFloat x, y, w, ax, ay; } k_isaac[] = {
     {"select",   B_A,     IA_IN_A | IA_IN_B, 0.859, 0.639, 0.1375, 0.5,    0.5},     // the paper confirm key (the menus' A)
-    {"back",     B_B,     IA_IN_A | IA_IN_B, 0.859, 0.861, 0.122,  0.5,    0.5},     // the paper back key (the menus' B)
-    {"letter_x", B_X,     IA_IN_B,           0.938, 0.097, 0.097,  0.5,    0.5},     // menu B's sub-option key, at the top right
-    {"letter_a", B_A,     IA_IN_C,           0.859, 0.639, 0.110,  0.5,    0.5},     // the death page's restart key (menu C)
-    {"letter_b", B_B,     IA_IN_C,           0.859, 0.861, 0.110,  0.5,    0.5},     // the death page's quit key (menu C)
-    {"attack_x", B_X,     IA_IN_G,           0.867, 0.60902, 0.0728, 0.5,  0.5},     // the diamond: shoot up (a true diamond: the vertical pitch is the horizontal's 160 px, not the design sheet's height fraction)
-    {"attack_y", B_Y,     IA_IN_G,           0.8085, 0.736, 0.0728, 0.5,   0.5},     // shoot left
-    {"attack_a", B_A,     IA_IN_G,           0.9255, 0.736, 0.0728, 0.5,   0.5},     // shoot right
-    {"attack_b", B_B,     IA_IN_G,           0.867, 0.86298, 0.0728, 0.5,  0.5},     // shoot down
-    {"item_zl",  B_ZL,    IA_IN_G,           0.565, 0.885, 0.069,  0.5,    0.5},     // the bottom row: the active item (ZL) inside
-    {"bomb_l",   B_L,     IA_IN_G,           0.650, 0.885, 0.069,  0.5,    0.5},     // the bottom row: bombs (L) outside -- the pair swapped seats at the player's word, then moved right and closer together at his final fitting; the old - seat left of them stays empty
+    {"return",   B_B,     IA_IN_A | IA_IN_B, 0.859, 0.861, 0.1342, 0.5,    0.5},     // the paper return key (the menus' B): the return art in the back key's seat, a tenth larger than the back paper it replaced
+    {"letter_x", B_X,     IA_IN_B,           0.938, 0.097, 0.0728, 0.5,    0.5},     // menu B's sub-option key, at the top right (three quarters of its first frame)
+    {"letter_a", B_A,     IA_IN_C,           0.859, 0.639, 0.0825, 0.5,    0.5},     // the death page's restart key (menu C; three quarters of its first frame)
+    {"letter_b", B_B,     IA_IN_C,           0.859, 0.861, 0.0825, 0.5,    0.5},     // the death page's quit key (menu C)
+    {"attack_x", B_X,     IA_IN_G,           0.867, 0.62092, 0.0728, 0.5,  0.5},     // the diamond: shoot up (a true diamond: the vertical pitch is the horizontal's 145 px, not the design sheet's height fraction)
+    {"attack_y", B_Y,     IA_IN_G,           0.81400, 0.736, 0.0728, 0.5,   0.5},     // shoot left
+    {"attack_a", B_A,     IA_IN_G,           0.92000, 0.736, 0.0728, 0.5,   0.5},     // shoot right
+    {"attack_b", B_B,     IA_IN_G,           0.867, 0.85108, 0.0728, 0.5,  0.5},     // shoot down
+    {"item_zl",  B_ZL,    IA_IN_G,           0.6397, 0.85108, 0.069,  0.5,    0.5},     // the pair left of the diamond, on the B key's own line: the active item (ZL) inside
+    {"bomb_l",   B_L,     IA_IN_G,           0.7237, 0.85108, 0.069,  0.5,    0.5},     // bombs (L) outside: the pair's centre sits on the diamond's B line, walked left at the player's word until it cleared the diamond for good
     {"minus",    B_MINUS, IA_IN_G,           0.8838, 0.097, 0.0530, 0.5244, 0.5020},  // - (time and score): placed by its disc's centre (the disc sits right of its frame's centre), sized so its disc matches the + disc's
     {"pause",    B_PLUS,  IA_IN_G,           0.938, 0.097, 0.0503, 0.4986, 0.5069},  // + (pause), the pause art on the Plus key: placed by its disc's centre, like its pair
 };
 #define ISAAC_N (int)(sizeof k_isaac / sizeof k_isaac[0])
-static const CGFloat IA_DPAD_X = 0.133, IA_DPAD_Y = 0.736, IA_DPAD_W = 0.203;   // the menus' D-pad cross (the stick's seat, at the old disc's frame, at the player's word)
+static const CGFloat IA_DPAD_X = 0.133, IA_DPAD_Y = 0.736, IA_DPAD_W = 0.15225;   // the menus' D-pad cross (the stick's seat, at three quarters of the old disc's frame, at the player's word)
 static const CGFloat IA_STICK_X = 0.133, IA_STICK_Y = 0.743, IA_STICK_W = 0.16725, IA_THUMB_W = 0.07725;   // the game's stick base and thumb (frame widths, as k_isaac's; three quarters of the first fitting, like the keys)
 static UIImage *isaacImage(const char *name) {   // a padisaac image, loaded once and cached (nil when the file is absent)
     static NSMutableDictionary *cache;
@@ -507,12 +511,65 @@ static CALayer *isaacImgLayer(CALayer *parent, const char *name) {
     l.opacity = 1.0;   // the art bakes its own opacity in; the engine renders it at full strength and never multiplies it again (set explicitly: the default already is 1)
     [parent addSublayer:l]; return l;
 }
-static CGPoint isaacCenter(int i, CGRect b) {   // key i's art frame centre, in points: the seat (x, y) is where the frame's anchor point (ax, ay) lands, so the frame centre sits off it by the anchor's offset (the top-right pair's discs are not at their frames' centres)
+static CGPoint isaacCenterRaw(int i, CGRect b) {   // key i's art frame centre from the table alone, in points: the seat (x, y) is where the frame's anchor point (ax, ay) lands, so the frame centre sits off it by the anchor's offset (the top-right pair's discs are not at their frames' centres)
     CGFloat fw = k_isaac[i].w * b.size.width;
     return CGPointMake(k_isaac[i].x * b.size.width - (k_isaac[i].ax - 0.5) * fw,
                        k_isaac[i].y * b.size.height - (k_isaac[i].ay - 0.5) * fw);
 }
-static CGPoint isaacDpadCenter(CGRect b) { return CGPointMake(IA_DPAD_X * b.size.width, IA_DPAD_Y * b.size.height); }
+// ---- Custom layout for the Isaac pad (the + key's long-press editor) ----
+// The same editor the skin pad has, over this pad's own table: every key can be dragged to a new centre
+// and scaled between 0.6x and 1.6x; per key only the centre's offset from the table (as screen
+// fractions) and the size multiplier are kept, in NSUserDefaults under DmPadCustomIsaac -- the skin
+// pad's store is DmPadCustom, the Hades pad's DmPadCustomHades, and the three stay apart. A key's entry
+// is its own in every layout it appears in: the select key is one entry across menus A and B. The slots
+// past the keys are the menus' D-pad cross (one entry for the whole cross) and the game's stick (one
+// entry for base and thumb together); the stick's entry also keeps its fixed / floating choice.
+// isaacCenter / isaacW and their D-pad and stick kin apply the store, so the drawing, the hit test and
+// the hit area all agree.
+#define IA_DPAD_SLOT ISAAC_N
+#define IA_STICK_SLOT (ISAAC_N + 1)
+#define IA_SLOTS (ISAAC_N + 2)
+static NSString *const k_icustom_key = @"DmPadCustomIsaac";
+static CGFloat g_icustDX[IA_SLOTS], g_icustDY[IA_SLOTS], g_icustS[IA_SLOTS];
+static BOOL g_icustFloat;   // the stick floats (its base lands where the touch does) instead of sitting pinned at its seat
+static BOOL g_icustReady;
+static NSString *icustName(int slot) { return slot == IA_DPAD_SLOT ? @"dpad" : slot == IA_STICK_SLOT ? @"stick" : [NSString stringWithUTF8String:k_isaac[slot].art]; }
+static void icustLoad(void) {
+    if (g_icustReady) return; g_icustReady = YES;
+    for (int i = 0; i < IA_SLOTS; i++) g_icustS[i] = 1;
+    NSDictionary *d = [NSUserDefaults.standardUserDefaults dictionaryForKey:k_icustom_key];
+    for (int i = 0; i < IA_SLOTS; i++) {
+        NSDictionary *e = d[icustName(i)];
+        if (!e) continue;
+        g_icustDX[i] = [e[@"dx"] doubleValue]; g_icustDY[i] = [e[@"dy"] doubleValue];
+        CGFloat s = [e[@"s"] doubleValue]; if (s >= 0.6 && s <= 1.6) g_icustS[i] = s;
+        if (i == IA_STICK_SLOT) g_icustFloat = [e[@"float"] boolValue];
+    }
+}
+static void icustSave(void) {
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    for (int i = 0; i < IA_SLOTS; i++) if (g_icustDX[i] || g_icustDY[i] || g_icustS[i] != 1 || (i == IA_STICK_SLOT && g_icustFloat)) {
+        NSMutableDictionary *e = [@{@"dx": @(g_icustDX[i]), @"dy": @(g_icustDY[i]), @"s": @(g_icustS[i])} mutableCopy];
+        if (i == IA_STICK_SLOT && g_icustFloat) e[@"float"] = @YES;
+        d[icustName(i)] = e;
+    }
+    [NSUserDefaults.standardUserDefaults setObject:d forKey:k_icustom_key];
+}
+static CGFloat isaacW(int i) { icustLoad(); return k_isaac[i].w * g_icustS[i]; }   // key i's frame width (a fraction of the screen's width) with the player's size multiplier
+static CGPoint isaacCenter(int i, CGRect b) {   // key i's art frame centre, in points: the table's centre plus the player's custom offset
+    icustLoad();
+    CGPoint c = isaacCenterRaw(i, b);
+    c.x += g_icustDX[i] * b.size.width; c.y += g_icustDY[i] * b.size.height;
+    return clampCentre(c, isaacW(i) * b.size.width * 0.5, b);
+}
+static CGPoint isaacDpadCenterRaw(CGRect b) { return CGPointMake(IA_DPAD_X * b.size.width, IA_DPAD_Y * b.size.height); }
+static CGFloat isaacDpadW(void) { icustLoad(); return IA_DPAD_W * g_icustS[IA_DPAD_SLOT]; }   // the cross's frame width with the player's size multiplier
+static CGPoint isaacDpadCenter(CGRect b) {   // the cross's centre: the table's plus the player's custom offset
+    icustLoad();
+    CGPoint c = isaacDpadCenterRaw(b);
+    c.x += g_icustDX[IA_DPAD_SLOT] * b.size.width; c.y += g_icustDY[IA_DPAD_SLOT] * b.size.height;
+    return clampCentre(c, isaacDpadW() * b.size.width * 0.5, b);
+}
 
 // ---- The silk pad's glass discs (the glass choice, DM_SILK_SKIN=0), restyled ----
 // A clear glass lens, matched to the approved preview: a near-clear face (white at 0.068 with a
@@ -675,6 +732,11 @@ static void pads_start(void);   // Physical controllers, below
     CALayer *_iBtn[ISAAC_N];                       // the Isaac pad's keys, in k_isaac order
     CALayer *_iDpad;                               // the menus' D-pad cross (one image; its direction is read from the touch's place)
     CALayer *_iBase, *_iThumb;                     // the game's stick base and its thumb (the thumb follows the touch)
+    int _iEditMode;                                // while the layout editor is up, the layout it shows (the watcher's own is _isaacMode; the editor's bar cycles this one through all four)
+    CGPoint _iFloatCentre;                         // the floating stick's centre while its touch is held: where the touch landed
+    UITouch *_plusTouch; CGPoint _plusPoint; NSTimer *_plusTimer; BOOL _plusFired, _plusMoved;   // the Isaac + key's touch, watched for the editor's long press (a drag disarms it); the key is a game key, so its press is held back while the watch runs and a tap is pulsed at the lift (pulsePlus)
+    UITouch *_plusPulseTouch; NSTimer *_plusPulseTimer;   // a + tap's pulse in flight: its owner entry is kept for a few frames so the game sees the press
+    UIButton *_iEditLayout, *_iEditFloat;          // the Isaac editor's own bar buttons: cycle the layout being edited, and the stick's fixed / floating toggle (shown while the stick is selected)
 }
 
 static UIColor *k_idle, *k_on, *k_line, *k_ringFill, *k_text, *k_textOn;
@@ -825,6 +887,18 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             _iTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 target:self selector:@selector(isaacTick) userInfo:nil repeats:YES];   // the view lives as long as the app, so the timer needs no invalidation
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _ring.hidden = YES; _knob.hidden = YES;
+            _editRing = shape(_controls); _editRing.fillColor = nil; _editRing.strokeColor = UIColor.whiteColor.CGColor; _editRing.lineWidth = 2; _editRing.shadowOpacity = 0; _editRing.hidden = YES;   // the layout editor's selection ring, shared with the skin pad's editor
+            _editBar = [[UIView alloc] initWithFrame:CGRectZero];   // the layout editor's bar, likewise shared: built once, shown only while editing
+            _editBar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55]; _editBar.layer.cornerRadius = 10; _editBar.hidden = YES;
+            [self addSubview:_editBar];
+            _editInfo = [[UILabel alloc] init]; _editInfo.textColor = UIColor.whiteColor; _editInfo.font = [UIFont systemFontOfSize:15]; _editInfo.adjustsFontSizeToFitWidth = YES; _editInfo.minimumScaleFactor = 0.75; [_editBar addSubview:_editInfo];
+            _editMinus = [self editButton:@"-" action:@selector(editMinusTapped)];
+            _editPlus = [self editButton:@"+" action:@selector(editPlusTapped)];
+            _editReset = [self editButton:[NSString stringWithUTF8String:"\xE6\x81\xA2\xE5\xA4\x8D\xE9\xBB\x98\xE8\xAE\xA4"] action:@selector(editResetTapped)];   // "restore defaults"
+            _editDone = [self editButton:[NSString stringWithUTF8String:"\xE5\xAE\x8C\xE6\x88\x90"] action:@selector(editDoneTapped)];   // "done"
+            _iEditLayout = [self editButton:[NSString stringWithUTF8String:"\xE6\x8D\xA2\xE5\xB8\x83\xE5\xB1\x80"] action:@selector(iEditLayoutTapped)];   // "switch layout": the editor edits one layout at a time; this cycles which (the menus' keys are unreachable otherwise -- the + key lives in the game layout)
+            _iEditFloat = [self editButton:[NSString stringWithUTF8String:"\xE5\x9B\xBA\xE5\xAE\x9A"] action:@selector(iEditFloatTapped)];   // the stick's fixed / floating toggle ("fixed" / "floating"); updateEditInfo keeps its title and showing
+            _iEditLayout.hidden = YES; _iEditFloat.hidden = YES;
             [self applyIsaacMode];   // the pad starts in the watcher's layout
         }
         _menu = [DmMenuButton buttonWithType:UIButtonTypeCustom];
@@ -900,7 +974,9 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
 - (CGPoint)facePos:(int)b { CGPoint c = self.faceCenter; CGFloat g = self.faceGap;
     switch (b) { case B_A: return CGPointMake(c.x + g, c.y); case B_B: return CGPointMake(c.x, c.y + g); case B_X: return CGPointMake(c.x, c.y - g); default: return CGPointMake(c.x - g, c.y); } }
 - (CGPoint)stickHome {   // the left stick's ring centre; in skin mode the disc centre (a fraction of the whole screen)
-    if (_isaac) { CGRect b = self.bounds; return CGPointMake(IA_STICK_X * b.size.width, IA_STICK_Y * b.size.height); }   // the Isaac pad's fixed stick base
+    if (_isaac) { CGRect b = self.bounds; icustLoad();   // the Isaac pad's stick base: its seat, plus the layout editor's custom offset for it
+        CGPoint c = CGPointMake((IA_STICK_X + g_icustDX[IA_STICK_SLOT]) * b.size.width, (IA_STICK_Y + g_icustDY[IA_STICK_SLOT]) * b.size.height);
+        return clampCentre(c, [self stickR:0], b); }
     if (_hades) { CGRect b = self.bounds; return CGPointMake(0.168 * b.size.width, 0.664 * b.size.height); }
     if (_skin) { CGRect b = self.bounds; custLoad();   // the skin's disc, plus the layout editor's custom offset for it
         CGPoint c = CGPointMake((0.162 + g_custDX[SKIN_N]) * b.size.width, (0.742 + g_custDY[SKIN_N]) * b.size.height);
@@ -911,8 +987,9 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
         return p;
     }
     CGRect s = self.corner; return side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u); }
-- (CGPoint)stickCentre:(int)i { return i ? _rCentre : _hades && _stick[0] ? _lCentre : self.stickHome; }
-- (CGFloat)stickR:(int)i { if (_isaac && !i) return IA_STICK_W * 0.5 * self.bounds.size.width;   // the Isaac pad's stick: the base art's radius
+- (CGPoint)stickCentre:(int)i { if (!i && _isaac && _stick[0]) { icustLoad(); if (g_icustFloat) return _iFloatCentre; }   // the Isaac pad's floating stick: while its touch is held, its centre is where the touch landed
+    return i ? _rCentre : _hades && _stick[0] ? _lCentre : self.stickHome; }
+- (CGFloat)stickR:(int)i { if (_isaac && !i) { icustLoad(); return IA_STICK_W * g_icustS[IA_STICK_SLOT] * 0.5 * self.bounds.size.width; }   // the Isaac pad's stick: the base art's radius, with the layout editor's size multiplier
     if (_hades && !i) return 0.061 * self.bounds.size.width; if (_skin && !i) { custLoad(); return 0.074 * g_custS[SKIN_N] * self.bounds.size.width * (_sSkinMode ? 1 : 0.9); } return (i ? K_RSTICK_R : K_STICK_R) * self.u; }   // the glass choice's stick runs at 0.9 of the image skins': the disc, the knob's travel and the touch grab all read this radius, and the Up key's rim anchor scales with it (skinCenterRaw)
 - (BOOL)inRightArea:(CGPoint)p { CGRect b = _layout.controls; return p.x >= CGRectGetMaxX(b) - b.size.width * K_RSWIPE; }
 - (CGPoint)dpadCenter {
@@ -981,27 +1058,29 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     CGRect b = self.bounds;
     int m = 1 << _isaacMode;
     for (int i = 0; i < ISAAC_N; i++) { if (!(k_isaac[i].modes & m)) continue;
-        if (dist(p, isaacCenter(i, b)) <= k_isaac[i].w * b.size.width * 0.5 * 1.35) return i; }
+        if (dist(p, isaacCenter(i, b)) <= isaacW(i) * b.size.width * 0.5 * 1.35) return i; }
     return -1;
 }
 - (uint64_t)isaacDpadBits:(CGPoint)p {   // the menus' cross at the point: the dominant axis past a centre dead zone (menu navigation is four-way, so no diagonals)
     CGRect b = self.bounds;
     CGPoint c = isaacDpadCenter(b);
-    CGFloat dx = p.x - c.x, dy = p.y - c.y, dz = IA_DPAD_W * b.size.width * 0.11;   // the dead zone: the cross art's own centre square, about a fifth of the frame across
+    CGFloat dx = p.x - c.x, dy = p.y - c.y, dz = isaacDpadW() * b.size.width * 0.11;   // the dead zone: the cross art's own centre square, about a fifth of the frame across
     if (fabs(dx) > dz && fabs(dx) >= fabs(dy)) return 1ull << (dx > 0 ? B_RIGHT : B_LEFT);
     if (fabs(dy) > dz) return 1ull << (dy > 0 ? B_DOWN : B_UP);
     return 0;
 }
+- (int)isaacShown { return _editing ? _iEditMode : _isaacMode; }   // the layout the pad shows: the watcher's, or -- while the layout editor is up -- the one the editor has cycled to
 - (void)applyIsaacMode {   // show the current layout's controls, hide the rest (the positions are layoutSubviews')
     [CATransaction begin]; [CATransaction setDisableActions:YES];
-    int m = 1 << _isaacMode;
+    int shown = [self isaacShown], m = 1 << shown;
     for (int i = 0; i < ISAAC_N; i++) _iBtn[i].hidden = !(k_isaac[i].modes & m);
-    _iDpad.hidden = _isaacMode == IA_GAME;   // the menus have the cross in the stick's place
-    _iBase.hidden = _iThumb.hidden = _isaacMode != IA_GAME;
+    _iDpad.hidden = shown == IA_GAME;   // the menus have the cross in the stick's place
+    _iBase.hidden = _iThumb.hidden = shown != IA_GAME;
     [CATransaction commit];
     [self refresh];
 }
 - (void)isaacTick {
+    if (_editing) return;   // the layout editor holds the layout it is rearranging: the watcher's next change lands when it closes (setEditing re-applies)
     int m = dm_isaac_pad_mode();
     if (m == _isaacMode) return;
     _isaacMode = m;
@@ -1044,7 +1123,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         uint64_t m = 0; CGRect b = self.bounds;
         for (int i = 0; i < ISAAC_N; i++) { int bit = k_isaac[i].bit;
             if (!(k_isaac[i].modes & IA_IN_G) || bit < B_A || bit > B_Y) continue;
-            if (dist(p, isaacCenter(i, b)) <= k_isaac[i].w * b.size.width * 0.5 * 1.35) m |= 1ull << bit; }
+            if (dist(p, isaacCenter(i, b)) <= isaacW(i) * b.size.width * 0.5 * 1.35) m |= 1ull << bit; }
         return m;
     }
     uint64_t m = 0; CGFloat r = self.faceHitR;
@@ -1122,9 +1201,11 @@ int front_web_touch(void);
     if (_padOff || (_layout.separated && !CGRectContainsPoint(_layout.controls, p))) return NO;
     if (_tap) return NO;
     if (_isaac) {   // the Isaac pad's own controls: its keys, and in the game its stick, in the menus its cross
+        if (_editing) return YES;   // the layout editor takes every touch
         if ([self isaacBtnAt:p] >= 0) return YES;
-        if (_isaacMode == IA_GAME) return !_stick[0] && dist(p, self.stickHome) / ([self stickR:0] * 1.3) < 1;
-        return dist(p, isaacDpadCenter(self.bounds)) <= IA_DPAD_W * self.bounds.size.width * 0.6;
+        if (_isaacMode == IA_GAME) { icustLoad(); if (g_icustFloat) return !_stick[0] && p.x < self.bounds.size.width * 0.5;   // the floating stick: any touch in the left half lands it
+            return !_stick[0] && dist(p, self.stickHome) / ([self stickR:0] * 1.3) < 1; }
+        return dist(p, isaacDpadCenter(self.bounds)) <= isaacDpadW() * self.bounds.size.width * 0.6;
     }
     if ([self btnAt:p] >= 0) return YES;
     if (dist(p, self.faceCenter) / (self.faceGap + MAX(self.faceR * 1.6, self.faceHitR)) <= 1) return YES;
@@ -1141,17 +1222,28 @@ int front_web_touch(void);
     for (UITouch *t in ts) {
         if (_padOff) { game |= [self gameBegin:t]; continue; }
         CGPoint p = [t locationInView:self];
-        if (_isaac) {   // Isaac mode: the current layout's image keys; in the game the fixed stick too, in the menus the cross; else the game's touch screen
+        if (_isaac) {   // Isaac mode: the current layout's image keys; in the game the stick too, in the menus the cross; else the game's touch screen
+            if (_editing) {   // the layout editor takes every touch: select a key (tap) and move it (drag); nothing reaches the game
+                int it = [self editItemAt:p];
+                if (it >= 0) { _editTouch = t; _editItem = it; _editSel = it; CGPoint c = [self editCentre:it]; _editGrab = CGPointMake(p.x - c.x, p.y - c.y); [_owner setObject:@(C_EDIT | (uint64_t)it << 8) forKey:t];
+                    if (it < ISAAC_N && k_isaac[it].bit == B_PLUS) { _plusTouch = t; _plusPoint = p; _plusFired = NO; _plusMoved = NO; [self armPlusTimer]; } }   // the + key in the editor: a still hold leaves the editor (plusLongPress), a drag just moves it
+                else _editSel = -1;
+                [self updateEditInfo]; [self setNeedsLayout]; continue; }
             int ib = [self isaacBtnAt:p];
+            if (ib >= 0 && k_isaac[ib].bit == B_PLUS) { _plusTouch = t; _plusPoint = p; _plusFired = NO; _plusMoved = NO; [self armPlusTimer]; continue; }   // the + key: its press is held back while the long-press watch runs -- a tap is pulsed when it lifts (endTouches), holding it for 0.6s opens the layout editor instead (plusLongPress), so the game never sees the hold
             if (ib >= 0) {
                 int bit = k_isaac[ib].bit;
                 if (_isaacMode == IA_GAME && bit >= B_A && bit <= B_Y) { [_owner setObject:@(C_FACE) forKey:t]; [_faceOf setObject:@(1ull << bit) forKey:t]; }   // a diamond key: it follows the finger across the diamond (faceAt), like the drawn one's
                 else [_owner setObject:@(C_BTN | (uint64_t)bit << 8) forKey:t];
+                if (_isaacMode == IA_MENU_C && (bit == B_A || bit == B_B)) dm_isaac_pad_diary_exit();   // a press delivered on the death page (restart, or quit to the menus): the watcher's diary shield arms on it -- the death flag itself stays set after the diary (hle_isaacpad.c)
                 continue;
             }
             if (_isaacMode == IA_GAME) {
+                icustLoad();
+                if (!_stick[0] && g_icustFloat && p.x < self.bounds.size.width * 0.5) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p;   // the floating stick: its base lands where the touch does (kept in the left half, and on screen)
+                    CGPoint fc = clampCentre(p, [self stickR:0], self.bounds); if (fc.x > self.bounds.size.width * 0.5) fc.x = self.bounds.size.width * 0.5; _iFloatCentre = fc; continue; }
                 if (!_stick[0] && dist(p, self.stickHome) <= [self stickR:0] * 1.3) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p; continue; }
-            } else if (dist(p, isaacDpadCenter(self.bounds)) <= IA_DPAD_W * self.bounds.size.width * 0.6) { [_owner setObject:@(C_IDPAD) forKey:t]; continue; }   // the cross: its direction is read from the touch's place (isaacDpadBits)
+            } else if (dist(p, isaacDpadCenter(self.bounds)) <= isaacDpadW() * self.bounds.size.width * 0.6) { [_owner setObject:@(C_IDPAD) forKey:t]; continue; }   // the cross: its direction is read from the touch's place (isaacDpadBits)
             game |= [self gameBegin:t]; continue;
         }
         if (_hades) {   // Hades mode: a glass key, the floating left stick (a touch in the left half), the right stick (the right third), else the game's touch screen
@@ -1204,10 +1296,12 @@ int front_web_touch(void);
     for (UITouch *t in ts) {
         uint64_t v = [_owner objectForKey:t].unsignedLongLongValue; int c = (int)(v & 0xff); CGPoint p = [t locationInView:self];
         if (t == _eyeTouch && dist(p, _eyePoint) > 12) { _eyeMoved = YES; [_eyeTimer invalidate]; _eyeTimer = nil; }   // the eye key's touch became a drag: no long press, and no tap when it lifts either
-        if (c == C_EDIT) { int it = (int)(v >> 8);   // the layout editor's drag: the item's centre follows the finger (clamped like skinCenter's), the offset from the table is what is kept
+        if (t == _plusTouch && dist(p, _plusPoint) > 12) { _plusMoved = YES; [_plusTimer invalidate]; _plusTimer = nil; }   // the + key's touch became a drag: no long press, and no tap when it lifts either (in the editor the C_EDIT drag below still moves the key)
+        if (c == C_EDIT) { int it = (int)(v >> 8);   // the layout editor's drag: the item's centre follows the finger (clamped like the centre's own clamp), the offset from the table is what is kept
             if (t == _editTouch && it == _editItem) { CGRect b = self.bounds; CGPoint raw = [self editRawCentre:it];
                 CGPoint want = clampCentre(CGPointMake(p.x - _editGrab.x, p.y - _editGrab.y), [self editRadius:it], b);
-                g_custDX[it] = (want.x - raw.x) / b.size.width; g_custDY[it] = (want.y - raw.y) / b.size.height; [self setNeedsLayout]; } }
+                CGFloat *dxs = _isaac ? g_icustDX : g_custDX, *dys = _isaac ? g_icustDY : g_custDY;
+                dxs[it] = (want.x - raw.x) / b.size.width; dys[it] = (want.y - raw.y) / b.size.height; [self setNeedsLayout]; } }
         else if (c == C_FACE) [_faceOf setObject:@([self faceAt:p]) forKey:t];
         else if (c == C_STICK) { _stickNow[v >> 8] = p;
             if ((v >> 8) == 1) { CGFloat d = dist(p, _rCentre), R = [self stickR:1];   // the right stick's centre follows a finger past its radius, so turning back responds at once
@@ -1218,22 +1312,26 @@ int front_web_touch(void);
     [self recompute];
 }
 - (void)endTouches:(NSSet<UITouch *> *)ts tapped:(BOOL)ended {
-    BOOL game = NO;
+    BOOL game = NO; UITouch *plusTapTouch = nil;
     for (UITouch *t in ts) {
         uint64_t v = [_owner objectForKey:t].unsignedLongLongValue;
         if (t == _eyeTouch) { [_eyeTimer invalidate]; _eyeTimer = nil; _eyeTouch = nil;   // the eye key's touch lifts: a plain tap (not a hold, not a drag, not in the editor) flips the skill keys' visibility
             if (ended && !_eyeFired && !_eyeMoved && !_editing) { _skillOff = !_skillOff; [self refresh]; }
             _eyeFired = NO; _eyeMoved = NO; }
-        if (t == _editTouch) { _editTouch = nil; _editItem = -1; custSave(); }   // the editor's drag ends: the offset is kept
+        if (t == _plusTouch) { [_plusTimer invalidate]; _plusTimer = nil; _plusTouch = nil;   // the + key's touch lifts: a plain tap (not a hold, not a drag, not in the editor) is pulsed to the game below, after this loop's cleanup (pulsePlus)
+            if (ended && !_plusFired && !_plusMoved && !_editing) plusTapTouch = t;
+            _plusFired = NO; _plusMoved = NO; }
+        if (t == _editTouch) { _editTouch = nil; _editItem = -1; [self editStoreSave]; }   // the editor's drag ends: the offset is kept
         if ((v & 0xff) == C_GAME && (v >> 8) < 16) { _game[v >> 8] = nil; game = YES; }
         [_owner removeObjectForKey:t]; [_faceOf removeObjectForKey:t]; for (int i = 0; i < 2; i++) if (t == _stick[i]) _stick[i] = nil;
     }
+    if (plusTapTouch) [self pulsePlus:plusTapTouch];
     if (game) [self pushGame];
     [self recompute];
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:YES]; }
 - (void)touchesCancelled:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:NO]; }
-- (void)reset { [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [_eyeTimer invalidate]; _eyeTimer = nil; _eyeTouch = nil; _editTouch = nil; _editItem = -1; [self pushGame]; [self recompute]; }
+- (void)reset { [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [_eyeTimer invalidate]; _eyeTimer = nil; _eyeTouch = nil; [_plusTimer invalidate]; _plusTimer = nil; _plusTouch = nil; [_plusPulseTimer invalidate]; _plusPulseTimer = nil; _plusPulseTouch = nil; _editTouch = nil; _editItem = -1; [self pushGame]; [self recompute]; }
 // ---- Pad mode (skin mode): the host watches the game's state (hle_hid.c dm_pad_mode) and the pad hides while a cutscene or a load runs ----
 // Mode 1 (a load) hides the pad outright; modes 2 and 3 (a cutscene) show the Pad recall key at the eye key's place, and mode 3 (the
 // cutscene can be skipped) the Skip key at the Bind key's place. Recalling brings the whole pad back for the rest of the mode. While the
@@ -1259,11 +1357,14 @@ int front_web_touch(void);
     if (_padMode == 6) return silkLetter(i) != nil || k_skin[i].grp == SK_TOGGLE;   // the controller pages: the letter layer takes the icon's place; the eye has no letter and no place there either (it is no game key), so its icon hides with the lettered keys' icons
     return _skillOff && k_skin[i].grp == SK_SKILL;
 }
-// ---- Layout editor (skin mode): a long press on the eye key rearranges the pad ----
+// ---- Layout editor: a long press on the eye key (skin pad) or the + key (Isaac pad) rearranges the pad ----
 // While the editor is up the pad drives nothing: entering it releases every held touch (reset), its own
 // touches are taken by the editor branch of touchesBegan before any game path, and every key shows (the
 // eye's hidden skill keys dimmed, in the image skins) so they can be placed too. Changes are written to
-// NSUserDefaults as they are made, so leaving by Done or by another long press on the eye keeps them alike.
+// NSUserDefaults as they are made, so leaving by Done or by another long press on the key keeps them alike.
+// The Isaac pad edits one layout at a time -- the one it was opened in; its bar's switch-layout button
+// cycles the layout on show (the watcher's own layout waits, isaacTick holds it) so the menus' keys can
+// be placed too: the + key that opens the editor lives in the game layout alone.
 - (UIButton *)editButton:(NSString *)title action:(SEL)sel {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
     [b setTitle:title forState:UIControlStateNormal]; [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -1271,41 +1372,83 @@ int front_web_touch(void);
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside]; [_editBar addSubview:b]; return b;
 }
 - (void)setEditing:(BOOL)on {
-    if (!_skin || on == _editing) return;
+    if (!(_skin || _isaac) || on == _editing) return;
     _editing = on; _editSel = -1; _editItem = -1; _editTouch = nil;
-    if (on) [self reset];   // held touches end: nothing reaches the game while the pad is rearranged
+    if (on) { [self reset]; if (_isaac) _iEditMode = _isaacMode; }   // held touches end: nothing reaches the game while the pad is rearranged; the Isaac editor starts on the layout it was opened in
     _editBar.hidden = !on; _editRing.hidden = !on;
-    [self applyPadMode]; [self setNeedsLayout]; [self updateEditInfo];
+    if (_isaac) [self applyIsaacMode]; else [self applyPadMode];
+    [self setNeedsLayout]; [self updateEditInfo];
 }
 - (void)armEyeTimer { [_eyeTimer invalidate]; _eyeTimer = [NSTimer scheduledTimerWithTimeInterval:0.6 target:self selector:@selector(eyeLongPress) userInfo:nil repeats:NO]; }
 - (void)eyeLongPress { if (_eyeTouch) { _eyeFired = YES; [self setEditing:!_editing]; } }   // holding the eye key toggles the layout editor; the touch's own lift then does nothing (endTouches checks _eyeFired)
-- (int)editItemAt:(CGPoint)p {   // the editor item under the point: a k_skin index, SKIN_N for the stick, or -1
+- (void)armPlusTimer { [_plusTimer invalidate]; _plusTimer = [NSTimer scheduledTimerWithTimeInterval:0.6 target:self selector:@selector(plusLongPress) userInfo:nil repeats:NO]; }
+- (void)plusLongPress { if (_plusTouch) { _plusFired = YES; [self setEditing:!_editing]; } }   // holding the Isaac + key toggles the layout editor, the eye's way; the touch's own lift then does nothing (endTouches checks _plusFired)
+- (void)pulsePlus:(UITouch *)t {   // a + tap, delivered as a short press: the press was held back while the long-press watch ran, so it is registered now (endTouches, after its cleanup) and released a few frames later (plusPulseEnd), long enough for the game's poll to see it
+    if (_plusPulseTouch && _plusPulseTouch != t) [_owner removeObjectForKey:_plusPulseTouch];   // a re-tap inside the last pulse's few frames: the old press ends here, the new one takes its place
+    _plusPulseTouch = t;
+    [_owner setObject:@(C_BTN | (uint64_t)B_PLUS << 8) forKey:t];
+    [_plusPulseTimer invalidate]; _plusPulseTimer = [NSTimer scheduledTimerWithTimeInterval:0.07 target:self selector:@selector(plusPulseEnd) userInfo:nil repeats:NO];
+}
+- (void)plusPulseEnd { _plusPulseTimer = nil; if (_plusPulseTouch) { [_owner removeObjectForKey:_plusPulseTouch]; _plusPulseTouch = nil; } [self recompute]; }
+// The editor's active store: the skin pad's DmPadCustom arrays or the Isaac pad's DmPadCustomIsaac ones;
+// item indices are the active table's, and each table's own count is its stick's slot in both.
+- (CGFloat *)editScaleArr { if (_isaac) { icustLoad(); return g_icustS; } custLoad(); return g_custS; }
+- (void)editStoreSave { if (_isaac) icustSave(); else custSave(); }
+- (const char *)isaacEditName:(int)it { return it == IA_DPAD_SLOT ? "dpad" : it == IA_STICK_SLOT ? "stick" : k_isaac[it].art; }   // the editor's name for an Isaac item: a key's art, the cross, the stick
+- (int)editItemAt:(CGPoint)p {   // the editor item under the point: a key index in the active table, its stick slot (the D-pad cross's own slot, for the Isaac pad's menus), or -1
     CGRect b = self.bounds;
+    if (_isaac) { int m = 1 << [self isaacShown];
+        for (int i = 0; i < ISAAC_N; i++) { if (!(k_isaac[i].modes & m)) continue;
+            if (dist(p, isaacCenter(i, b)) <= fmax(isaacW(i) * b.size.width * 0.5 * 1.35, 26)) return i; }
+        if ([self isaacShown] != IA_GAME) { if (dist(p, isaacDpadCenter(b)) <= fmax(isaacDpadW() * b.size.width * 0.5 * 1.35, 26)) return IA_DPAD_SLOT; }
+        else if (dist(p, self.stickHome) <= [self stickR:0] * 1.25) return IA_STICK_SLOT;
+        return -1; }
     for (int i = 0; i < SKIN_N; i++) { if (k_skin[i].bit == B_UP) continue;   // the Up key rides on the stick: it is not edited on its own
         if (dist(p, skinCenter(i, b)) <= fmax(skinR(i) * b.size.width * 1.35, 26)) return i; }
     if (dist(p, self.stickHome) <= [self stickR:0] * 1.25) return SKIN_N;
     return -1;
 }
-- (CGPoint)editCentre:(int)it { return it == SKIN_N ? self.stickHome : skinCenter(it, self.bounds); }
-- (CGPoint)editRawCentre:(int)it { CGRect b = self.bounds; return it == SKIN_N ? CGPointMake(0.162 * b.size.width, 0.742 * b.size.height) : skinCenterRaw(it, b); }
-- (CGFloat)editRadius:(int)it { return it == SKIN_N ? [self stickR:0] : skinR(it) * self.bounds.size.width; }
+- (CGPoint)editCentre:(int)it { if (_isaac) return it == IA_DPAD_SLOT ? isaacDpadCenter(self.bounds) : it == IA_STICK_SLOT ? self.stickHome : isaacCenter(it, self.bounds);
+    return it == SKIN_N ? self.stickHome : skinCenter(it, self.bounds); }
+- (CGPoint)editRawCentre:(int)it { CGRect b = self.bounds;
+    if (_isaac) return it == IA_DPAD_SLOT ? isaacDpadCenterRaw(b) : it == IA_STICK_SLOT ? CGPointMake(IA_STICK_X * b.size.width, IA_STICK_Y * b.size.height) : isaacCenterRaw(it, b);
+    return it == SKIN_N ? CGPointMake(0.162 * b.size.width, 0.742 * b.size.height) : skinCenterRaw(it, b); }
+- (CGFloat)editRadius:(int)it { if (_isaac) return it == IA_DPAD_SLOT ? isaacDpadW() * self.bounds.size.width * 0.5 : it == IA_STICK_SLOT ? [self stickR:0] : isaacW(it) * self.bounds.size.width * 0.5;
+    return it == SKIN_N ? [self stickR:0] : skinR(it) * self.bounds.size.width; }
 - (void)updateEditInfo {
     if (!_editInfo) return;
     if (_editSel < 0) _editInfo.text = [NSString stringWithUTF8String:"\xE9\x80\x89\xE6\x8B\xA9\xE6\x8C\x89\xE9\x94\xAE"];   // "select a key"
+    else if (_isaac) { icustLoad(); _editInfo.text = [NSString stringWithFormat:@"%s %.2fx", [self isaacEditName:_editSel], g_icustS[_editSel]]; }
     else _editInfo.text = [NSString stringWithFormat:@"%s %.2fx", _editSel == SKIN_N ? "stick" : k_skin[_editSel].art, g_custS[_editSel]];
     _editMinus.enabled = _editPlus.enabled = _editSel >= 0;
     _editMinus.alpha = _editPlus.alpha = _editSel >= 0 ? 1 : 0.35;
+    if (_isaac) { _iEditLayout.hidden = !_editing;   // the Isaac bar's own buttons: the layout switch rides the editor, the stick's fixed / floating toggle shows only while the stick is the selected item, titled with the state it is in
+        BOOL stickSel = _editing && _editSel == IA_STICK_SLOT;
+        _iEditFloat.hidden = !stickSel;
+        if (stickSel) { icustLoad(); [_iEditFloat setTitle:[NSString stringWithUTF8String:g_icustFloat ? "\xE6\xB5\xAE\xE5\x8A\xA8" : "\xE5\x9B\xBA\xE5\xAE\x9A"] forState:UIControlStateNormal]; } }   // "floating" / "fixed"
+}
+- (void)iEditLayoutTapped {   // cycle the layout the Isaac editor shows: menu A, menu B, the game, menu C, and back
+    _iEditMode = (_iEditMode + 1) & 3; _editSel = -1; _editItem = -1;
+    [self applyIsaacMode]; [self setNeedsLayout]; [self updateEditInfo];
+}
+- (void)iEditFloatTapped {   // the stick's fixed / floating choice, kept with its custom entry
+    if (_editSel != IA_STICK_SLOT) return;
+    icustLoad(); g_icustFloat = !g_icustFloat; icustSave(); [self updateEditInfo];
 }
 - (void)editScaleBy:(CGFloat)d {
     if (_editSel < 0) return;
-    g_custS[_editSel] = roundf(fmin(fmax(g_custS[_editSel] + d, 0.6f), 1.6f) * 20) / 20;
-    custSave(); [self setNeedsLayout]; [self updateEditInfo];
+    CGFloat *ss = [self editScaleArr];
+    ss[_editSel] = roundf(fmin(fmax(ss[_editSel] + d, 0.6f), 1.6f) * 20) / 20;
+    [self editStoreSave]; [self setNeedsLayout]; [self updateEditInfo];
 }
 - (void)editMinusTapped { [self editScaleBy:-0.05]; }
 - (void)editPlusTapped { [self editScaleBy:0.05]; }
 - (void)editResetTapped {   // restore defaults: clear every custom value, live
-    for (int i = 0; i <= SKIN_N; i++) { g_custDX[i] = g_custDY[i] = 0; g_custS[i] = 1; }
-    custSave(); [self setNeedsLayout]; [self updateEditInfo]; [self refresh];
+    CGFloat *dxs = _isaac ? g_icustDX : g_custDX, *dys = _isaac ? g_icustDY : g_custDY, *ss = [self editScaleArr];
+    int n = _isaac ? IA_SLOTS : SKIN_N + 1;
+    for (int i = 0; i < n; i++) { dxs[i] = dys[i] = 0; ss[i] = 1; }
+    if (_isaac) g_icustFloat = NO;
+    [self editStoreSave]; [self setNeedsLayout]; [self updateEditInfo]; [self refresh];
 }
 - (void)editDoneTapped { [self setEditing:NO]; }
 - (void)applyPadMode {
@@ -1401,19 +1544,24 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         _label[b].contentsScale = scale; [_label[b] setNeedsDisplay];
     }
     _controls.frame = self.layer.bounds;
-    if (_isaac) {   // the Isaac pad's image controls, at fractions of the whole screen (k_isaac)
-        CGRect b = self.bounds;
-        for (int i = 0; i < ISAAC_N; i++) { CGFloat fw = k_isaac[i].w * b.size.width; CGPoint c = isaacCenter(i, b);
+    if (_isaac) {   // the Isaac pad's image controls, at fractions of the whole screen (k_isaac), the layout editor's custom sizes applied
+        CGRect b = self.bounds; icustLoad();
+        for (int i = 0; i < ISAAC_N; i++) { CGFloat fw = isaacW(i) * b.size.width; CGPoint c = isaacCenter(i, b);
             _iBtn[i].frame = CGRectMake(c.x - fw / 2, c.y - fw / 2, fw, fw); }
-        CGFloat dw = IA_DPAD_W * b.size.width; CGPoint dc = isaacDpadCenter(b);
+        CGFloat dw = isaacDpadW() * b.size.width; CGPoint dc = isaacDpadCenter(b);
         _iDpad.frame = CGRectMake(dc.x - dw / 2, dc.y - dw / 2, dw, dw);
-        CGFloat bw = IA_STICK_W * b.size.width; CGPoint sc = self.stickHome;
+        CGFloat bw = [self stickR:0] * 2; CGPoint sc = self.stickHome;
         _iBase.frame = CGRectMake(sc.x - bw / 2, sc.y - bw / 2, bw, bw);
-        CGFloat tw = IA_THUMB_W * b.size.width; _iThumb.bounds = CGRectMake(0, 0, tw, tw); _iThumb.position = sc;   // refresh moves the thumb with the touch
+        CGFloat tw = IA_THUMB_W * g_icustS[IA_STICK_SLOT] * b.size.width; _iThumb.bounds = CGRectMake(0, 0, tw, tw); _iThumb.position = sc;   // refresh moves the thumb with the touch
         CGFloat mr = K_MENU_R * u; CGPoint mc = self.menuCenter;   // the menu button, on the drawn layout's terms (its frame is set there, which this branch replaces)
         _menu.frame = CGRectMake(mc.x - mr, mc.y - mr, 2 * mr, 2 * mr); _menu.layer.cornerRadius = mr;
         _menu.layer.shadowPath = [UIBezierPath bezierPathWithOvalInRect:_menu.bounds].CGPath;
         [_menu setImage:[UIImage systemImageNamed:@"gearshape.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:13 * u weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
+        if (_editBar) { CGFloat bw2 = 0.56 * b.size.width; _editBar.frame = CGRectMake(0.22 * b.size.width, self.safeAreaInsets.top + 6, bw2, 46);   // the layout editor's bar, wider than the skin pad's: it also carries the layout switch and the stick's fixed / floating toggle; the top centre is key-free on this pad (the - / + pair sits at the top right)
+            _editInfo.frame = CGRectMake(8, 0, bw2 - 398, 46); _iEditLayout.frame = CGRectMake(bw2 - 390, 6, 62, 34); _editMinus.frame = CGRectMake(bw2 - 322, 6, 34, 34); _editPlus.frame = CGRectMake(bw2 - 282, 6, 34, 34);
+            _iEditFloat.frame = CGRectMake(bw2 - 242, 6, 62, 34); _editReset.frame = CGRectMake(bw2 - 174, 6, 76, 34); _editDone.frame = CGRectMake(bw2 - 92, 6, 84, 34); }
+        if (_editRing) { BOOL show = _editing && _editSel >= 0; _editRing.hidden = !show;
+            if (show) setPath(_editRing, circlePath([self editCentre:_editSel], [self editRadius:_editSel] * 1.12 + 4)); }
         [CATransaction commit]; [self refresh]; return;
     }
     if (_skin) {   // the skin's image controls, at fractions of the whole screen (k_skin); the drawn ones stay hidden
@@ -1519,9 +1667,12 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         for (int i = 0; i < ISAAC_N; i++) { BOOL on = (allI >> k_isaac[i].bit) & 1;
             _iBtn[i].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
         _iDpad.transform = _dpadBits ? CATransform3DMakeScale(0.97, 0.97, 1) : CATransform3DIdentity;
-        CGFloat ol = hypot(o.x, o.y), km = [self stickR:0] * 0.54;   // the thumb's travel: the base's radius less the thumb's own (0.1115 - 0.0515 of the width), so its rim just reaches the base's rim at a full tilt
-        CGPoint to = o; if (ol > km) { to.x *= km / ol; to.y *= km / ol; }
-        _iThumb.position = CGPointMake(h.x + to.x, h.y + to.y);
+        CGPoint ih = [self stickCentre:0];   // the stick's centre now: its seat, or -- the floating stick, held -- where its touch landed; layoutSubviews framed the base at the seat, so it is re-centred here while it floats
+        _iBase.position = ih;
+        CGPoint io = [self knobOffset:0];
+        CGFloat ol = hypot(io.x, io.y), km = [self stickR:0] * 0.54;   // the thumb's travel: the base's radius less the thumb's own (0.1115 - 0.0515 of the width), so its rim just reaches the base's rim at a full tilt
+        CGPoint to = io; if (ol > km) { to.x *= km / ol; to.y *= km / ol; }
+        _iThumb.position = CGPointMake(ih.x + to.x, ih.y + to.y);
     }
     if (_skin) {   // pressed keys swap to their _p art and dip; the eye key shows its _p art while the skill keys are hidden (and dims instead when the skin ships no eye _p art); the medallion knob follows the touch, its rim reaching the disc's rim at a full tilt
         if (_sSkinMode) for (int i = 0; i < SKIN_N; i++) {
