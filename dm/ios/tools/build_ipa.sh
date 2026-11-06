@@ -164,6 +164,11 @@ if [ -d "$IOS_SOURCE/padskin" ] && grep -q '^DM_PAD_SKIN=1' Gen/dm/env.txt 2>/de
 if [ -d "$IOS_SOURCE/padskin-badge" ] && grep -q '^DM_PAD_SKIN=1' Gen/dm/env.txt 2>/dev/null; then mkdir -p Gen/dm/padskin-badge && cp "$IOS_SOURCE"/padskin-badge/*.png Gen/dm/padskin-badge/ || die "copy padskin badge art"; fi
 # The padskin's black-iron set (dm/ios/padskin-metal in this repo): the same gate; the launcher's DM_SILK_SKIN choice (3) picks it at runtime.
 if [ -d "$IOS_SOURCE/padskin-metal" ] && grep -q '^DM_PAD_SKIN=1' Gen/dm/env.txt 2>/dev/null; then mkdir -p Gen/dm/padskin-metal && cp "$IOS_SOURCE"/padskin-metal/*.png Gen/dm/padskin-metal/ || die "copy padskin metal art"; fi
+# Slim the staged image sets for the bundle (dm/ios/tools/skin_pack_slim.py; the repo's source art is not touched):
+# a badge / black-iron file byte-identical to the plain set's ships only in the plain set (DmGamepad.m's skinImage
+# falls back to it), and every image is packed at half resolution with a lossless re-encode -- the keys draw at
+# 190-280 px while the art is 880-1446 px. The glass set is drawn art and stays out of this.
+if [ -d Gen/dm/padskin ]; then python3 tools/skin_pack_slim.py Gen/dm/padskin Gen/dm/padskin-badge Gen/dm/padskin-metal || die "slim padskin art (python3 -m pip install Pillow)"; fi
 # The glass skin's cutscene medallions (dm/ios/padskin-glass in this repo): the same gate; the glass choice (DM_SILK_SKIN=0) reads its Skip and Pad-recall discs there at runtime.
 if [ -d "$IOS_SOURCE/padskin-glass" ] && grep -q '^DM_PAD_SKIN=1' Gen/dm/env.txt 2>/dev/null; then mkdir -p Gen/dm/padskin-glass && cp "$IOS_SOURCE"/padskin-glass/*.png Gen/dm/padskin-glass/ || die "copy padskin glass art"; fi
 # Hades II button-skin art (dm/ios/hadesskin in this repo): bundled at DmIOS.app/dm/hadesskin only for DM_PAD_HADES builds

@@ -224,14 +224,19 @@ static NSString *silkGlyph(int i) {   // a skin key's glass glyph, by art name: 
     if (!strcmp(a, "clawline")) return @"ZL"; if (!strcmp(a, "map")) return @"L";
     return nil;
 }
-static UIImage *skinImage(const char *name) {   // a padskin image, loaded once and cached (nil when the file is absent); the badge mode reads the dm/padskin-badge set and the black-iron mode the dm/padskin-metal set instead (same names, the mode is fixed for the process, so one cache serves all)
+static UIImage *skinImage(const char *name) {   // a padskin image, loaded once and cached (nil when the file is absent); the badge mode reads the dm/padskin-badge set and the black-iron mode the dm/padskin-metal set instead (same names, the mode is fixed for the process, so one cache serves all). The pack drops a badge / black-iron file whose bytes are the plain set's own (skin_pack_slim.py), so a miss in those sets falls back to the plain set's copy -- the same pixels by construction
     static NSMutableDictionary *cache;
     if (!cache) cache = [[NSMutableDictionary alloc] init];
     NSString *key = [NSString stringWithUTF8String:name];
     UIImage *im = cache[key];
     if (!im) {
-        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:silkSkinMode() == 2 ? @"dm/padskin-badge/%s.png" : silkSkinMode() == 3 ? @"dm/padskin-metal/%s.png" : @"dm/padskin/%s.png", name]];
+        int mode = silkSkinMode();
+        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:mode == 2 ? @"dm/padskin-badge/%s.png" : mode == 3 ? @"dm/padskin-metal/%s.png" : @"dm/padskin/%s.png", name]];
         im = [UIImage imageWithContentsOfFile:p];
+        if (!im && (mode == 2 || mode == 3)) {
+            p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"dm/padskin/%s.png", name]];
+            im = [UIImage imageWithContentsOfFile:p];
+        }
         if (im) cache[key] = im;
     }
     return im;
