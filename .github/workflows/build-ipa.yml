@@ -136,7 +136,7 @@ jobs:
             brew install --cask dotnet-sdk
           fi
           dotnet --list-sdks
-          python3 -m pip install --user --break-system-packages lz4 capstone fonttools Pillow zbic backports.zstd
+          python3 -m pip install --user --break-system-packages lz4 capstone fonttools Pillow zbic
           # zstd: stdlib compression.zstd from Python 3.14; the backport is only for older Pythons.
           python3 - <<'EOF'
           import subprocess, sys
