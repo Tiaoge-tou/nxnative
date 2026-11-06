@@ -306,10 +306,9 @@ static CGFloat bagArtScale(void) {   // every bag key ships a badge version (its
 // menu art. On the achievements page (mode 7) only B of the pair shows, at its own seat: the list
 // scrolls on the D-pad and B is the page's only way out. On the controller pages (mode 6: the game's controller diagram and its key-binding page)
 // every key shows at its own seat as its letter instead of its icon, the skill keys included, so each key
-// names the button it sends while the binding page is worked; the eye shows there too, as its icon
-// (it has no letter; the glass choice shows its ON / OFF state word instead), and its tap still
-// flips the skill keys' visibility for the play pages, and the Up key stays invisible, as
-// in every mode. The letter art is the let* set in dm/padskin and
+// names the button it sends while the binding page is worked; the eye is not among them (it is no game
+// key, and the player asked it off the page): it neither shows (as its icon, or as the glass choice's
+// ON / OFF state word) nor takes a touch there, and the Up key stays invisible, as in every mode. The letter art is the let* set in dm/padskin and
 // dm/padskin-badge, made by dm/ios/tools/make_bagskin.py; the glass skin needs no extra art, its keys'
 // glyphs (silkGlyph) being the same letters
 static const struct { const char *art; int bit; CGFloat x, y, r; } k_title[] = {
@@ -852,9 +851,10 @@ static BOOL isClick(int b) { return b == B_LS || b == B_RS; }
 - (CGPoint)menuCenter { CGRect s = self.safe; return CGPointMake(CGRectGetMidX(s), CGRectGetMinY(s) + MAX(K_PILL_Y * self.u, _layout.separated ? 14 : 0)); }
 
 static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); }
-- (int)skinBtnAt:(CGPoint)p {   // skin mode: the image key under the point, or -1 (hidden skill keys take no touch, except on the controller pages, where every key works, the eye included)
+- (int)skinBtnAt:(CGPoint)p {   // skin mode: the image key under the point, or -1 (hidden skill keys take no touch, except on the controller pages, where every recordable key works; the eye is not one of them and takes no touch there)
     CGRect b = self.bounds;
     for (int i = 0; i < SKIN_N; i++) { if (_padMode != 6 && _skillOff && k_skin[i].grp == SK_SKILL) continue;
+        if (_padMode == 6 && k_skin[i].grp == SK_TOGGLE) continue;
         CGPoint c = skinCenter(i, b);
         if (dist(p, c) <= skinR(i) * b.size.width * 1.35) return i; }
     return -1;
@@ -1028,7 +1028,7 @@ int front_web_touch(void);
                 game |= [self gameBegin:t]; continue; }   // the menu pages (and the achievements page, B alone through titleBtnAt): the D-pad and its letter keys take the touch (no stick there: its Up key would double-fire under the D-pad's); every other touch is the game's
             if ([self padHidden]) { game |= [self gameBegin:t]; continue; }   // hidden for a cutscene or a load: the touch is the game's
             int sb = [self skinBtnAt:p];
-            if (sb >= 0 && k_skin[sb].grp == SK_TOGGLE) { _eyeTouch = t; _eyePoint = p; _eyeFired = NO; _eyeMoved = NO; if (_padMode != 6) [self armEyeTimer]; continue; }   // the eye key: a tap flips the skill keys' visibility when it lifts (endTouches); holding it for 0.6s opens the layout editor instead (eyeLongPress) -- except on the controller pages, where the tap still flips the state but the editor never armed, and still does not
+            if (sb >= 0 && k_skin[sb].grp == SK_TOGGLE) { _eyeTouch = t; _eyePoint = p; _eyeFired = NO; _eyeMoved = NO; [self armEyeTimer]; continue; }   // the eye key: a tap flips the skill keys' visibility when it lifts (endTouches); holding it for 0.6s opens the layout editor instead (eyeLongPress). The controller pages never arrive here with the eye -- skinBtnAt skips it there -- so the editor never arms from them either
             if (sb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_skin[sb].bit << 8) forKey:t]; continue; }
             if (!_stick[0] && dist(p, self.stickHome) <= [self stickR:0] * K_STICK_GRAB) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p; continue; }
             game |= [self gameBegin:t]; continue;
@@ -1108,7 +1108,7 @@ int front_web_touch(void);
     if (!_sSkinMode) return YES;   // the glass choice draws its own discs; the image layers stay hidden under it
     if (_editing) return NO;   // the layout editor shows every key, the eye's hidden skill keys included
     if ([self padHidden] || _padMode == 4 || _padMode == 5 || _padMode == 7) return YES;
-    if (_padMode == 6) return silkLetter(i) != nil;   // the controller pages: the letter layer takes the icon's place; the eye has no letter, so its icon shows there (its tap still flips the skill keys' state for the play pages)
+    if (_padMode == 6) return silkLetter(i) != nil || k_skin[i].grp == SK_TOGGLE;   // the controller pages: the letter layer takes the icon's place; the eye has no letter and no place there either (it is no game key), so its icon hides with the lettered keys' icons
     return _skillOff && k_skin[i].grp == SK_SKILL;
 }
 // ---- Layout editor (skin mode): a long press on the eye key rearranges the pad ----
@@ -1398,7 +1398,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         if (!_sSkinMode) {   // the glass controls: a key's wash lit while it is pressed (the eye's while the skill keys are hidden), the skill discs hidden with the eye off, the knob following the touch
             for (int i = 0; i < SKIN_N; i++) { if (!_sWash[i]) continue;
                 _sWash[i].opacity = (k_skin[i].grp == SK_TOGGLE ? _skillOff : ((_btnBits >> k_skin[i].bit) & 1)) ? 0.35 : 0;
-                BOOL hid = [self padHidden] || _padMode == 4 || _padMode == 5 || _padMode == 7 || (_skillOff && k_skin[i].grp == SK_SKILL && _padMode != 6);   // the whole key hides, letter and symbol with the disc: the glyph layers live in the overlay, not in the disc view; the menu pages show their own glass keys (the title discs and the D-pad, below) in the combat pad's place; the controller pages show the skill keys too, their letters being the point, and the eye with them
+                BOOL hid = [self padHidden] || _padMode == 4 || _padMode == 5 || _padMode == 7 || (_padMode == 6 && k_skin[i].grp == SK_TOGGLE) || (_skillOff && k_skin[i].grp == SK_SKILL && _padMode != 6);   // the whole key hides, letter and symbol with the disc: the glyph layers live in the overlay, not in the disc view; the menu pages show their own glass keys (the title discs and the D-pad, below) in the combat pad's place; the controller pages show the skill keys too, their letters being the point; the eye is not among them there, its state word hiding with its disc
                 if (_editing) hid = NO;   // the layout editor shows every glass disc too
                 if (_sGlass[i]) _sGlass[i].hidden = hid;
                 if (_sLabel[i]) _sLabel[i].hidden = hid;
