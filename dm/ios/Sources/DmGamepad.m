@@ -449,23 +449,25 @@ static UIView *clearDisc(UIView *parent, CGFloat tint) {
 // ---- Isaac layout (DM_PAD_ISAAC=1 in an env file) ----
 // The Binding of Isaac's own touch pad: image keys only (the game's official iOS art, redrawn by the
 // player; dm/padisaac, staged into the bundle by build_ipa.sh), no drawn fallback and no layout editor.
+// The art carries its own opacity (the player's set bakes it in -- the stick base at 35%, the dark
+// discs at 75%, the glyphs full), so the layers render at full opacity and nothing multiplies it again.
 // The host watches the game's page fields and publishes the layout (dm_isaac_pad_mode, hle_isaacpad.c):
-// 0 menu A (the title and save pages), 1 menu B (the main menu and the character page), 2 the game.
-// The menus get a D-pad cross at the left and the paper confirm / back keys at the right (menu B adds an
-// X key at the top right, for the daily run and the seed entry); the game gets a fixed stick at the left,
+// 0 menu A (the title and save pages), 1 menu B (the main menu and the character page), 2 the game,
+// 3 menu C (the death page: the diary). The pause page still publishes as the game -- no probe has
+// found a field for it. The menus get a D-pad cross at the left and the paper confirm / back keys at
+// the right (menu B adds an X key at the top right, for the daily run and the seed entry; menu C gets
+// the letter A / B discs instead of the paper keys, and no X); the game gets a fixed stick at the left,
 // the shooting diamond at the right, a two-key row at the bottom centre (ZL's tool inside, L's bomb
 // outside) and the - / + pair at the top right. There are no R / ZR keys (the game binds nothing the
-// player asked for to them here). A fourth layout is already drawn in the table -- menu C, the death
-// page (the diary: the cross and the letter A / B discs) -- but stays unreachable: no watcher state
-// maps to it yet, because the diary page reads exactly like the game in every field the probes have
-// covered (see isaacTick).
+// player asked for to them here). The game's keys sit at the player's final scale: three quarters of
+// the first fitting's frames, the diamond re-pitched to a true diamond (equal pixel pitch both axes).
 // Centres are fractions of the whole screen (x of its width, y of its height) and sizes the art frame's
 // width as a fraction of the screen's width (the frames are square), the layout the player measured.
 // The top-right pair is the one exception: those two arts carry different transparent margins, so each
 // is placed by its visible disc's centre -- (ax, ay) is the point of the frame, as a fraction, that
 // lands on the seat (x, y); every other key's anchor is its frame centre (0.5, 0.5).
 static BOOL padIsaac(void) { const char *e = getenv("DM_PAD_ISAAC"); return e && atoi(e); }
-enum { IA_MENU_A, IA_MENU_B, IA_GAME, IA_MENU_C };   // the layouts, dm_isaac_pad_mode's values (IA_MENU_C unreachable for now)
+enum { IA_MENU_A, IA_MENU_B, IA_GAME, IA_MENU_C };   // the layouts, dm_isaac_pad_mode's values
 #define IA_IN_A (1 << IA_MENU_A)
 #define IA_IN_B (1 << IA_MENU_B)
 #define IA_IN_G (1 << IA_GAME)
@@ -474,20 +476,20 @@ static const struct { const char *art; int bit; int modes; CGFloat x, y, w, ax, 
     {"select",   B_A,     IA_IN_A | IA_IN_B, 0.859, 0.639, 0.1375, 0.5,    0.5},     // the paper confirm key (the menus' A)
     {"back",     B_B,     IA_IN_A | IA_IN_B, 0.859, 0.861, 0.122,  0.5,    0.5},     // the paper back key (the menus' B)
     {"letter_x", B_X,     IA_IN_B,           0.938, 0.097, 0.097,  0.5,    0.5},     // menu B's sub-option key, at the top right
-    {"letter_a", B_A,     IA_IN_C,           0.859, 0.639, 0.110,  0.5,    0.5},     // the death page's restart key (menu C, unreachable yet)
-    {"letter_b", B_B,     IA_IN_C,           0.859, 0.861, 0.110,  0.5,    0.5},     // the death page's quit key (menu C, unreachable yet)
-    {"attack_x", B_X,     IA_IN_G,           0.867, 0.597, 0.097,  0.5,    0.5},     // the diamond: shoot up
-    {"attack_y", B_Y,     IA_IN_G,           0.789, 0.736, 0.097,  0.5,    0.5},     // shoot left
-    {"attack_a", B_A,     IA_IN_G,           0.945, 0.736, 0.097,  0.5,    0.5},     // shoot right
-    {"attack_b", B_B,     IA_IN_G,           0.867, 0.875, 0.097,  0.5,    0.5},     // shoot down
-    {"item_zl",  B_ZL,    IA_IN_G,           0.500, 0.885, 0.092,  0.5,    0.5},     // the bottom row: the active item (ZL) inside
-    {"bomb_l",   B_L,     IA_IN_G,           0.615, 0.885, 0.092,  0.5,    0.5},     // the bottom row: bombs (L) outside -- the pair swapped seats at the player's word, the old - seat left of them stays empty
-    {"minus",    B_MINUS, IA_IN_G,           0.869, 0.097, 0.0705, 0.5244, 0.5020},  // - (time and score): placed by its disc's centre (the disc sits right of its frame's centre), sized so its disc matches the + disc's
-    {"pause",    B_PLUS,  IA_IN_G,           0.938, 0.097, 0.067,  0.4986, 0.5069},  // + (pause), the pause art on the Plus key: placed by its disc's centre, like its pair
+    {"letter_a", B_A,     IA_IN_C,           0.859, 0.639, 0.110,  0.5,    0.5},     // the death page's restart key (menu C)
+    {"letter_b", B_B,     IA_IN_C,           0.859, 0.861, 0.110,  0.5,    0.5},     // the death page's quit key (menu C)
+    {"attack_x", B_X,     IA_IN_G,           0.867, 0.60902, 0.0728, 0.5,  0.5},     // the diamond: shoot up (a true diamond: the vertical pitch is the horizontal's 160 px, not the design sheet's height fraction)
+    {"attack_y", B_Y,     IA_IN_G,           0.8085, 0.736, 0.0728, 0.5,   0.5},     // shoot left
+    {"attack_a", B_A,     IA_IN_G,           0.9255, 0.736, 0.0728, 0.5,   0.5},     // shoot right
+    {"attack_b", B_B,     IA_IN_G,           0.867, 0.86298, 0.0728, 0.5,  0.5},     // shoot down
+    {"item_zl",  B_ZL,    IA_IN_G,           0.565, 0.885, 0.069,  0.5,    0.5},     // the bottom row: the active item (ZL) inside
+    {"bomb_l",   B_L,     IA_IN_G,           0.650, 0.885, 0.069,  0.5,    0.5},     // the bottom row: bombs (L) outside -- the pair swapped seats at the player's word, then moved right and closer together at his final fitting; the old - seat left of them stays empty
+    {"minus",    B_MINUS, IA_IN_G,           0.8838, 0.097, 0.0530, 0.5244, 0.5020},  // - (time and score): placed by its disc's centre (the disc sits right of its frame's centre), sized so its disc matches the + disc's
+    {"pause",    B_PLUS,  IA_IN_G,           0.938, 0.097, 0.0503, 0.4986, 0.5069},  // + (pause), the pause art on the Plus key: placed by its disc's centre, like its pair
 };
 #define ISAAC_N (int)(sizeof k_isaac / sizeof k_isaac[0])
 static const CGFloat IA_DPAD_X = 0.133, IA_DPAD_Y = 0.736, IA_DPAD_W = 0.203;   // the menus' D-pad cross (the stick's seat, at the old disc's frame, at the player's word)
-static const CGFloat IA_STICK_X = 0.133, IA_STICK_Y = 0.743, IA_STICK_W = 0.223, IA_THUMB_W = 0.103;   // the game's stick base and thumb (frame widths, as k_isaac's)
+static const CGFloat IA_STICK_X = 0.133, IA_STICK_Y = 0.743, IA_STICK_W = 0.16725, IA_THUMB_W = 0.07725;   // the game's stick base and thumb (frame widths, as k_isaac's; three quarters of the first fitting, like the keys)
 static UIImage *isaacImage(const char *name) {   // a padisaac image, loaded once and cached (nil when the file is absent)
     static NSMutableDictionary *cache;
     if (!cache) cache = [[NSMutableDictionary alloc] init];
@@ -501,7 +503,9 @@ static UIImage *isaacImage(const char *name) {   // a padisaac image, loaded onc
     return im;
 }
 static CALayer *isaacImgLayer(CALayer *parent, const char *name) {
-    CALayer *l = [CALayer layer]; l.contents = (id)isaacImage(name).CGImage; [parent addSublayer:l]; return l;
+    CALayer *l = [CALayer layer]; l.contents = (id)isaacImage(name).CGImage;
+    l.opacity = 1.0;   // the art bakes its own opacity in; the engine renders it at full strength and never multiplies it again (set explicitly: the default already is 1)
+    [parent addSublayer:l]; return l;
 }
 static CGPoint isaacCenter(int i, CGRect b) {   // key i's art frame centre, in points: the seat (x, y) is where the frame's anchor point (ax, ay) lands, so the frame centre sits off it by the anchor's offset (the top-right pair's discs are not at their frames' centres)
     CGFloat fw = k_isaac[i].w * b.size.width;
@@ -1003,9 +1007,8 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     _isaacMode = m;
     [self reset];   // held touches end with the layout change: their keys may be hidden now
     [self applyIsaacMode];
-    // TODO: IA_MENU_C (the death page's layout: the cross and the letter A / B discs in k_isaac) has no
-    // watcher state yet -- the diary page reads exactly like the game in the flag and session fields.
-    // Map it here once the deep-follow probe (hle_isaacprobe.c) finds the diary's field.
+    // The watcher publishes all four layouts now: the diary's field turned up in the probe's third
+    // round (a death flag in Repentance's data segment; hle_isaacpad.c reads it as menu C).
 }
 - (CGFloat)buttonDistance:(int)b point:(CGPoint)p {
     CGFloat u = self.u;
