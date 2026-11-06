@@ -48,6 +48,11 @@ on:
         type: boolean
         required: false
         default: false
+      isaac_probe:
+        description: "TEMPORARY Isaac page-state probe (DM_ISAAC_PROBE env switch): logs guest data-segment changes to find a title/in-game state field; remove with the probe"
+        type: boolean
+        required: false
+        default: false
       romfs_img:
         description: "Also upload the extracted RomFS.img as an artifact (the one-time datapack import for a separate-RomFS build; several GB)"
         type: boolean
@@ -466,6 +471,13 @@ jobs:
             printf 'DM_PAD_HADES=1\n' > "$RUNNER_TEMP/dm-env.txt"
             ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
             echo "Hades build: DM_PAD_HADES=1"
+          fi
+          # TEMPORARY Isaac page-state probe build: bake DM_ISAAC_PROBE into the bundle's dm/env.txt
+          # the same way (hle_isaacprobe.c; remove with the probe).
+          if [ "${{ inputs.isaac_probe }}" = "true" ]; then
+            printf 'DM_ISAAC_PROBE=1\n' > "$RUNNER_TEMP/dm-env.txt"
+            ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
+            echo "Isaac probe build: DM_ISAAC_PROBE=1"
           fi
           if [ "${{ inputs.aoc_external }}" = "true" ]; then
             ARGS+=(--aoc-external)

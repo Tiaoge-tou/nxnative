@@ -1,0 +1,224 @@
+// TEMPORARY PROBE -- remove once the Isaac page-state field is found (it exists only so one on-device run can find it).
+// DM_ISAAC_PROBE=1 starts a read-only watcher that hunts for the guest field which tells The Binding of Isaac's title /
+// menu state from its in-game state, the field the game's custom touch pad needs before it can switch between its title
+// layout and its in-game layout on its own (the Silksong pad does the same off UIManager's page field, found by the
+// memory-diff probes in this host's history). Nothing here writes guest memory, and with the switch absent or 0 the
+// watcher never starts and the host behaves exactly as without this file.
+// What it watches, at 4 Hz: the writable data segment (data_off .. the image's end: .data and .bss) of every module in
+// the loader's table -- main, the SDK and the game's NROs (Repentance, AfterbirthPlus) -- logging one line per changed
+// 8-byte slot, plus the first 256 bytes of the objects main's data slots point at (the game's state very likely sits
+// behind one such pointer), re-validated every poll so a freed or moved object can never fault the host: heap reads go
+// through dm_guest_heap_read, which copies under the memory lock, and module reads stay inside a module's own data
+// segment, whose mapping lives as long as the process. A slot that changes on every poll for ten seconds is named
+// once as a counter and then left quiet. The on-device script walks title -> menus -> a run -> pause -> title with
+// steady pauses between the states; the analysis diffs the log's steady stretches offline.
+#include "hle.h"
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+#include <time.h>
+
+#define IP_OBJ 256          // bytes followed behind one pointer
+#define IP_MAX_PTR 4096     // followed pointers, at most
+#define IP_HOT_POLLS 40     // 40 polls at 4 Hz = 10 s of changing on every poll: a counter, named once
+
+typedef struct {
+    module_t *m;            // the loader's entry (its address is stable); the range is re-derived from it every poll
+    uint8_t *lo;            // base + data_off at the last rebuild
+    size_t len;             // the data segment's length then
+    uint64_t *snap;         // the segment's last seen 8-byte slots
+    uint32_t *streak;       // per slot: consecutive polls it changed on; ~0u once named a counter
+    size_t nslots;
+} ip_range_t;
+
+typedef struct {
+    size_t slot;            // the pointer's slot offset in main's data segment
+    uint64_t target;        // the object it pointed at when last read
+    int heap;               // the object lives in the guest heap (read through dm_guest_heap_read); else a module's data
+    uint8_t snap[IP_OBJ];
+} ip_ptr_t;
+
+static ip_range_t *g_ranges; static int g_nranges;
+static ip_ptr_t g_ptrs[IP_MAX_PTR]; static int g_nptrs, g_full_noted;
+static uint8_t *g_ptr_seen;         // one bit per slot of main's data segment: the slot already has a table entry
+
+static uint64_t ip_ms(void) { return (now_ns() - g_t0_ns) / 1000000; }
+
+// 1 when the 256 bytes at v are followable guest data; *heap then says heap (1) or a module's data segment (0).
+static int ip_classify(uint64_t v, int *heap) {
+    if (!v || (v & 7) || v < 0x10000) return 0;
+    uint64_t hb; size_t open;
+    dm_guest_heap_range(&hb, &open);   // the heap's opened extent: an address in it is mapped and readable
+    if (hb && v >= hb && v - hb <= open && open - (v - hb) >= IP_OBJ) { *heap = 1; return 1; }
+    for (int i = 0; i < g_nmod; i++) {
+        module_t *m = &g_mod[i];
+        if (!m->base || !m->data_off || m->size <= m->data_off) continue;
+        uint64_t lo = (uint64_t)(uintptr_t)m->base + m->data_off, hi = (uint64_t)(uintptr_t)m->base + m->size;
+        if (v >= lo && v <= hi && hi - v >= IP_OBJ) { *heap = 0; return 1; }
+    }
+    return 0;
+}
+
+// Read the followed object's bytes: 0 on success. A heap object can vanish between the classify and the read
+// (the game shrank its heap); dm_guest_heap_read refuses the copy then instead of faulting.
+static int ip_read_obj(const ip_ptr_t *p, uint8_t *out) {
+    if (p->heap) return dm_guest_heap_read(p->target, out, IP_OBJ);
+    memcpy(out, (const void *)(uintptr_t)p->target, IP_OBJ);   // a module's data: its mapping is process-lifetime
+    return 0;
+}
+
+static ip_range_t *ip_main_range(void) {
+    for (int i = 0; i < g_nranges; i++) if (!g_ranges[i].m->nro && !strcmp(g_ranges[i].m->name, "main")) return &g_ranges[i];
+    return NULL;
+}
+
+static int ip_ranges_changed(void) {
+    int n = 0;
+    for (int i = 0; i < g_nmod; i++) { module_t *m = &g_mod[i]; if (m->base && m->data_off && m->size > m->data_off) n++; }
+    if (n != g_nranges) return 1;
+    int k = 0;
+    for (int i = 0; i < g_nmod; i++) {
+        module_t *m = &g_mod[i];
+        if (!m->base || !m->data_off || m->size <= m->data_off) continue;
+        ip_range_t *r = &g_ranges[k++];
+        if (r->m != m || r->lo != m->base + m->data_off || r->len != m->size - m->data_off) return 1;
+    }
+    return 0;
+}
+
+static void ip_ranges_rebuild(void) {
+    for (int i = 0; i < g_nranges; i++) { free(g_ranges[i].snap); free(g_ranges[i].streak); }
+    free(g_ranges); g_ranges = NULL; g_nranges = 0;
+    free(g_ptr_seen); g_ptr_seen = NULL;
+    g_nptrs = 0; g_full_noted = 0;   // the pointer table keys off main's data slots; a new layout restarts it
+    int n = 0;
+    for (int i = 0; i < g_nmod; i++) { module_t *m = &g_mod[i]; if (m->base && m->data_off && m->size > m->data_off) n++; }
+    if (!n) return;
+    g_ranges = calloc((size_t)n, sizeof *g_ranges);
+    int k = 0;
+    for (int i = 0; i < g_nmod; i++) {
+        module_t *m = &g_mod[i];
+        if (!m->base || !m->data_off || m->size <= m->data_off) continue;
+        ip_range_t *r = &g_ranges[k++];
+        r->m = m; r->lo = m->base + m->data_off; r->len = m->size - m->data_off; r->nslots = r->len / 8;
+        r->snap = malloc(r->nslots * sizeof(uint64_t));
+        r->streak = calloc(r->nslots, sizeof(uint32_t));
+        memcpy(r->snap, r->lo, r->nslots * sizeof(uint64_t));
+        LOG("[isaacprobe] tracking mod=%s build=%s data off=0x%llx len=0x%zx (%zu slots)%s",
+            m->name, m->build_id, (unsigned long long)m->data_off, r->len, r->nslots, m->nro ? " (nro)" : "");
+    }
+    g_nranges = k;
+    ip_range_t *main = ip_main_range();
+    if (main) g_ptr_seen = calloc((main->nslots + 7) / 8, 1);
+}
+
+// One poll over one module's data segment: log each changed slot, name the counters. Returns the changes logged.
+static int ip_diff_range(ip_range_t *r, uint64_t t) {
+    int changed = 0;
+    const uint64_t *cur = (const uint64_t *)(const void *)r->lo;
+    for (size_t s = 0; s < r->nslots; s++) {
+        uint64_t v = cur[s];
+        if (v == r->snap[s]) { if (r->streak[s] != ~0u) r->streak[s] = 0; continue; }
+        uint64_t old = r->snap[s]; r->snap[s] = v;
+        if (r->streak[s] == ~0u) continue;   // a named counter stays quiet (and out of the heartbeat's count)
+        changed++;
+        if (++r->streak[s] >= IP_HOT_POLLS) {
+            r->streak[s] = ~0u;
+            LOG("[isaacprobe] t=%llu counter mod=%s off=0x%zx (changed on every poll for 10 s; its changes are no longer logged)",
+                (unsigned long long)t, r->m->name, s * 8);
+            continue;
+        }
+        LOG("[isaacprobe] t=%llu mod=%s off=0x%zx old=0x%016llx new=0x%016llx",
+            (unsigned long long)t, r->m->name, s * 8, (unsigned long long)old, (unsigned long long)v);
+    }
+    return changed;
+}
+
+static void ip_ptr_drop(int i) {
+    size_t idx = g_ptrs[i].slot / 8;
+    if (g_ptr_seen) g_ptr_seen[idx / 8] &= (uint8_t)~(1u << (idx % 8));
+    g_ptrs[i] = g_ptrs[--g_nptrs];
+}
+
+// Follow the pointers main's data slots hold and are not followed yet (the table caps the count).
+static void ip_ptr_scan_new(ip_range_t *main) {
+    if (!g_ptr_seen) return;
+    const uint64_t *cur = (const uint64_t *)(const void *)main->lo;
+    for (size_t s = 0; s < main->nslots; s++) {
+        if ((g_ptr_seen[s / 8] >> (s % 8)) & 1) continue;
+        int heap; if (!ip_classify(cur[s], &heap)) continue;
+        if (g_nptrs >= IP_MAX_PTR) {
+            if (!g_full_noted) { g_full_noted = 1; LOG("[isaacprobe] pointer table full (%d); no further pointers are followed", IP_MAX_PTR); }
+            return;
+        }
+        ip_ptr_t *p = &g_ptrs[g_nptrs];
+        p->slot = s * 8; p->target = cur[s]; p->heap = heap;
+        if (ip_read_obj(p, p->snap)) continue;   // unreadable between the classify and the read: a later poll retries it
+        g_ptr_seen[s / 8] |= (uint8_t)(1u << (s % 8));
+        g_nptrs++;
+    }
+}
+
+// One poll over the followed objects: re-validate each (its slot may hold another object now, or none), then log changes.
+static int ip_ptr_poll(ip_range_t *main, uint64_t t) {
+    int changed = 0;
+    const uint64_t *cur = (const uint64_t *)(const void *)main->lo;
+    for (int i = 0; i < g_nptrs; i++) {
+        ip_ptr_t *p = &g_ptrs[i];
+        uint64_t v = cur[p->slot / 8];
+        int heap;
+        if (v != p->target || !ip_classify(v, &heap) || heap != p->heap) {   // the slot moved on, or the object died
+            if (ip_classify(v, &heap)) {
+                uint8_t buf[IP_OBJ];
+                p->target = v; p->heap = heap;
+                if (ip_read_obj(p, buf)) { ip_ptr_drop(i--); continue; }
+                memcpy(p->snap, buf, IP_OBJ);
+                LOG("[isaacprobe] t=%llu ptr mod=main slot=0x%zx now points at 0x%016llx",
+                    (unsigned long long)t, p->slot, (unsigned long long)v);
+            } else ip_ptr_drop(i--);
+            continue;
+        }
+        uint8_t buf[IP_OBJ];
+        if (ip_read_obj(p, buf)) { ip_ptr_drop(i--); continue; }   // died between the classify and the read
+        for (size_t o = 0; o < IP_OBJ; o += 8) {
+            uint64_t nv, ov;
+            memcpy(&nv, buf + o, 8); memcpy(&ov, p->snap + o, 8);
+            if (nv == ov) continue;
+            changed++;
+            LOG("[isaacprobe] t=%llu ptr mod=main slot=0x%zx objoff=0x%zx old=0x%016llx new=0x%016llx",
+                (unsigned long long)t, p->slot, o, (unsigned long long)ov, (unsigned long long)nv);
+        }
+        memcpy(p->snap, buf, IP_OBJ);
+    }
+    return changed;
+}
+
+static void *isaacprobe_main(void *arg) {
+    (void)arg;
+    LOG("[isaacprobe] TEMPORARY page-state probe on (DM_ISAAC_PROBE=1): read-only, polling module data segments at 4 Hz");
+    int poll = 0, changed10 = 0;
+    for (;;) {
+        if (ip_ranges_changed()) ip_ranges_rebuild();
+        uint64_t t = ip_ms();
+        int changed = 0;
+        for (int i = 0; i < g_nranges; i++) changed += ip_diff_range(&g_ranges[i], t);
+        ip_range_t *main = ip_main_range();
+        if (main) { ip_ptr_scan_new(main); changed += ip_ptr_poll(main, t); }
+        changed10 += changed;
+        if (++poll % 40 == 0) {
+            LOG("[isaacprobe] heartbeat t=%llu changed=%d slots in the last 10 s, %d pointers followed, %d ranges tracked",
+                (unsigned long long)t, changed10, g_nptrs, g_nranges);
+            changed10 = 0;
+        }
+        struct timespec ts = { 0, 250000000 }; nanosleep(&ts, NULL);
+    }
+    return NULL;
+}
+
+void dm_isaacprobe_init(void) {
+    const char *e = getenv("DM_ISAAC_PROBE");   // the probe runs only when a build asks for it (the probe build's bundled env file sets it)
+    if (!e || !atoi(e)) return;
+    pthread_t th;
+    if (!pthread_create(&th, NULL, isaacprobe_main, NULL)) pthread_detach(th);
+    else LOG("[RED] isaacprobe: cannot start the watcher thread");
+}

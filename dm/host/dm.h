@@ -157,6 +157,7 @@ int dm_guest_heap_read(uint64_t addr, void *out, size_t len);    // hle_svc.c: h
 int dm_guest_heap_write(uint64_t addr, const void *src, size_t len);   // hle_svc.c: hole-free guest heap write (the dirty tracking sees it first)
 // Cheats (hle_cheats.c): Atmosphère-format cheat code files applied to the running game (docs/development.md "Cheats")
 void dm_cheats_init(void);            // Called once in host_preload after loading the modules (main.c): reads DM_CHEATS and friends, loads the build's file
+void dm_isaacprobe_init(void);        // TEMPORARY (hle_isaacprobe.c, remove with the probe): DM_ISAAC_PROBE=1 starts the read-only Isaac page-state watcher
 void dm_cheats_present(void);         // Per presented frame (hle_nvn.c presents): applies the enabled cheats once
 // The Cheats submenu's rows (front_mac.m, Mac window only). Readers of the list of cheats; the front end copies the strings out immediately
 int dm_cheats_found(void);            // A cheat file is loaded (this build's, or another build's on DM_CHEATS_ANY_BUILD)
