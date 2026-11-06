@@ -1600,7 +1600,9 @@ def capture_glslc(repo, dirs, pkg_ver, patched, work, env, logs, g):
     (headless and silent) with DM_GLSLC_CAPTURE (dm/host/hle_glslc.c), which writes each output to <version dir>/glslc_capture, where shader_split.py reads them; the outputs are the same on every run.
     dirs: {shader version: its extraction}; a folder that already holds every file the profile's shader map names is reused.
     The source/import heuristic can also detect a compiler used only on cache misses. With no output captured in a surviving boot, return the submitted shader keys for
-    verification against the offline split (check_glslc_coverage). Known capture files remain required. This proves coverage of the observed boot only, not later gameplay"""
+    verification against the offline split (check_glslc_coverage). Known capture files remain required. This proves coverage of the observed boot only, not later gameplay.
+    When the game ships add-on content the capture boot mounts, a second boot without it is captured too and the two sets are unioned (a name in both must
+    hold the same output), so the shipped map covers the base-only configuration as well"""
     want = glslc_wanted(g)
     todo = [v for v, d in dirs.items() if not (glslc_done(d / 'glslc_capture') >= want if want else glslc_done(d / 'glslc_capture'))]
     PROG.stage('GLSLC capture')
@@ -1621,7 +1623,8 @@ def capture_glslc(repo, dirs, pkg_ver, patched, work, env, logs, g):
     # everything the run writes stays in <id>_build (DM_ROOT is already there): a fresh save and temporary storage, no shader libraries yet, the observation map (the host looks beside itself by default)
     henv = dict(env, DM_ROMFS=str(rfs.source(d)), DM_SAVE=str(rd / 'save'), DM_TEMP=str(rd / 'temp'), DM_MSL_DIR=str(rd / 'msl'), DM_NVN_SHMAP=str(shmap), DM_GLSLC_CAPTURE=str(cap), DM_KEYS=GLSLC_KEYS)
     aoc = work / 'aoc'
-    if aoc.is_dir() and any(aoc.glob('*.img')): henv['DM_AOC_DIR'] = str(aoc)   # the capture boot mounts the same add-on content as the shipped app (mac_run sets DM_AOC_DIR for its runs); without it a game whose DLC carries code or data boots base-only here and compiles a different set of shaders than it does on the device
+    with_aoc = aoc.is_dir() and any(aoc.glob('*.img'))
+    if with_aoc: henv['DM_AOC_DIR'] = str(aoc)   # the capture boot mounts the same add-on content as the shipped app (mac_run sets DM_AOC_DIR for its runs); without it a game whose DLC carries code or data boots base-only here and compiles a different set of shaders than it does on the device
     PROG.set(step='booting the game', done=0, total=len(want) if want else None, unit='shaders')
     say(f'booting the game in the Mac host to capture the shaders it compiles at run time → {d / "glslc_capture"}')
     t0 = time.time()
@@ -1646,6 +1649,35 @@ def capture_glslc(repo, dirs, pkg_ver, patched, work, env, logs, g):
         raise BuildError(f'captured only {len(got)} run-time shaders'
                          + (f', the profile needs {len(want)}' if want else '') + f' (host output: {log})')
     if want and got - want: say(f'[RED] captured files the profile\'s shader map does not name: {", ".join(sorted(got - want))}')
+    if with_aoc:
+        # The same game booted without its add-on content compiles a different set of shaders (Isaac, base-only on the device: its first frame binds four
+        # programs the with-DLC boot never creates, and draws nothing). Capture that boot too and union the two sets, so the shipped map covers both
+        # configurations; entries a boot never binds are inert. A name both boots wrote is one shader key and must hold the same output in both -- one
+        # key cannot ship two libraries -- so a difference stops the build rather than picking a side.
+        cap2, rd2, log2 = d / 'glslc_capture_base.partial', work / 'tmp/glslc_run_base', logs / 'glslc_capture_base.log'
+        rmtree(cap2); rmtree(rd2)
+        for s in ('save', 'temp'): (rd2 / s).mkdir(parents=True)
+        henv2 = dict(henv, DM_SAVE=str(rd2 / 'save'), DM_TEMP=str(rd2 / 'temp'), DM_MSL_DIR=str(rd2 / 'msl'), DM_GLSLC_CAPTURE=str(cap2))
+        del henv2['DM_AOC_DIR']
+        if not want:
+            shmap2 = rd2 / 'shader_map.tsv'
+            shmap2.write_text('# GLSLC capture: observe submitted shaders\n')
+            henv2['DM_NVN_SHMAP'] = str(shmap2)
+        PROG.set(step='booting the game without its add-on content')
+        say('booting the game in the Mac host without its add-on content, to capture the base-only shaders too')
+        t1 = time.time()
+        rc2 = boot_mac(host, patched, henv2, rd2, log2, GLSLC_SECS)
+        got2 = glslc_done(cap2)
+        if rc2 is not None: host_stopped(log2, rc2, time.time() - t1)
+        clash = [n for n in sorted(got2 & got) if (cap2 / n).read_bytes() != (cap / n).read_bytes()]
+        if clash:
+            rmtree(cap2); rmtree(rd2); PROG.end(ok=False)
+            raise BuildError(f'the base-only capture holds a different output for {", ".join(clash)}: one shader key, two contents (host output: {log2})')
+        for n in sorted(got2 - got): shutil.copyfile(cap2 / n, cap / n)
+        if got2 - got: say(f'base-only capture: {len(got2)} shaders, {len(got2 - got)} of them new; the union holds {len(got | got2)}')
+        elif not got2: say('the base-only capture wrote no run-time shaders; the with-DLC capture stands as it is')
+        got |= got2
+        rmtree(cap2); rmtree(rd2)
     swap_in(cap, d / 'glslc_capture'); rmtree(rd)
     PROG.end(f'{len(got)} shaders in {hms(time.time() - t0)}')
 
