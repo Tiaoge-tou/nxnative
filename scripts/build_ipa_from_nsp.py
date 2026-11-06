@@ -1620,6 +1620,8 @@ def capture_glslc(repo, dirs, pkg_ver, patched, work, env, logs, g):
         shmap.write_text('# GLSLC capture: observe submitted shaders\n')
     # everything the run writes stays in <id>_build (DM_ROOT is already there): a fresh save and temporary storage, no shader libraries yet, the observation map (the host looks beside itself by default)
     henv = dict(env, DM_ROMFS=str(rfs.source(d)), DM_SAVE=str(rd / 'save'), DM_TEMP=str(rd / 'temp'), DM_MSL_DIR=str(rd / 'msl'), DM_NVN_SHMAP=str(shmap), DM_GLSLC_CAPTURE=str(cap), DM_KEYS=GLSLC_KEYS)
+    aoc = work / 'aoc'
+    if aoc.is_dir() and any(aoc.glob('*.img')): henv['DM_AOC_DIR'] = str(aoc)   # the capture boot mounts the same add-on content as the shipped app (mac_run sets DM_AOC_DIR for its runs); without it a game whose DLC carries code or data boots base-only here and compiles a different set of shaders than it does on the device
     PROG.set(step='booting the game', done=0, total=len(want) if want else None, unit='shaders')
     say(f'booting the game in the Mac host to capture the shaders it compiles at run time → {d / "glslc_capture"}')
     t0 = time.time()
