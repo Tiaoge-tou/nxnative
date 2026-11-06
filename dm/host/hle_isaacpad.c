@@ -18,12 +18,17 @@
 //     pad would sit in menu C over live gameplay. The watcher therefore shields it: leaving menu
 //     C at all -- the front end notes an A / B press delivered there (dm_isaac_pad_diary_exit),
 //     or the raw layout derived here stops being menu C -- arms a shield that stores the diary
-//     pointers; while it holds, a run (F1 set) ignores the stale flag and publishes the game
-//     layout. The shield drops when the word itself reads zero or any stored pointer changes
-//     (a new death writes a new diary object), and both edges are logged. The menus never
-//     consult FD, so the shield changes nothing there; its one blind spot is a second death
-//     whose diary pointers land exactly on the stored values, whose page then shows the game
-//     layout (its A / B are the diamond's there, so the page still works).
+//     pointers, the death counter at data +0x7d0d8 and the run's three pointers at data
+//     +0x7be80; while it holds, a run (F1 set) ignores the stale flag and publishes the game
+//     layout. The shield drops when the word itself reads zero, when any stored pointer
+//     changes, or when the death counter steps past the value it armed with: the diary
+//     pointers alone turned out never to move again -- the first shielded build's log armed
+//     once and held for a whole session, a later diary included -- but the probes had seen
+//     the counter step at a death and the +0x7be80 pointers replaced there, so a new death
+//     is seen and its diary gets its page. Every edge is logged, with its reason. The menus
+//     never consult FD, so the shield changes nothing there; its one blind spot is a death
+//     that moves none of the stored values, whose page then shows the game layout (its
+//     A / B are the diamond's there, so the page still works).
 // The fields are gated on Repentance's build ID, like every fixed guest offset in this host:
 // another build never runs them, and anything unexpected -- the module missing, the segment
 // shorter than the fields -- leaves the published layout at its fallback, the game layout (2),
@@ -38,10 +43,10 @@
 #include <time.h>
 #include <stdatomic.h>
 
-// The builds the page fields are known in: (build ID, F1's offset, F2's first offset, FD's offset, the diary pointers' first offset) in the module's data segment.
-typedef struct { const char *build_id; uint32_t flag, file, death, death3; } ia_row_t;
+// The builds the page fields are known in: (build ID, F1's offset, F2's first offset, FD's offset, the diary pointers' first offset, the death counter's offset, the run pointers' first offset) in the module's data segment.
+typedef struct { const char *build_id; uint32_t flag, file, death, death3, death_ctr, run3; } ia_row_t;
 static const ia_row_t k_isaacpad[] = {
-    { "8821c0a75afc814df5902fdc31e8d127", 0x88498, 0xd2160, 0x85408, 0x85428 },   // Repentance.nro, the build the page fields were found in
+    { "8821c0a75afc814df5902fdc31e8d127", 0x88498, 0xd2160, 0x85408, 0x85428, 0x7d0d8, 0x7be80 },   // Repentance.nro, the build the page fields were found in
 };
 
 static _Atomic int g_ia_mode = 2;   // the published layout (dm_isaac_pad_mode): the game layout until the watcher derives another
@@ -65,27 +70,34 @@ static void *isaacpad_main(void *arg) {
     (void)arg;
     LOG("[isaacpad] watching Repentance's page fields for the touch pad's layouts (build %s)", k_isaacpad[0].build_id);
     int cand = 2, nread = 0, waited = 0, noted = 0;
-    int prev_raw = 2, shield = 0; uint64_t arm[3] = {0, 0, 0};   // the diary shield: armed on any exit from menu C, holding the diary pointers as they were
+    int prev_raw = 2, shield = 0; uint64_t arm[3] = {0, 0, 0}, arm_run[3] = {0, 0, 0}, arm_ctr = 0;   // the diary shield: armed on any exit from menu C, holding the diary pointers, the run pointers and the death counter as they were
     for (;;) {
         const module_t *m = ia_module();
         const ia_row_t *row = m ? ia_row(m) : NULL;
-        if (row && m->size - m->data_off > row->file + 24) {   // FD's offsets sit below F2's, inside the same bound
+        if (row && m->size - m->data_off > row->file + 24) {   // FD's offsets and the shield's sit below F2's, inside the same bound
             waited = 0;
             const uint8_t *data = m->base + m->data_off;
-            uint64_t flag, death, f2 = 0, p, dtrip[3];
+            uint64_t flag, death, f2 = 0, p, dtrip[3], ctr, rtrip[3];
             memcpy(&flag, data + row->flag, 8);
             memcpy(&death, data + row->death, 8);
             for (int k = 0; k < 3; k++) { memcpy(&p, data + row->file + 8 * (size_t)k, 8); f2 |= p; }
             for (int k = 0; k < 3; k++) memcpy(&dtrip[k], data + row->death3 + 8 * (size_t)k, 8);
+            memcpy(&ctr, data + row->death_ctr, 8);
+            for (int k = 0; k < 3; k++) memcpy(&rtrip[k], data + row->run3 + 8 * (size_t)k, 8);
             int noted_exit = atomic_exchange(&g_ia_exit_note, 0);   // an A / B press the front end delivered on the death page since the last poll
-            if (shield && (!death || dtrip[0] != arm[0] || dtrip[1] != arm[1] || dtrip[2] != arm[2])) {   // the shield's release, judged on the live fields: the flag cleared, or a new death wrote a new diary object
-                shield = 0;
-                LOG("[isaacpad] diary shield off: %s", death ? "the death page's pointers changed" : "the death flag cleared");
+            if (shield) {   // the shield's release, judged on the live fields: the flag cleared, a new death counted, or a stored pointer set replaced at a new death
+                const char *off = !death ? "the death flag cleared"
+                    : ctr > arm_ctr ? "a new death was counted"
+                    : dtrip[0] != arm[0] || dtrip[1] != arm[1] || dtrip[2] != arm[2] ? "the death page's pointers changed"
+                    : rtrip[0] != arm_run[0] || rtrip[1] != arm_run[1] || rtrip[2] != arm_run[2] ? "a new death replaced the run's pointers"
+                    : NULL;
+                if (off) { shield = 0; LOG("[isaacpad] diary shield off: %s", off); }
             }
             int raw = (flag & 0x100) ? (death ? 3 : 2) : f2 ? 1 : 0;   // the layout the fields alone give: 0 menu A (title / save), 1 menu B (main menu / character), 2 the game, 3 menu C (the death page)
             if (!shield && prev_raw == 3 && (noted_exit || raw != 3)) {   // menu C was left: by a press delivered there, or by the raw layout moving on (the flag itself never clears)
                 shield = 1; arm[0] = dtrip[0]; arm[1] = dtrip[1]; arm[2] = dtrip[2];
-                LOG("[isaacpad] diary shield on: the death flag stays set after the diary; it is ignored in game until it clears or its pointers change");
+                arm_run[0] = rtrip[0]; arm_run[1] = rtrip[1]; arm_run[2] = rtrip[2]; arm_ctr = ctr;
+                LOG("[isaacpad] diary shield on: the death flag stays set after the diary; it is ignored in game until it clears, its pointers change or a new death is counted");
             }
             prev_raw = raw;
             int mode = (flag & 0x100) ? (death && !shield ? 3 : 2) : f2 ? 1 : 0;   // as raw, but a shielded run reads the game layout: the stale death flag is ignored while F1 stands

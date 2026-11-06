@@ -456,20 +456,26 @@ static UIView *clearDisc(UIView *parent, CGFloat tint) {
 // 0 menu A (the title and save pages), 1 menu B (the main menu and the character page), 2 the game,
 // 3 menu C (the death page: the diary). The pause page still publishes as the game -- no probe has
 // found a field for it. The menus get a D-pad cross at the left and the paper confirm / return keys at
-// the right (menu B adds an X key at the top right, for the daily run and the seed entry; menu C gets
-// the letter A / B discs instead of the paper keys, and no X); the game gets a stick at the left,
-// the shooting diamond at the right, the ZL / L pair left of the diamond on the B key's own line
-// and the - / + pair at the top right. There are no R / ZR keys (the game binds nothing the
-// player asked for to them here). The keys sit at the player's final fitting: the game keys at
-// three quarters of the first fitting's frames, the diamond re-pitched to a true diamond (equal
-// pixel pitch both axes, 145 px at the final fitting), the menus' cross and menu C's letters at
-// three quarters of theirs, menu B's X at three quarters, and the menus' return paper a tenth
-// larger than the back paper it replaced.
+// the right, at the seats the player settled in the layout editor (menu B adds an X key at the top
+// right, for the daily run and the seed entry, its disc shrunk to the - / + pair's; menu C gets the
+// letter A / B discs instead of the paper keys, on the diamond's own A / B seats and at its size,
+// and no X); the game gets a stick at the left, the shooting diamond at the right, the ZL / L pair
+// left of the diamond on the B key's own line and the - / + pair at the bottom centre, centred on
+// the screen's middle line. There are no R / ZR keys (the game binds nothing the player asked for
+// to them here). The keys sit at the player's fitting: the game keys at three quarters of the first
+// fitting's frames, the diamond re-pitched to a true diamond (equal pixel pitch both axes, 145 px),
+// then the diamond and the ZL / L pair shifted 20 px left and the stick's seat 20 px right; the
+// menus' cross at three quarters of its first frame and then a tenth larger; the menus' select
+// paper at 0.85 of its first frame, the return paper trimmed a little past that so its two glyphs
+// stand the select key's height.
 // Centres are fractions of the whole screen (x of its width, y of its height) and sizes the art frame's
 // width as a fraction of the screen's width (the frames are square), the layout the player measured.
-// The top-right pair is the one exception: those two arts carry different transparent margins, so each
+// The - / + pair is the one exception: those two arts carry different transparent margins, so each
 // is placed by its visible disc's centre -- (ax, ay) is the point of the frame, as a fraction, that
-// lands on the seat (x, y); every other key's anchor is its frame centre (0.5, 0.5).
+// lands on the seat (x, y); every other key's anchor is its frame centre (0.5, 0.5). On a screen of
+// another shape the seats below the top strip are remapped like the skin pad's (isaacSeatY): their
+// heights stack in width fractions from the anchor line 0.736, so the clusters keep the shape they
+// were measured in; the top strip stays a raw height fraction, hugging the top edge.
 static BOOL padIsaac(void) { const char *e = getenv("DM_PAD_ISAAC"); return e && atoi(e); }
 enum { IA_MENU_A, IA_MENU_B, IA_GAME, IA_MENU_C };   // the layouts, dm_isaac_pad_mode's values
 #define IA_IN_A (1 << IA_MENU_A)
@@ -477,23 +483,23 @@ enum { IA_MENU_A, IA_MENU_B, IA_GAME, IA_MENU_C };   // the layouts, dm_isaac_pa
 #define IA_IN_G (1 << IA_GAME)
 #define IA_IN_C (1 << IA_MENU_C)
 static const struct { const char *art; int bit; int modes; CGFloat x, y, w, ax, ay; } k_isaac[] = {
-    {"select",   B_A,     IA_IN_A | IA_IN_B, 0.859, 0.639, 0.1375, 0.5,    0.5},     // the paper confirm key (the menus' A)
-    {"return",   B_B,     IA_IN_A | IA_IN_B, 0.859, 0.861, 0.1342, 0.5,    0.5},     // the paper return key (the menus' B): the return art in the back key's seat, a tenth larger than the back paper it replaced
-    {"letter_x", B_X,     IA_IN_B,           0.938, 0.097, 0.0728, 0.5,    0.5},     // menu B's sub-option key, at the top right (three quarters of its first frame)
-    {"letter_a", B_A,     IA_IN_C,           0.859, 0.639, 0.0825, 0.5,    0.5},     // the death page's restart key (menu C; three quarters of its first frame)
-    {"letter_b", B_B,     IA_IN_C,           0.859, 0.861, 0.0825, 0.5,    0.5},     // the death page's quit key (menu C)
-    {"attack_x", B_X,     IA_IN_G,           0.867, 0.62092, 0.0728, 0.5,  0.5},     // the diamond: shoot up (a true diamond: the vertical pitch is the horizontal's 145 px, not the design sheet's height fraction)
-    {"attack_y", B_Y,     IA_IN_G,           0.81400, 0.736, 0.0728, 0.5,   0.5},     // shoot left
-    {"attack_a", B_A,     IA_IN_G,           0.92000, 0.736, 0.0728, 0.5,   0.5},     // shoot right
-    {"attack_b", B_B,     IA_IN_G,           0.867, 0.85108, 0.0728, 0.5,  0.5},     // shoot down
-    {"item_zl",  B_ZL,    IA_IN_G,           0.6397, 0.85108, 0.069,  0.5,    0.5},     // the pair left of the diamond, on the B key's own line: the active item (ZL) inside
-    {"bomb_l",   B_L,     IA_IN_G,           0.7237, 0.85108, 0.069,  0.5,    0.5},     // bombs (L) outside: the pair's centre sits on the diamond's B line, walked left at the player's word until it cleared the diamond for good
-    {"minus",    B_MINUS, IA_IN_G,           0.8838, 0.097, 0.0530, 0.5244, 0.5020},  // - (time and score): placed by its disc's centre (the disc sits right of its frame's centre), sized so its disc matches the + disc's
-    {"pause",    B_PLUS,  IA_IN_G,           0.938, 0.097, 0.0503, 0.4986, 0.5069},  // + (pause), the pause art on the Plus key: placed by its disc's centre, like its pair
+    {"select",   B_A,     IA_IN_A | IA_IN_B, 0.7698, 0.6103, 0.116875, 0.5,    0.5},     // the paper confirm key (the menus' A), at the seat the player settled in the editor, at 0.85 of its first frame
+    {"return",   B_B,     IA_IN_A | IA_IN_B, 0.8210, 0.7853, 0.11249, 0.5,    0.5},     // the paper return key (the menus' B): the return art at the player's own seat, its frame trimmed past 0.85 of the first fitting's so its glyphs stand the select key's height
+    {"letter_x", B_X,     IA_IN_B,           0.938, 0.097, 0.05309, 0.5,    0.5},     // menu B's sub-option key, at the top right, its disc shrunk to the - / + pair's disc size
+    {"letter_a", B_A,     IA_IN_C,           0.91269, 0.736, 0.0728, 0.5,    0.5},     // the death page's restart key (menu C): the diamond's A seat and size, so the diary takes the right hand where the game left it
+    {"letter_b", B_B,     IA_IN_C,           0.85969, 0.85108, 0.0728, 0.5,    0.5},     // the death page's quit key (menu C): the diamond's B seat and size, on the same terms
+    {"attack_x", B_X,     IA_IN_G,           0.85969, 0.62092, 0.0728, 0.5,  0.5},     // the diamond: shoot up (a true diamond: the vertical pitch is the horizontal's 145 px, not the design sheet's height fraction)
+    {"attack_y", B_Y,     IA_IN_G,           0.80669, 0.736, 0.0728, 0.5,   0.5},     // shoot left
+    {"attack_a", B_A,     IA_IN_G,           0.91269, 0.736, 0.0728, 0.5,   0.5},     // shoot right
+    {"attack_b", B_B,     IA_IN_G,           0.85969, 0.85108, 0.0728, 0.5,  0.5},     // shoot down
+    {"item_zl",  B_ZL,    IA_IN_G,           0.63239, 0.85108, 0.069,  0.5,    0.5},     // the pair left of the diamond, on the B key's own line: the active item (ZL) inside
+    {"bomb_l",   B_L,     IA_IN_G,           0.71639, 0.85108, 0.069,  0.5,    0.5},     // bombs (L) outside: the pair's centre sits on the diamond's B line, walked left at the player's word until it cleared the diamond for good
+    {"minus",    B_MINUS, IA_IN_G,           0.5349, 0.9181, 0.0532, 0.5244, 0.5020},  // - (time and score): placed by its disc's centre (the disc sits right of its frame's centre), at the bottom centre with its pair, where the player put it
+    {"pause",    B_PLUS,  IA_IN_G,           0.4619, 0.9190, 0.0502, 0.4986, 0.5069},  // + (pause), the pause art on the Plus key: placed by its disc's centre, like its pair; the pair is centred on the screen's middle line
 };
 #define ISAAC_N (int)(sizeof k_isaac / sizeof k_isaac[0])
-static const CGFloat IA_DPAD_X = 0.133, IA_DPAD_Y = 0.736, IA_DPAD_W = 0.15225;   // the menus' D-pad cross (the stick's seat, at three quarters of the old disc's frame, at the player's word)
-static const CGFloat IA_STICK_X = 0.133, IA_STICK_Y = 0.743, IA_STICK_W = 0.16725, IA_THUMB_W = 0.07725;   // the game's stick base and thumb (frame widths, as k_isaac's; three quarters of the first fitting, like the keys)
+static const CGFloat IA_DPAD_X = 0.133, IA_DPAD_Y = 0.736, IA_DPAD_W = 0.167475;   // the menus' D-pad cross (the stick's column, at three quarters of the old disc's frame and then a tenth larger, at the player's word)
+static const CGFloat IA_STICK_X = 0.14031, IA_STICK_Y = 0.743, IA_STICK_W = 0.16725, IA_THUMB_W = 0.07725;   // the game's stick base and thumb (frame widths, as k_isaac's; three quarters of the first fitting, like the keys); the base's seat sits 20 px right of the cross's
 static UIImage *isaacImage(const char *name) {   // a padisaac image, loaded once and cached (nil when the file is absent)
     static NSMutableDictionary *cache;
     if (!cache) cache = [[NSMutableDictionary alloc] init];
@@ -511,10 +517,17 @@ static CALayer *isaacImgLayer(CALayer *parent, const char *name) {
     l.opacity = 1.0;   // the art bakes its own opacity in; the engine renders it at full strength and never multiplies it again (set explicitly: the default already is 1)
     [parent addSublayer:l]; return l;
 }
-static CGPoint isaacCenterRaw(int i, CGRect b) {   // key i's art frame centre from the table alone, in points: the seat (x, y) is where the frame's anchor point (ax, ay) lands, so the frame centre sits off it by the anchor's offset (the top-right pair's discs are not at their frames' centres)
+static CGFloat isaacSeatY(CGFloat y, CGRect b) {   // a seat's height on this screen: below the top strip, seats stack up from the anchor line (0.736, the cross's and the diamond centre's own line) in width fractions, the skin pad's SKIN_REF_HW remap on this pad's own anchor, so the clusters keep the shape they were measured in on any screen; the top strip (menu B's X key) stays a raw height fraction, hugging the top edge as the skin pad's top row does
+    if (y > 0.2) y = 0.736 + (y - 0.736) * SKIN_REF_HW * b.size.width / b.size.height;
+    return y;
+}
+static CGPoint isaacCenterRaw(int i, CGRect b) {   // key i's art frame centre from the table alone, in points: the seat (x, y) is where the frame's anchor point (ax, ay) lands, so the frame centre sits off it by the anchor's offset (the - / + pair's discs are not at their frames' centres)
     CGFloat fw = k_isaac[i].w * b.size.width;
     return CGPointMake(k_isaac[i].x * b.size.width - (k_isaac[i].ax - 0.5) * fw,
-                       k_isaac[i].y * b.size.height - (k_isaac[i].ay - 0.5) * fw);
+                       isaacSeatY(k_isaac[i].y, b) * b.size.height - (k_isaac[i].ay - 0.5) * fw);
+}
+static CGPoint isaacStickCenterRaw(CGRect b) {   // the stick base's centre from the table alone, in points (its seat, on the seats' remap)
+    return CGPointMake(IA_STICK_X * b.size.width, isaacSeatY(IA_STICK_Y, b) * b.size.height);
 }
 // ---- Custom layout for the Isaac pad (the + key's long-press editor) ----
 // The same editor the skin pad has, over this pad's own table: every key can be dragged to a new centre
@@ -562,7 +575,7 @@ static CGPoint isaacCenter(int i, CGRect b) {   // key i's art frame centre, in 
     c.x += g_icustDX[i] * b.size.width; c.y += g_icustDY[i] * b.size.height;
     return clampCentre(c, isaacW(i) * b.size.width * 0.5, b);
 }
-static CGPoint isaacDpadCenterRaw(CGRect b) { return CGPointMake(IA_DPAD_X * b.size.width, IA_DPAD_Y * b.size.height); }
+static CGPoint isaacDpadCenterRaw(CGRect b) { return CGPointMake(IA_DPAD_X * b.size.width, isaacSeatY(IA_DPAD_Y, b) * b.size.height); }   // the cross's centre from the table alone (its seat is the remap's anchor line, so the remap leaves it where it is)
 static CGFloat isaacDpadW(void) { icustLoad(); return IA_DPAD_W * g_icustS[IA_DPAD_SLOT]; }   // the cross's frame width with the player's size multiplier
 static CGPoint isaacDpadCenter(CGRect b) {   // the cross's centre: the table's plus the player's custom offset
     icustLoad();
@@ -909,6 +922,7 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
         __weak DmGamepad *weakSelf = self;
         [_menu addAction:[UIAction actionWithHandler:^(UIAction *a) { (void)a; [weakSelf reset]; }] forControlEvents:UIControlEventMenuActionTriggered];   // the menu opens: release every key and touch first
         [self addSubview:_menu];
+        if (_isaac) _menu.hidden = YES;   // the Isaac pad shows no menu button: the player asked the top-centre gear off this pad, so the spot stays the game's (the other pads keep theirs)
         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:k_layout_key];
         int l = saved ? (int)saved.integerValue : DM_GAME_PAD_LAYOUT;
         if (l == 2 && dm_opmode() != 0) l = 0;   // Tap only in handheld mode (env.txt's DM_OPMODE may have changed it)
@@ -974,8 +988,9 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
 - (CGPoint)facePos:(int)b { CGPoint c = self.faceCenter; CGFloat g = self.faceGap;
     switch (b) { case B_A: return CGPointMake(c.x + g, c.y); case B_B: return CGPointMake(c.x, c.y + g); case B_X: return CGPointMake(c.x, c.y - g); default: return CGPointMake(c.x - g, c.y); } }
 - (CGPoint)stickHome {   // the left stick's ring centre; in skin mode the disc centre (a fraction of the whole screen)
-    if (_isaac) { CGRect b = self.bounds; icustLoad();   // the Isaac pad's stick base: its seat, plus the layout editor's custom offset for it
-        CGPoint c = CGPointMake((IA_STICK_X + g_icustDX[IA_STICK_SLOT]) * b.size.width, (IA_STICK_Y + g_icustDY[IA_STICK_SLOT]) * b.size.height);
+    if (_isaac) { CGRect b = self.bounds; icustLoad();   // the Isaac pad's stick base: its (remapped) seat, plus the layout editor's custom offset for it
+        CGPoint c = isaacStickCenterRaw(b);
+        c.x += g_icustDX[IA_STICK_SLOT] * b.size.width; c.y += g_icustDY[IA_STICK_SLOT] * b.size.height;
         return clampCentre(c, [self stickR:0], b); }
     if (_hades) { CGRect b = self.bounds; return CGPointMake(0.168 * b.size.width, 0.664 * b.size.height); }
     if (_skin) { CGRect b = self.bounds; custLoad();   // the skin's disc, plus the layout editor's custom offset for it
@@ -1113,7 +1128,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (CGFloat)menuDistance:(CGPoint)p { return dist(p, self.menuCenter) / MAX(K_MENU_R * self.u * 1.6, 22); }
 - (BOOL)menuTakes:(CGPoint)p {   // the menu button takes a touch in its hit circle unless a locked key's target is nearer (the drawn keys are hidden in Tap and with a controller)
     CGFloat d = [self menuDistance:p]; if (d > 1) return NO;
-    if (_isaac) return YES;   // the Isaac pad has no key near the menu button (its - / + pair sits at the top right)
+    if (_isaac) return NO;   // the Isaac pad has no menu button (hidden in init): a touch at the top centre is never the menu's on this pad
     if (_tap || _padOff || (_layout.separated && !CGRectContainsPoint(_layout.controls, p))) return YES;
     int hit = [self btnAt:p];
     return hit < 0 || d < [self buttonDistance:hit point:p];
@@ -1411,7 +1426,7 @@ int front_web_touch(void);
 - (CGPoint)editCentre:(int)it { if (_isaac) return it == IA_DPAD_SLOT ? isaacDpadCenter(self.bounds) : it == IA_STICK_SLOT ? self.stickHome : isaacCenter(it, self.bounds);
     return it == SKIN_N ? self.stickHome : skinCenter(it, self.bounds); }
 - (CGPoint)editRawCentre:(int)it { CGRect b = self.bounds;
-    if (_isaac) return it == IA_DPAD_SLOT ? isaacDpadCenterRaw(b) : it == IA_STICK_SLOT ? CGPointMake(IA_STICK_X * b.size.width, IA_STICK_Y * b.size.height) : isaacCenterRaw(it, b);
+    if (_isaac) return it == IA_DPAD_SLOT ? isaacDpadCenterRaw(b) : it == IA_STICK_SLOT ? isaacStickCenterRaw(b) : isaacCenterRaw(it, b);
     return it == SKIN_N ? CGPointMake(0.162 * b.size.width, 0.742 * b.size.height) : skinCenterRaw(it, b); }
 - (CGFloat)editRadius:(int)it { if (_isaac) return it == IA_DPAD_SLOT ? isaacDpadW() * self.bounds.size.width * 0.5 : it == IA_STICK_SLOT ? [self stickR:0] : isaacW(it) * self.bounds.size.width * 0.5;
     return it == SKIN_N ? [self stickR:0] : skinR(it) * self.bounds.size.width; }
@@ -1557,7 +1572,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         _menu.frame = CGRectMake(mc.x - mr, mc.y - mr, 2 * mr, 2 * mr); _menu.layer.cornerRadius = mr;
         _menu.layer.shadowPath = [UIBezierPath bezierPathWithOvalInRect:_menu.bounds].CGPath;
         [_menu setImage:[UIImage systemImageNamed:@"gearshape.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:13 * u weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
-        if (_editBar) { CGFloat bw2 = 0.56 * b.size.width; _editBar.frame = CGRectMake(0.22 * b.size.width, self.safeAreaInsets.top + 6, bw2, 46);   // the layout editor's bar, wider than the skin pad's: it also carries the layout switch and the stick's fixed / floating toggle; the top centre is key-free on this pad (the - / + pair sits at the top right)
+        if (_editBar) { CGFloat bw2 = 0.56 * b.size.width; _editBar.frame = CGRectMake(0.22 * b.size.width, self.safeAreaInsets.top + 6, bw2, 46);   // the layout editor's bar, wider than the skin pad's: it also carries the layout switch and the stick's fixed / floating toggle; the top centre is key-free on this pad (the - / + pair sits at the bottom centre, and this pad shows no menu button there)
             _editInfo.frame = CGRectMake(8, 0, bw2 - 398, 46); _iEditLayout.frame = CGRectMake(bw2 - 390, 6, 62, 34); _editMinus.frame = CGRectMake(bw2 - 322, 6, 34, 34); _editPlus.frame = CGRectMake(bw2 - 282, 6, 34, 34);
             _iEditFloat.frame = CGRectMake(bw2 - 242, 6, 62, 34); _editReset.frame = CGRectMake(bw2 - 174, 6, 76, 34); _editDone.frame = CGRectMake(bw2 - 92, 6, 84, 34); }
         if (_editRing) { BOOL show = _editing && _editSel >= 0; _editRing.hidden = !show;
