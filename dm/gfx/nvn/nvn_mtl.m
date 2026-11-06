@@ -1774,6 +1774,7 @@ uint64_t mtl_sub_commit(void) {
     [g_cb endCommandBuffer];
     rec_commit(g_cb, o);
     rec_signal(g_ev, fence);
+    if (g_classic) { [g_ev signalWithValue:fence]; post_complete(fence, 0, 0); }   // No GPU completes a submission under the classic part: it completes as it commits -- the shared event signalled here as the MTL4 queue signals it (rec_signal goes to that queue, which the classic part does not have) and the fence's CPU-side writes run now, so the game's fence waits return instead of waiting out their timeouts with the boot stalled at its first frames
     rec_drain();
     g_alloc_fence[g_alloc_cur] = fence;
     g_cb = nil;
