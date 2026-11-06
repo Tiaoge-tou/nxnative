@@ -49,6 +49,7 @@ targets:
         DMShowFPS: ${DM_SHOW_FPS}           # YES = the frame-rate counter is on (front_ios.m; set by build_ipa.sh)
         DMLanguage: ${DM_LANG}              # the game language code (main.m sets DM_LANG from it; set by build_ipa.sh)
         LSSupportsGameMode: true
+        GCSupportsGameMode: true            # Game Mode on by default in every build: iOS only grants the raised memory tier to apps it classifies as games
         GCSupportsControllerUserInteraction: true   # Physical controllers (GameController)
         GCSupportedGameControllers:
           - ProfileName: ExtendedGamepad
