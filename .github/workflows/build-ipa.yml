@@ -53,6 +53,11 @@ on:
         type: boolean
         required: false
         default: false
+      isaac_pad:
+        description: "Isaac bespoke touch pad (DM_PAD_ISAAC env switch): the game's own art pad in dm/padisaac, its layouts switched by the host's page watcher (hle_isaacpad.c)"
+        type: boolean
+        required: false
+        default: false
       romfs_img:
         description: "Also upload the extracted RomFS.img as an artifact (the one-time datapack import for a separate-RomFS build; several GB)"
         type: boolean
@@ -473,11 +478,19 @@ jobs:
             echo "Hades build: DM_PAD_HADES=1"
           fi
           # TEMPORARY Isaac page-state probe build: bake DM_ISAAC_PROBE into the bundle's dm/env.txt
-          # the same way (hle_isaacprobe.c; remove with the probe).
+          # the same way (hle_isaacprobe.c; remove with the probe). It appends rather than replacing:
+          # a build can carry the probe and the pad switch (below) in the one env file.
           if [ "${{ inputs.isaac_probe }}" = "true" ]; then
-            printf 'DM_ISAAC_PROBE=1\n' > "$RUNNER_TEMP/dm-env.txt"
+            printf 'DM_ISAAC_PROBE=1\n' >> "$RUNNER_TEMP/dm-env.txt"
             ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
             echo "Isaac probe build: DM_ISAAC_PROBE=1"
+          fi
+          # Isaac bespoke pad build: bake DM_PAD_ISAAC into the bundle's dm/env.txt the same way
+          # (DmGamepad.m's pad and hle_isaacpad.c's watcher; appends, like the probe's switch).
+          if [ "${{ inputs.isaac_pad }}" = "true" ]; then
+            printf 'DM_PAD_ISAAC=1\n' >> "$RUNNER_TEMP/dm-env.txt"
+            ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
+            echo "Isaac pad build: DM_PAD_ISAAC=1"
           fi
           if [ "${{ inputs.aoc_external }}" = "true" ]; then
             ARGS+=(--aoc-external)

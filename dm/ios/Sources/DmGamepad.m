@@ -33,7 +33,7 @@
 #import "DmGameMenu.h"
 
 enum { B_A = 0, B_B, B_X, B_Y, B_LS, B_RS, B_L, B_R, B_ZL, B_ZR, B_PLUS, B_MINUS, B_LEFT, B_UP, B_RIGHT, B_DOWN, B_N };
-enum { C_NONE = 0, C_STICK, C_DPAD, C_FACE, C_BTN, C_GAME, C_EDIT };   // which control a touch holds; C_GAME: none, the touch goes to the game's touch screen (finger slot << 8); C_EDIT: the layout editor's drag (the key << 8)
+enum { C_NONE = 0, C_STICK, C_DPAD, C_FACE, C_BTN, C_GAME, C_EDIT, C_IDPAD };   // which control a touch holds; C_GAME: none, the touch goes to the game's touch screen (finger slot << 8); C_EDIT: the layout editor's drag (the key << 8); C_IDPAD: the Isaac pad's D-pad cross (its direction is read from the touch's place, like C_DPAD)
 
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_touch_btn, g_shake_btn;
@@ -446,6 +446,70 @@ static UIView *clearDisc(UIView *parent, CGFloat tint) {
     return v;
 }
 
+// ---- Isaac layout (DM_PAD_ISAAC=1 in an env file) ----
+// The Binding of Isaac's own touch pad: image keys only (the game's official iOS art, redrawn by the
+// player; dm/padisaac, staged into the bundle by build_ipa.sh), no drawn fallback and no layout editor.
+// The host watches the game's page fields and publishes the layout (dm_isaac_pad_mode, hle_isaacpad.c):
+// 0 menu A (the title and save pages), 1 menu B (the main menu and the character page), 2 the game.
+// The menus get a D-pad cross at the left and the paper confirm / back keys at the right (menu B adds an
+// X key at the top right, for the daily run and the seed entry); the game gets a fixed stick at the left,
+// the shooting diamond at the right, a two-key row at the bottom centre (ZL's tool inside, L's bomb
+// outside) and the - / + pair at the top right. There are no R / ZR keys (the game binds nothing the
+// player asked for to them here). A fourth layout is already drawn in the table -- menu C, the death
+// page (the diary: the cross and the letter A / B discs) -- but stays unreachable: no watcher state
+// maps to it yet, because the diary page reads exactly like the game in every field the probes have
+// covered (see isaacTick).
+// Centres are fractions of the whole screen (x of its width, y of its height) and sizes the art frame's
+// width as a fraction of the screen's width (the frames are square), the layout the player measured.
+// The top-right pair is the one exception: those two arts carry different transparent margins, so each
+// is placed by its visible disc's centre -- (ax, ay) is the point of the frame, as a fraction, that
+// lands on the seat (x, y); every other key's anchor is its frame centre (0.5, 0.5).
+static BOOL padIsaac(void) { const char *e = getenv("DM_PAD_ISAAC"); return e && atoi(e); }
+enum { IA_MENU_A, IA_MENU_B, IA_GAME, IA_MENU_C };   // the layouts, dm_isaac_pad_mode's values (IA_MENU_C unreachable for now)
+#define IA_IN_A (1 << IA_MENU_A)
+#define IA_IN_B (1 << IA_MENU_B)
+#define IA_IN_G (1 << IA_GAME)
+#define IA_IN_C (1 << IA_MENU_C)
+static const struct { const char *art; int bit; int modes; CGFloat x, y, w, ax, ay; } k_isaac[] = {
+    {"select",   B_A,     IA_IN_A | IA_IN_B, 0.859, 0.639, 0.1375, 0.5,    0.5},     // the paper confirm key (the menus' A)
+    {"back",     B_B,     IA_IN_A | IA_IN_B, 0.859, 0.861, 0.122,  0.5,    0.5},     // the paper back key (the menus' B)
+    {"letter_x", B_X,     IA_IN_B,           0.938, 0.097, 0.097,  0.5,    0.5},     // menu B's sub-option key, at the top right
+    {"letter_a", B_A,     IA_IN_C,           0.859, 0.639, 0.110,  0.5,    0.5},     // the death page's restart key (menu C, unreachable yet)
+    {"letter_b", B_B,     IA_IN_C,           0.859, 0.861, 0.110,  0.5,    0.5},     // the death page's quit key (menu C, unreachable yet)
+    {"attack_x", B_X,     IA_IN_G,           0.867, 0.597, 0.097,  0.5,    0.5},     // the diamond: shoot up
+    {"attack_y", B_Y,     IA_IN_G,           0.789, 0.736, 0.097,  0.5,    0.5},     // shoot left
+    {"attack_a", B_A,     IA_IN_G,           0.945, 0.736, 0.097,  0.5,    0.5},     // shoot right
+    {"attack_b", B_B,     IA_IN_G,           0.867, 0.875, 0.097,  0.5,    0.5},     // shoot down
+    {"item_zl",  B_ZL,    IA_IN_G,           0.500, 0.885, 0.092,  0.5,    0.5},     // the bottom row: the active item (ZL) inside
+    {"bomb_l",   B_L,     IA_IN_G,           0.615, 0.885, 0.092,  0.5,    0.5},     // the bottom row: bombs (L) outside -- the pair swapped seats at the player's word, the old - seat left of them stays empty
+    {"minus",    B_MINUS, IA_IN_G,           0.869, 0.097, 0.0705, 0.5244, 0.5020},  // - (time and score): placed by its disc's centre (the disc sits right of its frame's centre), sized so its disc matches the + disc's
+    {"pause",    B_PLUS,  IA_IN_G,           0.938, 0.097, 0.067,  0.4986, 0.5069},  // + (pause), the pause art on the Plus key: placed by its disc's centre, like its pair
+};
+#define ISAAC_N (int)(sizeof k_isaac / sizeof k_isaac[0])
+static const CGFloat IA_DPAD_X = 0.133, IA_DPAD_Y = 0.736, IA_DPAD_W = 0.203;   // the menus' D-pad cross (the stick's seat, at the old disc's frame, at the player's word)
+static const CGFloat IA_STICK_X = 0.133, IA_STICK_Y = 0.743, IA_STICK_W = 0.223, IA_THUMB_W = 0.103;   // the game's stick base and thumb (frame widths, as k_isaac's)
+static UIImage *isaacImage(const char *name) {   // a padisaac image, loaded once and cached (nil when the file is absent)
+    static NSMutableDictionary *cache;
+    if (!cache) cache = [[NSMutableDictionary alloc] init];
+    NSString *key = [NSString stringWithUTF8String:name];
+    UIImage *im = cache[key];
+    if (!im) {
+        NSString *p = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"dm/padisaac/%s.png", name]];
+        im = [UIImage imageWithContentsOfFile:p];
+        if (im) cache[key] = im;
+    }
+    return im;
+}
+static CALayer *isaacImgLayer(CALayer *parent, const char *name) {
+    CALayer *l = [CALayer layer]; l.contents = (id)isaacImage(name).CGImage; [parent addSublayer:l]; return l;
+}
+static CGPoint isaacCenter(int i, CGRect b) {   // key i's art frame centre, in points: the seat (x, y) is where the frame's anchor point (ax, ay) lands, so the frame centre sits off it by the anchor's offset (the top-right pair's discs are not at their frames' centres)
+    CGFloat fw = k_isaac[i].w * b.size.width;
+    return CGPointMake(k_isaac[i].x * b.size.width - (k_isaac[i].ax - 0.5) * fw,
+                       k_isaac[i].y * b.size.height - (k_isaac[i].ay - 0.5) * fw);
+}
+static CGPoint isaacDpadCenter(CGRect b) { return CGPointMake(IA_DPAD_X * b.size.width, IA_DPAD_Y * b.size.height); }
+
 // ---- The silk pad's glass discs (the glass choice, DM_SILK_SKIN=0), restyled ----
 // A clear glass lens, matched to the approved preview: a near-clear face (white at 0.068 with a
 // directional lift to 0.092 at the top edge; nothing else on the face -- no specular blob, no sheen
@@ -601,6 +665,12 @@ static void pads_start(void);   // Physical controllers, below
     CALayer *_hArt[HADES_N];           // one skin image per Hades key (nil while the skin is off or the art is absent: glass shows)
     CALayer *_hStickArt, *_hKnobArt;   // the skin's stick disc and knob: the pack's own art, nothing drawn behind either
     CGPoint _lCentre;                              // the floating left stick's centre: where its touch landed
+    BOOL _isaac;                                   // DM_PAD_ISAAC: the Isaac image controls below replace the drawn ones
+    int _isaacMode;                                // the host's Isaac layout (dm_isaac_pad_mode) as last polled
+    NSTimer *_iTimer;                              // polls the Isaac layout while the pad is up
+    CALayer *_iBtn[ISAAC_N];                       // the Isaac pad's keys, in k_isaac order
+    CALayer *_iDpad;                               // the menus' D-pad cross (one image; its direction is read from the touch's place)
+    CALayer *_iBase, *_iThumb;                     // the game's stick base and its thumb (the thumb follows the touch)
 }
 
 static UIColor *k_idle, *k_on, *k_line, *k_ringFill, *k_text, *k_textOn;
@@ -741,6 +811,18 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
             _ring.hidden = YES; _knob.hidden = YES;
         }
+        _isaac = padIsaac();
+        if (_isaac) {   // the Isaac pad's image controls instead of the drawn ones; the drawn layers stay hidden for good
+            for (int i = 0; i < ISAAC_N; i++) _iBtn[i] = isaacImgLayer(_controls, k_isaac[i].art);
+            _iDpad = isaacImgLayer(_controls, "dpad");
+            _iBase = isaacImgLayer(_controls, "stick_base");
+            _iThumb = isaacImgLayer(_controls, "stick_thumb");
+            _isaacMode = dm_isaac_pad_mode();   // the watcher's layout as it stands: the game layout until it derives another
+            _iTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 target:self selector:@selector(isaacTick) userInfo:nil repeats:YES];   // the view lives as long as the app, so the timer needs no invalidation
+            for (int b = 0; b < B_N; b++) { _key[b].hidden = YES; if (_label[b]) _label[b].hidden = YES; }
+            _ring.hidden = YES; _knob.hidden = YES;
+            [self applyIsaacMode];   // the pad starts in the watcher's layout
+        }
         _menu = [DmMenuButton buttonWithType:UIButtonTypeCustom];
         _menu.backgroundColor = k_idle; _menu.layer.borderColor = k_line.CGColor; _menu.layer.borderWidth = 1.5;
         _menu.layer.shadowColor = UIColor.blackColor.CGColor; _menu.layer.shadowOpacity = 0.2; _menu.layer.shadowRadius = 3; _menu.layer.shadowOffset = CGSizeMake(0, 1);
@@ -766,8 +848,8 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
 }
 - (void)applyLayout {   // show / hide the controls for the current layout
     [CATransaction begin]; [CATransaction setDisableActions:YES];
-    for (int b = 0; b < B_N; b++) _key[b].hidden = _skin || _hades || _tap || (fullOnly(b) && !_full);
-    _ring.hidden = _knob.hidden = _skin || _hades || _tap;
+    for (int b = 0; b < B_N; b++) _key[b].hidden = _skin || _hades || _isaac || _tap || (fullOnly(b) && !_full);
+    _ring.hidden = _knob.hidden = _skin || _hades || _isaac || _tap;
     [CATransaction commit];
 }
 - (int)padLayout { return _tap ? 2 : _full ? 1 : 0; }
@@ -814,6 +896,7 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
 - (CGPoint)facePos:(int)b { CGPoint c = self.faceCenter; CGFloat g = self.faceGap;
     switch (b) { case B_A: return CGPointMake(c.x + g, c.y); case B_B: return CGPointMake(c.x, c.y + g); case B_X: return CGPointMake(c.x, c.y - g); default: return CGPointMake(c.x - g, c.y); } }
 - (CGPoint)stickHome {   // the left stick's ring centre; in skin mode the disc centre (a fraction of the whole screen)
+    if (_isaac) { CGRect b = self.bounds; return CGPointMake(IA_STICK_X * b.size.width, IA_STICK_Y * b.size.height); }   // the Isaac pad's fixed stick base
     if (_hades) { CGRect b = self.bounds; return CGPointMake(0.168 * b.size.width, 0.664 * b.size.height); }
     if (_skin) { CGRect b = self.bounds; custLoad();   // the skin's disc, plus the layout editor's custom offset for it
         CGPoint c = CGPointMake((0.162 + g_custDX[SKIN_N]) * b.size.width, (0.742 + g_custDY[SKIN_N]) * b.size.height);
@@ -825,7 +908,8 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
     }
     CGRect s = self.corner; return side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u); }
 - (CGPoint)stickCentre:(int)i { return i ? _rCentre : _hades && _stick[0] ? _lCentre : self.stickHome; }
-- (CGFloat)stickR:(int)i { if (_hades && !i) return 0.061 * self.bounds.size.width; if (_skin && !i) { custLoad(); return 0.074 * g_custS[SKIN_N] * self.bounds.size.width * (_sSkinMode ? 1 : 0.9); } return (i ? K_RSTICK_R : K_STICK_R) * self.u; }   // the glass choice's stick runs at 0.9 of the image skins': the disc, the knob's travel and the touch grab all read this radius, and the Up key's rim anchor scales with it (skinCenterRaw)
+- (CGFloat)stickR:(int)i { if (_isaac && !i) return IA_STICK_W * 0.5 * self.bounds.size.width;   // the Isaac pad's stick: the base art's radius
+    if (_hades && !i) return 0.061 * self.bounds.size.width; if (_skin && !i) { custLoad(); return 0.074 * g_custS[SKIN_N] * self.bounds.size.width * (_sSkinMode ? 1 : 0.9); } return (i ? K_RSTICK_R : K_STICK_R) * self.u; }   // the glass choice's stick runs at 0.9 of the image skins': the disc, the knob's travel and the touch grab all read this radius, and the Up key's rim anchor scales with it (skinCenterRaw)
 - (BOOL)inRightArea:(CGPoint)p { CGRect b = _layout.controls; return p.x >= CGRectGetMaxX(b) - b.size.width * K_RSWIPE; }
 - (CGPoint)dpadCenter {
     if (self.portraitControls) {
@@ -889,6 +973,40 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         if (dist(p, c) <= k_hades[i].r * b.size.width * 1.4) return i; }
     return -1;
 }
+- (int)isaacBtnAt:(CGPoint)p {   // Isaac mode: the current layout's key under the point, or -1 (the other layouts' keys take no touch)
+    CGRect b = self.bounds;
+    int m = 1 << _isaacMode;
+    for (int i = 0; i < ISAAC_N; i++) { if (!(k_isaac[i].modes & m)) continue;
+        if (dist(p, isaacCenter(i, b)) <= k_isaac[i].w * b.size.width * 0.5 * 1.35) return i; }
+    return -1;
+}
+- (uint64_t)isaacDpadBits:(CGPoint)p {   // the menus' cross at the point: the dominant axis past a centre dead zone (menu navigation is four-way, so no diagonals)
+    CGRect b = self.bounds;
+    CGPoint c = isaacDpadCenter(b);
+    CGFloat dx = p.x - c.x, dy = p.y - c.y, dz = IA_DPAD_W * b.size.width * 0.11;   // the dead zone: the cross art's own centre square, about a fifth of the frame across
+    if (fabs(dx) > dz && fabs(dx) >= fabs(dy)) return 1ull << (dx > 0 ? B_RIGHT : B_LEFT);
+    if (fabs(dy) > dz) return 1ull << (dy > 0 ? B_DOWN : B_UP);
+    return 0;
+}
+- (void)applyIsaacMode {   // show the current layout's controls, hide the rest (the positions are layoutSubviews')
+    [CATransaction begin]; [CATransaction setDisableActions:YES];
+    int m = 1 << _isaacMode;
+    for (int i = 0; i < ISAAC_N; i++) _iBtn[i].hidden = !(k_isaac[i].modes & m);
+    _iDpad.hidden = _isaacMode == IA_GAME;   // the menus have the cross in the stick's place
+    _iBase.hidden = _iThumb.hidden = _isaacMode != IA_GAME;
+    [CATransaction commit];
+    [self refresh];
+}
+- (void)isaacTick {
+    int m = dm_isaac_pad_mode();
+    if (m == _isaacMode) return;
+    _isaacMode = m;
+    [self reset];   // held touches end with the layout change: their keys may be hidden now
+    [self applyIsaacMode];
+    // TODO: IA_MENU_C (the death page's layout: the cross and the letter A / B discs in k_isaac) has no
+    // watcher state yet -- the diary page reads exactly like the game in the flag and session fields.
+    // Map it here once the deep-follow probe (hle_isaacprobe.c) finds the diary's field.
+}
 - (CGFloat)buttonDistance:(int)b point:(CGPoint)p {
     CGFloat u = self.u;
     if (isDrop(b)) return dist(p, [self dropCenter:b]) / MAX([self dropR:b] * 1.35, _layout.separated ? 22 : 0);
@@ -913,11 +1031,19 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 - (CGFloat)menuDistance:(CGPoint)p { return dist(p, self.menuCenter) / MAX(K_MENU_R * self.u * 1.6, 22); }
 - (BOOL)menuTakes:(CGPoint)p {   // the menu button takes a touch in its hit circle unless a locked key's target is nearer (the drawn keys are hidden in Tap and with a controller)
     CGFloat d = [self menuDistance:p]; if (d > 1) return NO;
+    if (_isaac) return YES;   // the Isaac pad has no key near the menu button (its - / + pair sits at the top right)
     if (_tap || _padOff || (_layout.separated && !CGRectContainsPoint(_layout.controls, p))) return YES;
     int hit = [self btnAt:p];
     return hit < 0 || d < [self buttonDistance:hit point:p];
 }
 - (uint64_t)faceAt:(CGPoint)p {   // keys under the finger in the diamond (between two keys both count)
+    if (_isaac) {   // the Isaac pad's shooting diamond, at its own seats (k_isaac): sliding a finger between the keys switches the shot's direction, as the drawn diamond's does
+        uint64_t m = 0; CGRect b = self.bounds;
+        for (int i = 0; i < ISAAC_N; i++) { int bit = k_isaac[i].bit;
+            if (!(k_isaac[i].modes & IA_IN_G) || bit < B_A || bit > B_Y) continue;
+            if (dist(p, isaacCenter(i, b)) <= k_isaac[i].w * b.size.width * 0.5 * 1.35) m |= 1ull << bit; }
+        return m;
+    }
     uint64_t m = 0; CGFloat r = self.faceHitR;
     for (int b = B_A; b <= B_Y; b++) if (dist(p, [self facePos:b]) <= r) m |= 1ull << b;
     return m;
@@ -945,7 +1071,8 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     uint64_t btn = 0, dpad = 0;
     for (UITouch *t in _owner) { uint64_t v = [_owner objectForKey:t].unsignedLongLongValue; int c = (int)(v & 0xff);
         if (c == C_BTN) btn |= 1ull << (v >> 8);
-        else if (c == C_DPAD) dpad |= [self dpadAt:[t locationInView:self]]; }
+        else if (c == C_DPAD) dpad |= [self dpadAt:[t locationInView:self]];
+        else if (c == C_IDPAD) dpad |= [self isaacDpadBits:[t locationInView:self]]; }
     int32_t ax[4] = {0};
     for (int i = 0; i < 2; i++) {
         CGPoint o = [self knobOffset:i]; CGFloat R = [self stickR:i], d = hypot(o.x, o.y), dz = R * K_DEAD;
@@ -991,6 +1118,11 @@ int front_web_touch(void);
 - (BOOL)controlAt:(CGPoint)p {
     if (_padOff || (_layout.separated && !CGRectContainsPoint(_layout.controls, p))) return NO;
     if (_tap) return NO;
+    if (_isaac) {   // the Isaac pad's own controls: its keys, and in the game its stick, in the menus its cross
+        if ([self isaacBtnAt:p] >= 0) return YES;
+        if (_isaacMode == IA_GAME) return !_stick[0] && dist(p, self.stickHome) / ([self stickR:0] * 1.3) < 1;
+        return dist(p, isaacDpadCenter(self.bounds)) <= IA_DPAD_W * self.bounds.size.width * 0.6;
+    }
     if ([self btnAt:p] >= 0) return YES;
     if (dist(p, self.faceCenter) / (self.faceGap + MAX(self.faceR * 1.6, self.faceHitR)) <= 1) return YES;
     if (_full && dist(p, self.dpadCenter) / MAX(self.dpadR * K_DPAD_GRAB, _layout.separated ? 22 : 0) < 1) return YES;
@@ -1006,6 +1138,19 @@ int front_web_touch(void);
     for (UITouch *t in ts) {
         if (_padOff) { game |= [self gameBegin:t]; continue; }
         CGPoint p = [t locationInView:self];
+        if (_isaac) {   // Isaac mode: the current layout's image keys; in the game the fixed stick too, in the menus the cross; else the game's touch screen
+            int ib = [self isaacBtnAt:p];
+            if (ib >= 0) {
+                int bit = k_isaac[ib].bit;
+                if (_isaacMode == IA_GAME && bit >= B_A && bit <= B_Y) { [_owner setObject:@(C_FACE) forKey:t]; [_faceOf setObject:@(1ull << bit) forKey:t]; }   // a diamond key: it follows the finger across the diamond (faceAt), like the drawn one's
+                else [_owner setObject:@(C_BTN | (uint64_t)bit << 8) forKey:t];
+                continue;
+            }
+            if (_isaacMode == IA_GAME) {
+                if (!_stick[0] && dist(p, self.stickHome) <= [self stickR:0] * 1.3) { [_owner setObject:@(C_STICK) forKey:t]; _stick[0] = t; _stickNow[0] = p; continue; }
+            } else if (dist(p, isaacDpadCenter(self.bounds)) <= IA_DPAD_W * self.bounds.size.width * 0.6) { [_owner setObject:@(C_IDPAD) forKey:t]; continue; }   // the cross: its direction is read from the touch's place (isaacDpadBits)
+            game |= [self gameBegin:t]; continue;
+        }
         if (_hades) {   // Hades mode: a glass key, the floating left stick (a touch in the left half), the right stick (the right third), else the game's touch screen
             int hb = [self hadesBtnAt:p];
             if (hb >= 0) { [_owner setObject:@(C_BTN | (uint64_t)k_hades[hb].bit << 8) forKey:t]; continue; }
@@ -1253,6 +1398,21 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         _label[b].contentsScale = scale; [_label[b] setNeedsDisplay];
     }
     _controls.frame = self.layer.bounds;
+    if (_isaac) {   // the Isaac pad's image controls, at fractions of the whole screen (k_isaac)
+        CGRect b = self.bounds;
+        for (int i = 0; i < ISAAC_N; i++) { CGFloat fw = k_isaac[i].w * b.size.width; CGPoint c = isaacCenter(i, b);
+            _iBtn[i].frame = CGRectMake(c.x - fw / 2, c.y - fw / 2, fw, fw); }
+        CGFloat dw = IA_DPAD_W * b.size.width; CGPoint dc = isaacDpadCenter(b);
+        _iDpad.frame = CGRectMake(dc.x - dw / 2, dc.y - dw / 2, dw, dw);
+        CGFloat bw = IA_STICK_W * b.size.width; CGPoint sc = self.stickHome;
+        _iBase.frame = CGRectMake(sc.x - bw / 2, sc.y - bw / 2, bw, bw);
+        CGFloat tw = IA_THUMB_W * b.size.width; _iThumb.bounds = CGRectMake(0, 0, tw, tw); _iThumb.position = sc;   // refresh moves the thumb with the touch
+        CGFloat mr = K_MENU_R * u; CGPoint mc = self.menuCenter;   // the menu button, on the drawn layout's terms (its frame is set there, which this branch replaces)
+        _menu.frame = CGRectMake(mc.x - mr, mc.y - mr, 2 * mr, 2 * mr); _menu.layer.cornerRadius = mr;
+        _menu.layer.shadowPath = [UIBezierPath bezierPathWithOvalInRect:_menu.bounds].CGPath;
+        [_menu setImage:[UIImage systemImageNamed:@"gearshape.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:13 * u weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
+        [CATransaction commit]; [self refresh]; return;
+    }
     if (_skin) {   // the skin's image controls, at fractions of the whole screen (k_skin); the drawn ones stay hidden
         CGRect b = self.bounds; custLoad(); CGFloat d = 0.148 * b.size.width * g_custS[SKIN_N]; CGPoint hc = self.stickHome;
         _skinDisc.frame = CGRectMake(hc.x - d / 2, hc.y - d / 2, d, d);
@@ -1351,6 +1511,15 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         _key[b].fillColor = (on ? k_on : k_idle).CGColor; _label[b].foregroundColor = (on ? k_textOn : k_text).CGColor; }
     CGPoint h = self.stickHome, o = [self knobOffset:0];
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
+    if (_isaac) {   // a pressed key dips (the art has no pressed state of its own); the thumb follows the touch, clamped so it stays on its base; the cross dips as one
+        uint64_t allI = _faceBits | _btnBits;
+        for (int i = 0; i < ISAAC_N; i++) { BOOL on = (allI >> k_isaac[i].bit) & 1;
+            _iBtn[i].transform = on ? CATransform3DMakeScale(0.93, 0.93, 1) : CATransform3DIdentity; }
+        _iDpad.transform = _dpadBits ? CATransform3DMakeScale(0.97, 0.97, 1) : CATransform3DIdentity;
+        CGFloat ol = hypot(o.x, o.y), km = [self stickR:0] * 0.54;   // the thumb's travel: the base's radius less the thumb's own (0.1115 - 0.0515 of the width), so its rim just reaches the base's rim at a full tilt
+        CGPoint to = o; if (ol > km) { to.x *= km / ol; to.y *= km / ol; }
+        _iThumb.position = CGPointMake(h.x + to.x, h.y + to.y);
+    }
     if (_skin) {   // pressed keys swap to their _p art and dip; the eye key shows its _p art while the skill keys are hidden (and dims instead when the skin ships no eye _p art); the medallion knob follows the touch, its rim reaching the disc's rim at a full tilt
         if (_sSkinMode) for (int i = 0; i < SKIN_N; i++) {
             if (k_skin[i].grp == SK_TOGGLE) { UIImage *p = _skillOff ? skinPressedImage(i) : nil;

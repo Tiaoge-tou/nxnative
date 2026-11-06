@@ -35,6 +35,13 @@ int dm_pad_tab(void);
 // its save-and-quit confirm, and an options branch that reuses the title branch's page values) page 20 alone turns into
 // pad mode 6 and every other page into pad mode 5; every other page at game state 1 leaves the mode to the states
 int dm_pad_page(void);
+// The Binding of Isaac's pad layout (hle_isaacpad.c): 0 = menu A (the title and save pages), 1 = menu B (the main menu and
+// the character page, which add an X key), 2 = the game, read by a host thread from two fields in Repentance.nro's data
+// segment (a run-exists flag bit, and a set of session pointers that lands when a save file is confirmed), gated on the
+// build they were found in. Only with the game's own pad on (DM_PAD_ISAAC); before the watcher derives a layout -- and
+// whenever the build does not match or the module is not there -- it reads 2, the game layout, so the pad never hides
+// on a guess. The iOS gamepad polls it; other front ends never call it and see no change
+int dm_isaac_pad_mode(void);
 // The cheat VM's key mask (hle_cheats.c): every input source's button bits (0..15 in the enum above) ORed and the
 // merged axes' eight stick-direction bits (16..23), one flat bitset; no latches are consumed (the game's own reads
 // keep them). The NpadButton SL / SR bits (24 / 25) never fire: no input source of this host reports them

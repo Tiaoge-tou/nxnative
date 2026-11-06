@@ -12,6 +12,14 @@
 // segment, whose mapping lives as long as the process. A slot that changes on every poll for ten seconds is named
 // once as a counter and then left quiet. The on-device script walks title -> menus -> a run -> pause -> title with
 // steady pauses between the states; the analysis diffs the log's steady stretches offline.
+// Round 3 (the menu tour's analysis): two fields in Repentance's data segment separate the title / save pages, the
+// main menu / character pages and the game (the pad watcher, hle_isaacpad.c, reads them now), but the pause page and
+// the death (diary) page matched the in-game signature on every layer above -- their state must sit in heap objects
+// behind Repentance's own data-segment pointers, which the first probe never followed. So the probe also deep-follows
+// them: every pointer stored in Repentance's data segment (the build the fields were found in, k_isaacprobe_deep) gets
+// its target's first 512 bytes diffed the same way, tagged with the root slot's offset, capped at IP_DEEP_MAX
+// objects, with the same counter silencing per field. The tour this time only has to hold the pause page and die
+// once, steadily, inside one run.
 #include "hle.h"
 #include <stdlib.h>
 #include <string.h>
@@ -41,20 +49,21 @@ typedef struct {
 static ip_range_t *g_ranges; static int g_nranges;
 static ip_ptr_t g_ptrs[IP_MAX_PTR]; static int g_nptrs, g_full_noted;
 static uint8_t *g_ptr_seen;         // one bit per slot of main's data segment: the slot already has a table entry
+static void ip_deep_reset(void);    // the round-3 deep follow's table (below): a range rebuild restarts it with its range
 
 static uint64_t ip_ms(void) { return (now_ns() - g_t0_ns) / 1000000; }
 
-// 1 when the 256 bytes at v are followable guest data; *heap then says heap (1) or a module's data segment (0).
-static int ip_classify(uint64_t v, int *heap) {
+// 1 when the len bytes at v are followable guest data; *heap then says heap (1) or a module's data segment (0).
+static int ip_classify(uint64_t v, int *heap, size_t len) {
     if (!v || (v & 7) || v < 0x10000) return 0;
     uint64_t hb; size_t open;
     dm_guest_heap_range(&hb, &open);   // the heap's opened extent: an address in it is mapped and readable
-    if (hb && v >= hb && v - hb <= open && open - (v - hb) >= IP_OBJ) { *heap = 1; return 1; }
+    if (hb && v >= hb && v - hb <= open && open - (v - hb) >= len) { *heap = 1; return 1; }
     for (int i = 0; i < g_nmod; i++) {
         module_t *m = &g_mod[i];
         if (!m->base || !m->data_off || m->size <= m->data_off) continue;
         uint64_t lo = (uint64_t)(uintptr_t)m->base + m->data_off, hi = (uint64_t)(uintptr_t)m->base + m->size;
-        if (v >= lo && v <= hi && hi - v >= IP_OBJ) { *heap = 0; return 1; }
+        if (v >= lo && v <= hi && hi - v >= len) { *heap = 0; return 1; }
     }
     return 0;
 }
@@ -87,6 +96,7 @@ static int ip_ranges_changed(void) {
 }
 
 static void ip_ranges_rebuild(void) {
+    ip_deep_reset();   // the deep table keys off one range's slots; a new layout restarts it
     for (int i = 0; i < g_nranges; i++) { free(g_ranges[i].snap); free(g_ranges[i].streak); }
     free(g_ranges); g_ranges = NULL; g_nranges = 0;
     free(g_ptr_seen); g_ptr_seen = NULL;
@@ -146,7 +156,7 @@ static void ip_ptr_scan_new(ip_range_t *main) {
     const uint64_t *cur = (const uint64_t *)(const void *)main->lo;
     for (size_t s = 0; s < main->nslots; s++) {
         if ((g_ptr_seen[s / 8] >> (s % 8)) & 1) continue;
-        int heap; if (!ip_classify(cur[s], &heap)) continue;
+        int heap; if (!ip_classify(cur[s], &heap, IP_OBJ)) continue;
         if (g_nptrs >= IP_MAX_PTR) {
             if (!g_full_noted) { g_full_noted = 1; LOG("[isaacprobe] pointer table full (%d); no further pointers are followed", IP_MAX_PTR); }
             return;
@@ -167,8 +177,8 @@ static int ip_ptr_poll(ip_range_t *main, uint64_t t) {
         ip_ptr_t *p = &g_ptrs[i];
         uint64_t v = cur[p->slot / 8];
         int heap;
-        if (v != p->target || !ip_classify(v, &heap) || heap != p->heap) {   // the slot moved on, or the object died
-            if (ip_classify(v, &heap)) {
+        if (v != p->target || !ip_classify(v, &heap, IP_OBJ) || heap != p->heap) {   // the slot moved on, or the object died
+            if (ip_classify(v, &heap, IP_OBJ)) {
                 uint8_t buf[IP_OBJ];
                 p->target = v; p->heap = heap;
                 if (ip_read_obj(p, buf)) { ip_ptr_drop(i--); continue; }
@@ -193,6 +203,115 @@ static int ip_ptr_poll(ip_range_t *main, uint64_t t) {
     return changed;
 }
 
+// ---- Round 3: deep follow (the pointers Repentance's own data segment holds) ----
+// The pause and diary pages' state sits behind these, one pointer deeper than the layers above
+// reach. The root range is picked by build ID (the build the pad's fields were found in): its
+// slots are followed exactly like main's, at twice the object size and a lower cap, and every
+// change is tagged with the root slot's offset in the data segment, so the analysis can name
+// the root the way it named the fields (+0x884B8, +0xcc088, +0xd2160 are the expected ones).
+#define IP_DEEP_OBJ 512         // bytes followed behind one deep pointer
+#define IP_DEEP_MAX 1024        // followed deep pointers, at most
+static const char *const k_isaacprobe_deep[] = { "8821c0a75afc814df5902fdc31e8d127" };   // Repentance.nro, the build the page fields were found in
+
+typedef struct {
+    size_t slot;            // the pointer's slot offset in the module's data segment (the log's root=)
+    uint64_t target;        // the object it pointed at when last read
+    int heap;               // the object lives in the guest heap (read through dm_guest_heap_read); else a module's data
+    uint8_t *snap;          // the object's last seen bytes (IP_DEEP_OBJ)
+    uint32_t *streak;       // per 8-byte field: consecutive polls it changed on; ~0u once named a counter
+} ip_deep_t;
+
+static ip_deep_t *g_deep; static int g_ndeep, g_deep_full_noted;
+static uint8_t *g_deep_seen;        // one bit per slot of the module's data segment: the slot already has a table entry
+static module_t *g_deep_mod;        // the module (and base) the table keys off; a change restarts the table
+static uint8_t *g_deep_lo;
+
+static ip_range_t *ip_deep_range(void) {
+    for (int i = 0; i < g_nranges; i++) if (!strcmp(g_ranges[i].m->build_id, k_isaacprobe_deep[0])) return &g_ranges[i];
+    return NULL;
+}
+
+static void ip_deep_reset(void) {
+    if (g_deep) for (int i = 0; i < g_ndeep; i++) { free(g_deep[i].snap); free(g_deep[i].streak); }
+    free(g_deep); g_deep = NULL; g_ndeep = 0; g_deep_full_noted = 0;
+    free(g_deep_seen); g_deep_seen = NULL;
+    g_deep_mod = NULL; g_deep_lo = NULL;
+}
+
+// Read a followed deep object's bytes: 0 on success (the heap read refuses a vanished object).
+static int ip_deep_read(const ip_deep_t *p, uint8_t *out) {
+    if (p->heap) return dm_guest_heap_read(p->target, out, IP_DEEP_OBJ);
+    memcpy(out, (const void *)(uintptr_t)p->target, IP_DEEP_OBJ);   // a module's data: its mapping is process-lifetime
+    return 0;
+}
+
+static void ip_deep_drop(int i) {
+    size_t idx = g_deep[i].slot / 8;
+    if (g_deep_seen) g_deep_seen[idx / 8] &= (uint8_t)~(1u << (idx % 8));
+    free(g_deep[i].snap); free(g_deep[i].streak);
+    g_deep[i] = g_deep[--g_ndeep];
+}
+
+// Follow the pointers the root segment's slots hold and are not followed yet (the table caps the count).
+static void ip_deep_scan_new(ip_range_t *r) {
+    if (!g_deep_seen || !g_deep) return;
+    const uint64_t *cur = (const uint64_t *)(const void *)r->lo;
+    for (size_t s = 0; s < r->nslots; s++) {
+        if ((g_deep_seen[s / 8] >> (s % 8)) & 1) continue;
+        int heap; if (!ip_classify(cur[s], &heap, IP_DEEP_OBJ)) continue;
+        if (g_ndeep >= IP_DEEP_MAX) {
+            if (!g_deep_full_noted) { g_deep_full_noted = 1; LOG("[isaacprobe] deep pointer table full (%d); no further pointers are followed", IP_DEEP_MAX); }
+            return;
+        }
+        ip_deep_t *p = &g_deep[g_ndeep];
+        p->slot = s * 8; p->target = cur[s]; p->heap = heap;
+        p->snap = malloc(IP_DEEP_OBJ); p->streak = calloc(IP_DEEP_OBJ / 8, sizeof(uint32_t));
+        if (ip_deep_read(p, p->snap)) { free(p->snap); free(p->streak); p->snap = NULL; p->streak = NULL; continue; }   // unreadable between the classify and the read: a later poll retries it
+        g_deep_seen[s / 8] |= (uint8_t)(1u << (s % 8));
+        g_ndeep++;
+    }
+}
+
+// One poll over the followed deep objects: re-validate each, then log changes (counters named once, then quiet).
+static int ip_deep_poll(ip_range_t *r, uint64_t t) {
+    int changed = 0;
+    const uint64_t *cur = (const uint64_t *)(const void *)r->lo;
+    uint8_t buf[IP_DEEP_OBJ];
+    for (int i = 0; i < g_ndeep; i++) {
+        ip_deep_t *p = &g_deep[i];
+        uint64_t v = cur[p->slot / 8];
+        int heap;
+        if (v != p->target || !ip_classify(v, &heap, IP_DEEP_OBJ) || heap != p->heap) {   // the slot moved on, or the object died
+            if (ip_classify(v, &heap, IP_DEEP_OBJ)) {
+                p->target = v; p->heap = heap;
+                if (ip_deep_read(p, buf)) { ip_deep_drop(i--); continue; }
+                memcpy(p->snap, buf, IP_DEEP_OBJ); memset(p->streak, 0, IP_DEEP_OBJ / 8 * sizeof(uint32_t));
+                LOG("[isaacprobe] t=%llu deep mod=%s root=0x%zx now points at 0x%016llx",
+                    (unsigned long long)t, r->m->name, p->slot, (unsigned long long)v);
+            } else ip_deep_drop(i--);
+            continue;
+        }
+        if (ip_deep_read(p, buf)) { ip_deep_drop(i--); continue; }   // died between the classify and the read
+        for (size_t o = 0; o < IP_DEEP_OBJ; o += 8) {
+            uint64_t nv, ov;
+            memcpy(&nv, buf + o, 8); memcpy(&ov, p->snap + o, 8);
+            if (nv == ov) { if (p->streak[o / 8] != ~0u) p->streak[o / 8] = 0; continue; }
+            memcpy(p->snap + o, &nv, 8);
+            if (p->streak[o / 8] == ~0u) continue;   // a named counter stays quiet (and out of the heartbeat's count)
+            changed++;
+            if (++p->streak[o / 8] >= IP_HOT_POLLS) {
+                p->streak[o / 8] = ~0u;
+                LOG("[isaacprobe] t=%llu counter deep mod=%s root=0x%zx objoff=0x%zx (changed on every poll for 10 s; its changes are no longer logged)",
+                    (unsigned long long)t, r->m->name, p->slot, o);
+                continue;
+            }
+            LOG("[isaacprobe] t=%llu deep mod=%s root=0x%zx objoff=0x%zx old=0x%016llx new=0x%016llx",
+                (unsigned long long)t, r->m->name, p->slot, o, (unsigned long long)ov, (unsigned long long)nv);
+        }
+    }
+    return changed;
+}
+
 static void *isaacprobe_main(void *arg) {
     (void)arg;
     LOG("[isaacprobe] TEMPORARY page-state probe on (DM_ISAAC_PROBE=1): read-only, polling module data segments at 4 Hz");
@@ -204,10 +323,22 @@ static void *isaacprobe_main(void *arg) {
         for (int i = 0; i < g_nranges; i++) changed += ip_diff_range(&g_ranges[i], t);
         ip_range_t *main = ip_main_range();
         if (main) { ip_ptr_scan_new(main); changed += ip_ptr_poll(main, t); }
+        ip_range_t *deep = ip_deep_range();
+        if (deep) {
+            if (g_deep_mod != deep->m || g_deep_lo != deep->lo) {   // a new root range (or the first): the table restarts on it
+                ip_deep_reset();
+                g_deep_mod = deep->m; g_deep_lo = deep->lo;
+                g_deep = calloc(IP_DEEP_MAX, sizeof *g_deep);
+                if (deep->nslots) g_deep_seen = calloc((deep->nslots + 7) / 8, 1);
+                LOG("[isaacprobe] deep-following the pointers in mod=%s's data segment (build %s): %d-byte objects, at most %d",
+                    deep->m->name, deep->m->build_id, IP_DEEP_OBJ, IP_DEEP_MAX);
+            }
+            ip_deep_scan_new(deep); changed += ip_deep_poll(deep, t);
+        }
         changed10 += changed;
         if (++poll % 40 == 0) {
-            LOG("[isaacprobe] heartbeat t=%llu changed=%d slots in the last 10 s, %d pointers followed, %d ranges tracked",
-                (unsigned long long)t, changed10, g_nptrs, g_nranges);
+            LOG("[isaacprobe] heartbeat t=%llu changed=%d slots in the last 10 s, %d pointers followed, %d ranges tracked, %d deep pointers followed",
+                (unsigned long long)t, changed10, g_nptrs, g_nranges, g_ndeep);
             changed10 = 0;
         }
         struct timespec ts = { 0, 250000000 }; nanosleep(&ts, NULL);

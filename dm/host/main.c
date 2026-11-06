@@ -140,6 +140,7 @@ static void host_preload(int argc, char **argv) {
     load_modules(argv[1], names, n);
     dm_cheats_init();   // the Atmosphère cheat files for this build (hle_cheats.c): picked by first 16 hex digits of main's build ID, which the loader knows now
     dm_isaacprobe_init();   // TEMPORARY: the Isaac page-state probe's watcher (hle_isaacprobe.c); starts only with DM_ISAAC_PROBE=1, remove with the probe
+    dm_isaacpad_init();   // the Isaac pad's layout watcher (hle_isaacpad.c); starts only with DM_PAD_ISAAC=1
     dm_sdk_major();   // logs the SDK version, which SDK-dependent behaviour follows (loader.c)
     uint64_t ta = now_ns();
     probe_install();   // DM_PROBE probes (for diagnostics)

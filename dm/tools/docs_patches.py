@@ -85,6 +85,10 @@ HOST_BINDING = [
      'why': "the game's own display object; the Asian release's function is the global one's 0x13c0 further on, so the rewriter's function match could give the host both releases' addresses"}),
     ('k_pad_layouts', '', '', {'what': "the game's own state at fixed IL2CPP class slots (GameManager / UIManager statics), read to tell a cutscene or a load from play", 'now': 'build', 'goal': 'game', 'purpose': 'runtime',
      'why': "the class objects sit in slots in main's image that the host cannot enumerate by name, and the slot offsets are per build; the touch pad polls the result (dm_pad_mode) to hide in cutscenes and offer its Skip / Pad medallions"}),
+    ('k_isaacpad', '', '', {'what': "the game's page state at fixed addresses in Repentance's data segment (a page flag word and a set of session pointers), read to switch the touch pad's layouts", 'now': 'build', 'goal': 'game', 'purpose': 'runtime',
+     'why': "the page state is a plain structure in the module's data segment that nothing registers by name, and the offsets are per build; the page probe (hle_isaacprobe.c) found them by diffing the segment across the game's pages, and the pad polls the published layout (dm_isaac_pad_mode)"}),
+    ('k_isaacprobe_deep', '', '', {'what': "the page probe's deep follow: the objects behind Repentance's data-segment pointers, diffed to find the pause and death pages' state", 'now': 'build', 'goal': 'game', 'purpose': 'runtime',
+     'why': "the pause and death pages match the in-game signature in the segment itself, so their state sits behind its pointers; the follow is keyed to the one build the pad's fields were found in, and the probe is temporary (DM_ISAAC_PROBE)"}),
 ]
 # Translator rules keyed by one shader's code hash: (the start of the rule's comment, entry)
 SHADER_BINDING = [
