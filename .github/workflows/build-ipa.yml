@@ -58,6 +58,11 @@ on:
         type: boolean
         required: false
         default: false
+      skip_launcher:
+        description: "GameCase variant (DM_LAUNCHER=0 env switch): skip the in-app settings screen and start the game at once with the saved choices — for a front end that draws the settings itself; the dm/launcher.json rows stay in the package for it to read and write"
+        type: boolean
+        required: false
+        default: false
       romfs_img:
         description: "Also upload the extracted RomFS.img as an artifact (the one-time datapack import for a separate-RomFS build; several GB)"
         type: boolean
@@ -491,6 +496,16 @@ jobs:
             printf 'DM_PAD_ISAAC=1\n' >> "$RUNNER_TEMP/dm-env.txt"
             ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
             echo "Isaac pad build: DM_PAD_ISAAC=1"
+          fi
+          # GameCase variant build: bake DM_LAUNCHER=0 into the bundle's dm/env.txt the same way
+          # (Launcher.swift: the settings screen stays away and the game starts at once, with the
+          # saved choices applied; appends, like the pad's switch). The settings themselves stay:
+          # dm/launcher.json is packed as usual, so a front end that draws them itself (GameCase)
+          # can still read the rows and write the choices.
+          if [ "${{ inputs.skip_launcher }}" = "true" ]; then
+            printf 'DM_LAUNCHER=0\n' >> "$RUNNER_TEMP/dm-env.txt"
+            ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
+            echo "GameCase variant build: DM_LAUNCHER=0"
           fi
           if [ "${{ inputs.aoc_external }}" = "true" ]; then
             ARGS+=(--aoc-external)
