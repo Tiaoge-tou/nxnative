@@ -88,7 +88,9 @@ HOST_BINDING = [
     ('k_isaacpad', '', '', {'what': "the game's page state at fixed addresses in Repentance's data segment (a page flag word and a set of session pointers), read to switch the touch pad's layouts", 'now': 'build', 'goal': 'game', 'purpose': 'runtime',
      'why': "the page state is a plain structure in the module's data segment that nothing registers by name, and the offsets are per build; the page probe (hle_isaacprobe.c) found them by diffing the segment across the game's pages, and the pad polls the published layout (dm_isaac_pad_mode)"}),
     ('k_isaacprobe_deep', '', '', {'what': "the page probe's deep follow: the objects behind Repentance's data-segment pointers, diffed to find the pause and death pages' state", 'now': 'build', 'goal': 'game', 'purpose': 'runtime',
-     'why': "the pause and death pages match the in-game signature in the segment itself, so their state sits behind its pointers; the follow is keyed to the one build the pad's fields were found in, and the probe is temporary (DM_ISAAC_PROBE)"}),
+     'why': "the pause and death pages match the in-game signature in the segment itself, so their state sits behind its pointers; the follow is keyed to the builds under study (the one the pad's fields were found in, and Afterbirth+ 1.7.9b's Repentance, whose own hunt starts over), and the probe is temporary (DM_ISAAC_PROBE)"}),
+    ('k_isaacprobe_pins', '', '', {'what': "the page probe's pinned roots: two of Repentance's data-segment pointers followed always, outside the deep follow's first-come cap", 'now': 'build', 'goal': 'game', 'purpose': 'runtime',
+     'why': "the deep table filled with boot-time pointers before the menu and session objects exist, so the roots that matter are pinned; the root offsets are one build's own, so the table is keyed by build and the 1.7.9b build has no row until its own rounds derive one; the probe is temporary (DM_ISAAC_PROBE)"}),
 ]
 # Translator rules keyed by one shader's code hash: (the start of the rule's comment, entry)
 SHADER_BINDING = [
