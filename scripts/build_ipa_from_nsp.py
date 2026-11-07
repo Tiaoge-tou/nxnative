@@ -1657,7 +1657,13 @@ def capture_glslc(repo, dirs, pkg_ver, patched, work, env, logs, g):
         return bool(want and got >= want)
     rc = boot_mac(host, patched, henv, rd, log, GLSLC_SECS, done)
     got = glslc_done(cap)
-    if rc is not None and not (want and got >= want): host_stopped(log, rc, time.time() - t0)
+    secs1 = time.time() - t0
+    # The completeness verdict below normally falls on this boot alone. A profile whose add-on content supersedes part of its own
+    # run-time set (Isaac: 15 of the 58 outputs its map names are compiled only without the DLC this boot mounts) can be completed
+    # only by the base-only boot further down, so for that one case the verdict waits for the union of the two boots. Every other
+    # case -- no named captures, no add-on content, a set this boot already completes -- is judged here, exactly as before.
+    deferred = bool(want) and with_aoc and not got >= want
+    if rc is not None and not (want and got >= want) and not deferred: host_stopped(log, rc, secs1)
     if not want and not got and rc is None and not any(cap.glob('*.glslc')):
         text = log.read_text(errors='replace')
         observed = set(re.findall(r'\[RED\] shader ([0-9a-f]{16}) is not in the shader map', text))
@@ -1666,13 +1672,14 @@ def capture_glslc(repo, dirs, pkg_ver, patched, work, env, logs, g):
             PROG.end(f'no run-time outputs captured, {len(observed)} submitted shader keys to check against the offline split')
             say('the GLSL/import heuristic can also select a compiler used only on cache misses. The build continues only if the offline split covers every shader observed in this boot. Later gameplay is unverified')
             return observed
-    if not got or (want and not got >= want):
+    if not deferred and (not got or (want and not got >= want)):
         PROG.end(ok=False)
         with open(log, errors='replace') as f: tail = ''.join(collections.deque(f, maxlen=40)).rstrip('\n')
         PROG.say(f'---- last lines of {log} ----\n' + tail)
         raise BuildError(f'captured only {len(got)} run-time shaders'
                          + (f', the profile needs {len(want)}' if want else '') + f' (host output: {log})')
     if want and got - want: say(f'[RED] captured files the profile\'s shader map does not name: {", ".join(sorted(got - want))}')
+    if deferred: say(f'the capture with the add-on content holds {len(got)} of the {len(want)} run-time shaders the profile names; the base-only boot below may hold the rest, and the verdict waits for the union')
     if with_aoc:
         # The same game booted without its add-on content compiles a different set of shaders (Isaac, base-only on the device: its first frame binds four
         # programs the with-DLC boot never creates, and draws nothing). Capture that boot too and union the two sets, so the shipped map covers both
@@ -1702,6 +1709,14 @@ def capture_glslc(repo, dirs, pkg_ver, patched, work, env, logs, g):
         elif not got2: say('the base-only capture wrote no run-time shaders; the with-DLC capture stands as it is')
         got |= got2
         rmtree(cap2); rmtree(rd2)
+    if want and not got >= want:
+        # Only a deferred verdict can still fall short here: the union of the two boots is in and it does not cover the
+        # profile's map either, so the shortfall is real and the numbers are the union's.
+        if rc is not None: host_stopped(log, rc, secs1)
+        PROG.end(ok=False)
+        with open(log2, errors='replace') as f: tail = ''.join(collections.deque(f, maxlen=40)).rstrip('\n')
+        PROG.say(f'---- last lines of {log2} ----\n' + tail)
+        raise BuildError(f'captured only {len(got)} run-time shaders, the profile needs {len(want)} (host output: {log}, {log2})')
     swap_in(cap, d / 'glslc_capture'); rmtree(rd)
     PROG.end(f'{len(got)} shaders in {hms(time.time() - t0)}')
 
