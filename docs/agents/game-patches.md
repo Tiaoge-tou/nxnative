@@ -734,6 +734,7 @@ Dead code unless such a build is run; a candidate for removal, or for a build ro
 
 - `8821c0a7…`: [hle_isaacpad.c:49](../../dm/host/hle_isaacpad.c#L49): k_isaacpad (a build no profile registers)
 - `8821c0a7…`: [hle_isaacprobe.c:220](../../dm/host/hle_isaacprobe.c#L220): k_isaacprobe_deep (a build no profile registers)
+- `91c73fdd…`: [hle_isaacpad.c:50](../../dm/host/hle_isaacpad.c#L50): k_isaacpad (a build no profile registers)
 
 ## Translator rules keyed by a shader's code
 

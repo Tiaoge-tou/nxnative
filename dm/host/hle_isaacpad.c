@@ -47,6 +47,7 @@
 typedef struct { const char *build_id; uint32_t flag, file, death, death3, death_ctr, run3; } ia_row_t;
 static const ia_row_t k_isaacpad[] = {
     { "8821c0a75afc814df5902fdc31e8d127", 0x88498, 0xd2160, 0x85408, 0x85428, 0x7d0d8, 0x7be80 },   // Repentance.nro, the build the page fields were found in
+    { "91c73fdd575061318d68886316afeac7", 0x88d28, 0xd2938, 0x85a20, 0x85a50, 0x7d0d8, 0x7c6f8 },   // Repentance.nro of the official US Afterbirth+ 1.7.9b (010021C000B6A000): the same fields, found by its own probe round (log-78)
 };
 
 static _Atomic int g_ia_mode = 2;   // the published layout (dm_isaac_pad_mode): the game layout until the watcher derives another
