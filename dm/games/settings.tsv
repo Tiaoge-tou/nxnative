@@ -8,7 +8,7 @@
 #   default   a value (a toggle's: 1 on, 0 off); DM_GAME_<NAME>: the host's own default from the game profile (game_profile.h, game.py); build:<VAR>: the IPA build's setting (build_ipa.sh)
 #             <ios>|<mac> selects the platform's default before resolving a profile macro or build variable
 #   shown     always; DM_GAME_<NAME>!=<value> or ==<value>; fixups:<KEY>: main's rewriter table has that key (a stub in the game's build, patch_nso.py); languages>1 (more than one to pick, so also when the control data lists none); gfxapi:<API>: the packer's GFXAPI;
-#             platform:<ios | mac>: the app's platform (SETTINGS_PLATFORM, ios when unset), for a switch only that platform's front end reads
+#             platform:<ios | mac>: the app's platform (SETTINGS_PLATFORM, ios when unset), for a switch only that platform's front end reads; build:<VAR>: the IPA build sets <VAR> (build_ipa.sh's environment, resolved as a default's) to a value but 0 — the build offers the row
 #   section   Game, Controls or Performance: a heading on the single settings screen. Rows appear in table order within each section
 #             Reset to tested defaults clears all launcher choices; values fixed by an env file stay
 #   label, note  the setting's name and the line under it (may be empty; only for a setting with a cost: latency, memory, heat)
@@ -24,6 +24,7 @@ DM_UPSCALER	choice	game=Game's own,metalfx=MetalFX	game	DM_GAME_UPSCALER_N!=0	Ga
 DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	游戏语言	游戏内文本语言	level=basic
 
 DM_FULLSCREEN	choice	0=Window,1=Fullscreen	0	platform:mac	Game	Display mode		level=basic
+DM_PICTURE_FIT	choice	fit=适配,fill=填充	fit	build:DM_PICTURE_FIT_ROW	Game	画面	填充会裁剪游戏的 16:9 画面以铺满屏幕，靠近边缘的血条、字幕或地图可能被裁掉；不裁剪的全屏画面需要逐游戏补丁。	
 DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	platform:ios	Game	帧数计数器	左上角显示实时帧数	
 DM_TOUCH_HAPTICS	toggle	-	1	platform:ios	Controls	触控反馈	按下触屏按键时轻震一下	
 DM_RUMBLE	toggle	-	1	always	Controls	游戏震动	游戏内震动传到手机或手柄	level=basic

@@ -81,6 +81,18 @@ class LauncherSettingsTests(unittest.TestCase):
         s = mac['DM_FULLSCREEN']
         self.assertEqual((s['kind'], s['default'], s['options'], s['level']), ('choice', '0', [['0', 'Window'], ['1', 'Fullscreen']], 'basic'))
 
+    def test_picture_row_only_when_the_build_offers_it(self):   # DM_PICTURE_FIT (the iOS front end's fit / fill, front_ios.m): a build-gated row, not a platform one
+        def build_with(gate):
+            env = {'GFXAPI': 'nvn', **({'DM_PICTURE_FIT_ROW': gate} if gate is not None else {})}
+            with tempfile.TemporaryDirectory() as tmp, patch.object(settings.nacp, 'languages', return_value=['en-US']), patch.dict(os.environ, env):
+                if gate is None: os.environ.pop('DM_PICTURE_FIT_ROW', None)
+                return {s['env']: s for s in settings.build(BOTW, tmp, Path(tmp) / 'control.nacp')['settings']}
+        self.assertNotIn('DM_PICTURE_FIT', build_with(None))   # no build offers it: the row stays away, as since its removal
+        self.assertNotIn('DM_PICTURE_FIT', build_with('0'))
+        s = build_with('1')['DM_PICTURE_FIT']
+        self.assertEqual((s['kind'], s['section'], s['default']), ('choice', 'Game', 'fit'))
+        self.assertEqual(s['options'], [['fit', '适配'], ['fill', '填充']])
+
     def test_defaults_follow_each_platform_host(self):
         # nvn_mtl.m pso4_on: Mac defaults on, iOS follows the profile. nvn_rec.h rec_on: iOS on, Mac off.
         for gid, ios_pso in ((BOTW, '1'), (WONDER, '0')):

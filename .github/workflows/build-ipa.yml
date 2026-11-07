@@ -492,10 +492,16 @@ jobs:
           fi
           # Isaac bespoke pad build: bake DM_PAD_ISAAC into the bundle's dm/env.txt the same way
           # (DmGamepad.m's pad and hle_isaacpad.c's watcher; appends, like the probe's switch).
+          # Isaac also gets the Picture row (DM_PICTURE_FIT, settings.tsv's build:DM_PICTURE_FIT_ROW
+          # gate): export the gate for settings.py, and bake DM_FULLSCREEN=0 beside the pad switch —
+          # the front end's DM_FULLSCREEN mask otherwise forces the game view to the full bounds and
+          # the row's fit / fill would never reach the layout (front_ios.m).
           if [ "${{ inputs.isaac_pad }}" = "true" ]; then
             printf 'DM_PAD_ISAAC=1\n' >> "$RUNNER_TEMP/dm-env.txt"
+            printf 'DM_FULLSCREEN=0\n' >> "$RUNNER_TEMP/dm-env.txt"
+            export DM_PICTURE_FIT_ROW=1
             ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
-            echo "Isaac pad build: DM_PAD_ISAAC=1"
+            echo "Isaac pad build: DM_PAD_ISAAC=1, DM_FULLSCREEN=0 (Picture row live), DM_PICTURE_FIT_ROW=1"
           fi
           # GameCase variant build: bake DM_LAUNCHER=0 into the bundle's dm/env.txt the same way
           # (Launcher.swift: the settings screen stays away and the game starts at once, with the
