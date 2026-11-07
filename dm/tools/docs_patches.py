@@ -91,6 +91,8 @@ HOST_BINDING = [
      'why': "the pause and death pages match the in-game signature in the segment itself, so their state sits behind its pointers; the follow is keyed to the builds under study (the one the pad's fields were found in, and Afterbirth+ 1.7.9b's Repentance, whose own hunt starts over), and the probe is temporary (DM_ISAAC_PROBE)"}),
     ('k_isaacprobe_pins', '', '', {'what': "the page probe's pinned roots: two of Repentance's data-segment pointers followed always, outside the deep follow's first-come cap", 'now': 'build', 'goal': 'game', 'purpose': 'runtime',
      'why': "the deep table filled with boot-time pointers before the menu and session objects exist, so the roots that matter are pinned; the root offsets are one build's own, so the table is keyed by build and the 1.7.9b build has no row until its own rounds derive one; the probe is temporary (DM_ISAAC_PROBE)"}),
+    ('k_isaacprobe_spot', '', '', {'what': "the page probe's single chased root on Afterbirth+ 1.7.9b's Repentance: the death flag's sister pointer, followed always, its target logged by its vtable and the field window behind it (objoff 0x00..0x100)", 'now': 'build', 'goal': 'game', 'purpose': 'runtime',
+     'why': "the wide rounds produced single-session false positives (the page-manager object's fields held through stretches of play and through neither diary), so this round chases one position only: the sister pointer that left 0 in the death poll itself, at the death flag's own moment, and whose old-build analog pointed at the death / diary flow's objects; the probe is temporary (DM_ISAAC_PROBE)"}),
 ]
 # Translator rules keyed by one shader's code hash: (the start of the rule's comment, entry)
 SHADER_BINDING = [
