@@ -173,6 +173,13 @@
 - **Fix:** `unzs` feeds the command the bytes it read (`input=`). No other tool hands an external command a path inside the image. Test: `test_romfs_read.py` `test_zstd_file_inside_an_image`.
 - **Found on:** [Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md#shaders): every file of its RomFS is zstd-compressed, 13,744 left out in both versions; the first image-backed build after the folder extraction.
 
+### Under `--work-dir` the programs of one game overwrote each other's RomFS
+
+- **Symptom:** an iPhone build of Super Mario 3D All-Stars with `--work-dir` (as NX2Apple runs the script) builds every program, then stops at the app build with `[RED] missing RomFS marker 'MovieData/BgMovieGalaxy.mp4' in <work dir>/extract/v393216/RomFS.img` and `FAIL: no RomFS at …`.
+- **Cause:** the first program's build packs each of the others from its own profile ([`oe::ExecuteProgram`](services.md#multi-program-applications-oeexecuteprogram)), each in its own build folder, `<NSP folder>/<id>_build`. `--work-dir` named one folder for all of them, so each program's `extract/<version>/RomFS.img` replaced the one before, and the package found Sunshine's image where the launcher's should be. Without `--work-dir` the folders were already apart.
+- **Fix:** `build_folder` in `scripts/build_ipa_from_nsp.py` gives a program packed with the first `<work dir>/programs/<id>_build` under `--work-dir`; the first program, a game of one program and `--program N` alone keep the folder as named. Test: `test_nsp_build_folder.py`.
+- **Found on:** [Super Mario 3D All-Stars](../../dm/games/010049900F546000/README.md#found-on-this-game), 1.1.4, built by NX2Apple 1.2.1 as one IPA.
+
 ## Add-on content
 
 ### DLC in Documents is ignored or removed DLC remains installed
@@ -183,6 +190,14 @@
 - **Found on:** synthetic startup and transfer fixtures while reviewing [PR #486](https://github.com/seedds/nxnative/pull/486), part of [issue #388](https://github.com/seedds/nxnative/issues/388). The Foundation fixture runs the actual iOS locator; the push-helper fixture models devicectl's documented merge and replacement behavior, including smaller and empty DLC sets and transfer failure. Applies to every game; no device gameplay validation was performed.
 
 ## Launcher metadata
+
+### A game packed from a NUP or a dump shows "Ver. ?" for a build its profile registers
+
+- **Symptom:** the game shows `?` where it shows its version (Super Mario Bros. Wonder's title screen: `Ver. ?`), and the build's lines name the version as `v327680 (?)`.
+- **Cause:** a package with no control data (a NUP update, a dump) packed from a derived profile, here because the folder had no base game for the shader tables. `derive_profile` took the display version of the build row it writes from the package's `control.nacp` alone and wrote `?` without one, and the host answers `nn::oe::GetDisplayVersion` from that row by `main`'s build ID (`hle_sdk16.c`). The profile it derives from registered that very build, with its display version.
+- **Fix:** `derive_profile` takes the package's control data first, then the display version the profile registers for this `main` build, and `?` only for a build no row names.
+- **Found on:** [Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md) (1.2.1, v327680, an update-only NUP; `main` ff773e90…, the registered build): `Ver. ?` before, `Ver. 1.2.1` after, one Mac boot each to the title screen.
+- **Check:** `dm/tools/tests/test_nsp_alias.py` `test_derived_profile_keeps_the_display_version_the_profile_registers_for_the_build`.
 
 ### No Game language row in an app packed from a NUP or a dump
 
