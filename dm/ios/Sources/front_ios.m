@@ -277,7 +277,16 @@ static void front_ios_hud_script_fix(int width) {
     UIEdgeInsets gameInsets = dm_game_safe_insets(b, self.view.safeAreaInsets, duoPortrait);
     BOOL onTV = self.game.superview != self.view;   // the TV's view lays the picture out; the phone is all pad
     DmLayout layout = onTV ? dm_layout_pad_only(b) : dm_layout_picture(dm_layout(b, gameInsets, self.partiallyOpen, division, g_picture_aspect), b, self.fill, g_picture_aspect);
-    if (!onTV && !layout.separated) { const char *fs = getenv("DM_FULLSCREEN"); if (!fs || atoi(fs)) layout.game = b; }   // this fork's builds render at the screen's own aspect (front_ios_render_width_h) and the compositor fills the whole target under DM_FULLSCREEN (the default): fitting the view to 16:9 here shrank wider pictures twice, once by the narrower view and again by the compositor fitting into it
+    if (!onTV && !layout.separated) {
+        const char *se = getenv("DM_PRESENT_STRETCH");   // the same switch nvn_mtl.m's present reads: set (and a number), the game's rectangle is the fit widened by the factor, capped at the view, and the compositor widens its own fit inside the view by the same factor, so view, picture and touch rectangle (DmGamepad.m, on layout.game) land on the one rectangle
+        char *se_end = NULL; double st = -1;
+        if (se && *se) { double v = strtod(se, &se_end); if (se_end != se && !*se_end) st = v; }
+        if (st >= 0) {
+            CGRect fit = dm_aspect_fit(b, g_picture_aspect);
+            CGFloat w = st > 1 ? fmin(fit.size.width * (CGFloat)st, b.size.width) : fit.size.width;
+            layout.game = CGRectMake(floor(CGRectGetMidX(b) - w / 2), fit.origin.y, w, fit.size.height);
+        } else { const char *fs = getenv("DM_FULLSCREEN"); if (!fs || atoi(fs)) layout.game = b; }   // this fork's builds render at the screen's own aspect (front_ios_render_width_h) and the compositor fills the whole target under DM_FULLSCREEN (the default): fitting the view to 16:9 here shrank wider pictures twice, once by the narrower view and again by the compositor fitting into it
+    }
     if (!onTV) self.game.frame = layout.game;
     layout.topSafeOnly = duoPortrait;
     NSString *line = [NSString stringWithFormat:@"%@, hinge %ld%s, divisions %@, picture %@, controls %@", onTV ? @"pad only (picture on the TV)" : layout.separated ? @"split" : self.fill ? @"overlay, Fill" : @"overlay",

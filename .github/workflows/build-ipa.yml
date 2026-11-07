@@ -63,6 +63,10 @@ on:
         type: boolean
         required: false
         default: false
+      present_stretch:
+        description: "Compromise present stretch (DM_PRESENT_STRETCH env switch): widen the fitted picture toward the screen's edges by this factor, e.g. 1.10 (empty = off; 1 = the native-aspect fit itself, and the factor that reaches the screen's width is the full stretch)"
+        required: false
+        default: ""
       romfs_img:
         description: "Also upload the extracted RomFS.img as an artifact (the one-time datapack import for a separate-RomFS build; several GB)"
         type: boolean
@@ -506,6 +510,14 @@ jobs:
             printf 'DM_LAUNCHER=0\n' >> "$RUNNER_TEMP/dm-env.txt"
             ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
             echo "GameCase variant build: DM_LAUNCHER=0"
+          fi
+          # Compromise present stretch build: bake DM_PRESENT_STRETCH into the bundle's dm/env.txt
+          # the same way (nvn_mtl.m's present and front_ios.m's layout widen the fitted picture by
+          # the factor, between the native-aspect fit and the full stretch; appends, like the pad's switch).
+          if [ -n "${{ inputs.present_stretch }}" ]; then
+            printf 'DM_PRESENT_STRETCH=%s\n' "${{ inputs.present_stretch }}" >> "$RUNNER_TEMP/dm-env.txt"
+            ARGS+=(--env-file "$RUNNER_TEMP/dm-env.txt")
+            echo "Present stretch build: DM_PRESENT_STRETCH=${{ inputs.present_stretch }}"
           fi
           if [ "${{ inputs.aoc_external }}" = "true" ]; then
             ARGS+=(--aoc-external)

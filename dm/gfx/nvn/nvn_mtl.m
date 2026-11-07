@@ -13843,6 +13843,26 @@ static id<MTLTexture> present_raw_src(id<MTLTexture> src) {
 static int present_fullscreen(void) {   // fill the whole target instead of keeping the game picture's aspect ratio: the default (adaptive full-screen); only an env file's explicit DM_FULLSCREEN=0 asks for the native-aspect fit
     static int fs = -1; if (fs < 0) { const char *e = getenv("DM_FULLSCREEN"); fs = !e || atoi(e) ? 1 : 0; } return fs;
 }
+// DM_PRESENT_STRETCH=<factor>: the fitted picture widened toward the canvas's edges by the factor, its height
+// unchanged and centred: a middle way between the native-aspect fit (a factor of 1, the DM_FULLSCREEN=0
+// rectangle) and the full stretch (the factor that reaches the canvas's width, where the widened rectangle
+// is the fullscreen one). Set, it decides the present rectangle instead of DM_FULLSCREEN; unset (or not a
+// number), -1 here and the rectangle is exactly what it was before the switch existed. front_ios.m reads
+// the same switch for the game view's rectangle (the one DmGamepad.m normalizes the touches on), widening
+// its fit by the same factor, so view, picture and touches stay on the one rectangle.
+static double present_stretch(void) {
+    static double f = -2;
+    if (f == -2) {
+        const char *e = getenv("DM_PRESENT_STRETCH");
+        if (!e || !*e) f = -1;
+        else {
+            char *end; double v = strtod(e, &end);
+            if (end == e || *end) { MLOG("[RED] DM_PRESENT_STRETCH=%s: not a number; the switch is ignored", e); f = -1; }
+            else { f = v; MLOG("present stretch (DM_PRESENT_STRETCH): %g, the fitted picture widened toward the canvas's edges by that factor", v); }
+        }
+    }
+    return f;
+}
 // The rectangle of the canvas (dw x dh) the picture (pw x ph) is drawn into: the picture's aspect ratio kept and centred, black bars in the rest (no stretching when the screen's ratio
 // differs from the game's, e.g. iPhone about 19.5:9 against the game's 16:9); when the ratios differ by under 1 % (the remainder from a game width that is a multiple of 8 in the
 // full-screen setup, e.g. 1952x900 against 2868x1320 differs by 0.17 %) the whole canvas, leaving no border of a few pixels
@@ -13850,6 +13870,15 @@ static MTLViewport present_viewport(double pw, double ph, double dw, double dh) 
     double s = fmin(dw / pw, dh / ph);
     MTLViewport vp = {floor((dw - pw * s) / 2), floor((dh - ph * s) / 2), round(pw * s), round(ph * s), 0, 1};
     if (fabs((dw / dh) / (pw / ph) - 1) < 0.01) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
+    double st = present_stretch();
+    if (st >= 0) {   // DM_PRESENT_STRETCH decides the rectangle: the fit widened by the factor, capped at the canvas (a factor of 1 or less is the fit itself)
+        if (st > 1 && vp.width < dw) {
+            double w = round(vp.width * st);
+            if (w >= dw) { vp.originX = 0; vp.width = dw; }
+            else { vp.originX = floor((dw - w) / 2); vp.width = w; }
+        }
+        return vp;
+    }
     if (present_fullscreen()) vp = (MTLViewport){0, 0, dw, dh, 0, 1};   // DM_FULLSCREEN fills the whole target instead (the picture stretches), as front_ios.m's view frame already promises on that switch
     return vp;
 }
