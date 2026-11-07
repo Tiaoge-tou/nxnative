@@ -84,7 +84,7 @@ static void tv_attach(void);
 @property (nonatomic, strong) UILabel *fps;
 @property (nonatomic) BOOL launched;
 @property (nonatomic, strong) id tv;   // the TV scene accessory's registration (iOS 27)
-@property (nonatomic) BOOL fill;   // DM_PICTURE_FIT=fill: in landscape the picture covers the screen, its edges cropped (DmLayout.h dm_layout_picture)
+@property (nonatomic) BOOL fill;   // DM_PICTURE_FIT=fill: in landscape the picture is stretched over the whole screen (see viewDidLayoutSubviews)
 @property (nonatomic) BOOL partiallyOpen;   // an iPhone Duo's hinge half open (UIHingeInteraction, iOS 27.1)
 @property (nonatomic) NSInteger hingeStatus;
 @property (nonatomic, copy) NSString *layoutLog;   // the last layout line logged
@@ -232,8 +232,8 @@ static void front_ios_hud_script_fix(int width) {
     dm_cloud_saves_env();   // DM_SAVE_SYNC from the launcher's Cloud saves pick, before the game's first save mount reads it (CloudSaves.m, save_sync.h)
     front_hud_env();   // before the game view makes its device (an env file's DM_METAL_HUD sets it in main.m already)
     self.fill = dm_picture_fill(getenv("DM_PICTURE_FIT"));
-    if (self.fill) LOG("front end: picture Fill (DM_PICTURE_FIT=fill), the 16:9 picture covers the screen in landscape and its edges are cropped");
-    self.view.clipsToBounds = YES;   // with Fill the game view is larger than the screen
+    if (self.fill) LOG("front end: picture Fill (DM_PICTURE_FIT=fill), the picture is stretched to fill the screen in landscape");
+    self.view.clipsToBounds = YES;   // the game view never draws outside the view
     self.view.window.traitOverrides.preferredContentSizeCategory = UIContentSizeCategorySmall;   // UIKit draws the in-game menu (GameMenu.swift) in this window: it keeps one compact text size over the game, whatever the system's text size
     self.game = [[DmGameView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:self.game];
@@ -277,6 +277,7 @@ static void front_ios_hud_script_fix(int width) {
     UIEdgeInsets gameInsets = dm_game_safe_insets(b, self.view.safeAreaInsets, duoPortrait);
     BOOL onTV = self.game.superview != self.view;   // the TV's view lays the picture out; the phone is all pad
     DmLayout layout = onTV ? dm_layout_pad_only(b) : dm_layout_picture(dm_layout(b, gameInsets, self.partiallyOpen, division, g_picture_aspect), b, self.fill, g_picture_aspect);
+    if (!onTV && self.fill && !layout.separated && !CGRectIsEmpty(b)) layout.game = b;   // Fill on this front end stretches the picture over the full bounds instead of cropping it: dm_layout_picture's cover rectangle (DmLayout.h dm_aspect_fill) keeps its crop meaning for the helper's sake, but the Picture row is offered only by builds whose game renders a fixed 16:9 picture that cannot widen, and for them Fill is the game's own fullscreen stretch — the same full-bounds frame the DM_FULLSCREEN case below gives every other build. The guard mirrors the cover's own conditions (Fill on, the overlay layout, real bounds), so a split layout keeps its fitted picture and a TV's pad-only layout is untouched
     if (!onTV && !layout.separated) { const char *fs = getenv("DM_FULLSCREEN"); if (!fs || atoi(fs)) layout.game = b; }   // this fork's builds render at the screen's own aspect (front_ios_render_width_h) and the compositor fills the whole target under DM_FULLSCREEN (the default): fitting the view to 16:9 here shrank wider pictures twice, once by the narrower view and again by the compositor fitting into it
     if (!onTV) self.game.frame = layout.game;
     layout.topSafeOnly = duoPortrait;

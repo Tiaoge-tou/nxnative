@@ -704,7 +704,7 @@ static Class DuoHarnessInstallReservedRegionProbe(UIView *view) API_AVAILABLE(io
     BOOL duo = [[root valueForKey:@"hingeStatus"] integerValue] != 0;
     DmLayout fit = dm_layout(b, dm_game_safe_insets(b, root.view.safeAreaInsets, duo), [[root valueForKey:@"partiallyOpen"] boolValue], CGRectNull, DM_PICTURE_16_9);
     dm_setting_live("DM_PICTURE_FIT", "fill"); [root.view layoutIfNeeded];
-    XCTAssertTrue(CGRectEqualToRect(game.frame, dm_layout_picture(fit, b, YES, DM_PICTURE_16_9).game), @"Fill applies at once: %@", NSStringFromCGRect(game.frame));
+    XCTAssertTrue(CGRectEqualToRect(game.frame, fit.separated ? fit.game : b), @"Fill applies at once, stretched over the whole view (a split keeps the fitted picture): %@", NSStringFromCGRect(game.frame));
     dm_setting_live("DM_PICTURE_FIT", "fit"); [root.view layoutIfNeeded];
     XCTAssertTrue(CGRectEqualToRect(game.frame, fit.game), @"and Fit brings the bars back: %@", NSStringFromCGRect(game.frame));
 
