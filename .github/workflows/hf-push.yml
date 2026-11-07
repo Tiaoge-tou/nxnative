@@ -1,0 +1,49 @@
+name: hf-push
+
+# Temporary Stage-B transfer for the isaac-abplus line: downloads the staged
+# isaac-abplus.zip parts from the private game-parts repo (release
+# hf-bridge-tmp), joins and hash-verifies them, and uploads the zip to the
+# private HF dataset Tiaoge-tou/game-archives, where build-ipa.yml's hf route
+# reads it. Removed once the transfer is done.
+on:
+  push:
+    branches: [isaac-abplus]
+    paths: ['.github/workflows/hf-push.yml']
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the staged parts from game-parts and join them
+        env:
+          GH_TOKEN: <redacted>
+        run: |
+          set -eu
+          mkdir -p dl
+          gh release download hf-bridge-tmp -R Tiaoge-tou/game-parts -p 'isaac-abplus.zip.part-*' -D dl
+          ls -la dl
+          cat dl/isaac-abplus.zip.part-00 dl/isaac-abplus.zip.part-01 dl/isaac-abplus.zip.part-02 dl/isaac-abplus.zip.part-03 > dl/isaac-abplus.zip
+          echo "76faebf295dffb4968f2fb6463339203517bd0e84d79c60b7ed60a8da9c26992  dl/isaac-abplus.zip" | sha256sum -c -
+
+      - name: Upload to the HF dataset and verify
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -eu
+          pip install -q huggingface_hub
+          python3 - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+          api = HfApi(token=os.environ['HF_TOKEN'])
+          out = api.upload_file(path_or_fileobj='dl/isaac-abplus.zip', path_in_repo='isaac-abplus.zip',
+                                repo_id='Tiaoge-tou/game-archives', repo_type='dataset',
+                                commit_message='Add isaac-abplus.zip (US Isaac 1.7.9b XCI, title 010021C000B6A000)')
+          print('committed:', out)
+          info = api.get_paths_info('Tiaoge-tou/game-archives', ['isaac-abplus.zip'], repo_type='dataset')[0]
+          print('size:', info.size)
+          print('lfs sha256:', info.lfs.sha256 if info.lfs else None)
+          assert info.size == 1776275246, info.size
+          assert info.lfs and info.lfs.sha256 == '76faebf295dffb4968f2fb6463339203517bd0e84d79c60b7ed60a8da9c26992'
+          print('dataset files:', api.list_repo_files('Tiaoge-tou/game-archives', repo_type='dataset'))
+          print('HF upload verified')
+          EOF
