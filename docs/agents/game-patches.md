@@ -43,6 +43,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | `build` → `game` | task ring push and pop barriers | race | gap | judgement | 1 | [Batman: Arkham Knight](../../dm/games/0100ACD0163D0000/README.md) | a data race in the game's own task ring |
 | `build` → `game` | the display-mode size words in the screen-state ctor template, and the wide-screen world record's word, written by the loader at start (HOST_FILLS) | rendering | gap | judgement | 1 | [Hollow Knight: Silksong](../../dm/games/010013C00E930000/README.md) | the template is data the guest reports its mode sizes from and crops by, not code a stub can hang off; its baked size words are recognisable data, so a content match could carry the fills over the game's updates |
 | `build` → `game` | the game's own state at fixed IL2CPP class slots (GameManager / UIManager statics), read to tell a cutscene or a load from play | runtime | gap | judgement | 1 | [Hollow Knight: Silksong](../../dm/games/010013C00E930000/README.md) | the class objects sit in slots in main's image that the host cannot enumerate by name, and the slot offsets are per build; the touch pad polls the result (dm_pad_mode) to hide in cutscenes and offer its Skip / Pad medallions |
+| `build` → `game` | the Repentance module's directory-entry comparator made a strict weak ordering | runtime | gap | checked: the shipped Repentance.nro (build 8821c0a7) disassembled and the device crash signature matched to its first dereference, 2026-11-06 | 1 | [The Binding of Isaac: Repentance](../../dm/games/010021C000222000/README.md) | the game's own comparator in its run-time-loaded module; a function-matched rule could carry the rewrite over the game's updates |
 | `build` → `game` | UE3's GMalloc setup skipped, the host allocator in (hle_uemalloc.c) | address space | gap | judgement | 1 | [Batman: Arkham Knight](../../dm/games/0100ACD0163D0000/README.md) | UE3 inlines the allocator's constructor into the GMalloc setup and has its own vtable layout (25 slots, 32-bit sizes), so the Unreal 4/5 discovery does not apply |
 | `build` → `game` | unused 272-byte slot pool: 4,194,304 → 65,536 slots | address space | gap | judgement | 1 | [Mario + Rabbids® Sparks of Hope](../../dm/games/0100317013770000/README.md) | Sparks of Hope's own init (Kingdom Battle has none) |
 | `build` → `sdk` | rows the rules would add the alignment cuts to (2d369d99, 12f16103, 311deab1) | address space | blocked: the games that reach them (Pokémon Brilliant Diamond, Monster Hunter Rise, 13 Sentinels: Aegis Rim; Brain Memory Training Academy; Ace Attorney Investigations Collection) have no Mac build: run one per build with the alignment cuts | checked: the rules resolved on each build's sdk, 2026-10-29 and 2026-10-30 | 12 | [sdk_patches.py](../../dm/tools/sdk_patches.py) | the rules give these builds the same node area cut and the three alignment cuts more; each row keeps the alignment out |
@@ -92,6 +93,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [Super Mario 3D All-Stars: Super Mario Sunshine](#super-mario-3d-all-stars-super-mario-sunshine) | 2 | 0 | 0 | 0 | 0 | `build` → `game` |
 | [Super Smash Bros. Ultimate](#super-smash-bros-ultimate) | 11 | 0 | 0 | 1 | 0 | `game` |
 | [Taiko Risshiden V DX](#taiko-risshiden-v-dx) | 1 | 0 | 0 | 2 | 0 | `game` |
+| [The Binding of Isaac: Repentance](#the-binding-of-isaac-repentance) | 1 | 0 | 0 | 0 | 2 | `build` → `game` |
 | [The Legend of Zelda: Breath of the Wild](#the-legend-of-zelda-breath-of-the-wild) | 7 | 0 | 43 | 0 | 0 | `build` → `game` ×2 |
 | [The Legend of Zelda: Link's Awakening](#the-legend-of-zelda-links-awakening) | 1 | 0 | 0 | 0 | 0 | `build` → `game` |
 | [The Legend of Zelda: Tears of the Kingdom](#the-legend-of-zelda-tears-of-the-kingdom) | 0 | 0 | 9 | 0 | 0 | `build` → `game` |
@@ -570,6 +572,17 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - cut `+0x443fac`: frame limiter threshold: N × tick frequency / 60 (umulh by 1/60 → udiv by 60), then 0 when N = 1 (cmp w20, #1; csel x20, xzr, x8, eq): one vsync a frame is the present pacing's; N = 2 keeps the 2 ms rounds
 - **function-matched** (`main` of builds without CUTS): frame limiter threshold: 0 when N = 1: 1 function, 1 cut
 - **function-matched** (`main` of builds without CUTS): frame limiter threshold: 0 when N = 1: 1 function, 1 cut
+
+### The Binding of Isaac: Repentance
+
+[The Binding of Isaac: Repentance](../../dm/games/010021C000222000/README.md), `010021C000222000`, [patches.py](../../dm/games/010021C000222000/patches.py).
+
+- **`build` → `game`**, runtime, gap, checked: the shipped Repentance.nro (build 8821c0a7) disassembled and the device crash signature matched to its first dereference, 2026-11-06: the Repentance module's directory-entry comparator made a strict weak ordering. The game's own comparator in its run-time-loaded module; a function-matched rule could carry the rewrite over the game's updates
+
+- **unregistered build** `8821c0a7…` ([patches.py:18](../../dm/games/010021C000222000/patches.py#L18))
+  - cut `+0x497864`: directory-entry comparator (KAGE::Filesys::DirectoryEntry::operator<): directories before files in both argument orders, name order within a class
+  - host [hle_isaacpad.c:49](../../dm/host/hle_isaacpad.c#L49): k_isaacpad (a build no profile registers)
+  - host [hle_isaacprobe.c:220](../../dm/host/hle_isaacprobe.c#L220): k_isaacprobe_deep (a build no profile registers)
 
 ### The Legend of Zelda: Breath of the Wild
 
