@@ -733,7 +733,9 @@ Applied to the `sdk` of any build without CUTS, found by function fingerprint ([
 Dead code unless such a build is run; a candidate for removal, or for a build row in its profile.
 
 - `8821c0a7…`: [hle_isaacpad.c:49](../../dm/host/hle_isaacpad.c#L49): k_isaacpad (a build no profile registers)
-- `8821c0a7…`: [hle_isaacprobe.c:220](../../dm/host/hle_isaacprobe.c#L220): k_isaacprobe_deep (a build no profile registers)
+- `8821c0a7…`: [hle_isaacprobe.c:226](../../dm/host/hle_isaacprobe.c#L226): k_isaacprobe_deep (a build no profile registers)
+- `8821c0a7…`: [hle_isaacprobe.c:246](../../dm/host/hle_isaacprobe.c#L246): k_isaacprobe_pins (a build no profile registers)
+- `91c73fdd…`: [hle_isaacprobe.c:227](../../dm/host/hle_isaacprobe.c#L227): k_isaacprobe_deep (a build no profile registers)
 
 ## Translator rules keyed by a shader's code
 

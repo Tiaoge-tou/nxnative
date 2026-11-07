@@ -26,6 +26,12 @@
 // the overlay / menu manager (built ~3.7 s in, in place across the menus and the whole run, swapped for the
 // diary's object when the death page opens), and +0xd2160, the session object behind F2. If a current-screen
 // enum exists anywhere, it lives in one of those two objects.
+// Second title (The Binding of Isaac: Afterbirth+ 1.7.9b, Repentance build 91c73fdd575061318d68886316afeac7):
+// the pad's fields are gated on the old build and this NRO's layout differs, so the hunt starts over on the
+// same instruments. Its round 1 is the wide net again -- every module's data segment, main's pointer objects
+// and the deep first-come follow, whose build gate now names this build too. There are no pinned roots for
+// it: the pins below are offsets in the OLD build's data segment and stay keyed to that build alone; a pin
+// for this title gets derived from its own rounds, the way the old ones were.
 #include "hle.h"
 #include <stdlib.h>
 #include <string.h>
@@ -217,7 +223,8 @@ static int ip_ptr_poll(ip_range_t *main, uint64_t t) {
 // the root the way it named the fields (+0x884B8, +0xcc088, +0xd2160 are the expected ones).
 #define IP_DEEP_OBJ 512         // bytes followed behind one deep pointer
 #define IP_DEEP_MAX 1024        // followed deep pointers, at most
-static const char *const k_isaacprobe_deep[] = { "8821c0a75afc814df5902fdc31e8d127" };   // Repentance.nro, the build the page fields were found in
+static const char *const k_isaacprobe_deep[] = { "8821c0a75afc814df5902fdc31e8d127",   // Repentance.nro, the build the page fields were found in
+                                                 "91c73fdd575061318d68886316afeac7" };   // Repentance.nro of Afterbirth+ 1.7.9b (the second title): its round 1
 
 typedef struct {
     size_t slot;            // the pointer's slot offset in the module's data segment (the log's root=)
@@ -233,7 +240,12 @@ static module_t *g_deep_mod;        // the module (and base) the table keys off;
 static uint8_t *g_deep_lo;
 
 // ---- Round 4: the pinned roots (see the file's head) ----
-static const size_t k_ip_deep_pins[] = { 0xcc0a8, 0xd2160 };   // root slot offsets in Repentance's data segment
+// The root slot offsets are per build: a data segment's layout is its own build's, so a build with
+// no row here (the 1.7.9b title, so far) simply runs without pins.
+static const struct { const char *build_id; size_t a, b; } k_isaacprobe_pins[] = {
+    { "8821c0a75afc814df5902fdc31e8d127", 0xcc0a8, 0xd2160 },   // the old build's overlay / menu manager and session roots
+};
+#define IP_PIN_MAX 2
 typedef struct {
     size_t slot;            // the root slot's offset (the log's root=)
     uint64_t target;        // the object it points at now; 0 while it points at nothing followable
@@ -241,10 +253,12 @@ typedef struct {
     uint8_t snap[IP_DEEP_OBJ];
     uint32_t streak[IP_DEEP_OBJ / 8];   // per 8-byte field, as ip_deep_t's streak
 } ip_pin_t;
-static ip_pin_t g_pins[sizeof k_ip_deep_pins / sizeof k_ip_deep_pins[0]];
+static ip_pin_t g_pins[IP_PIN_MAX];
+static int g_pins_on;       // the deep module's build has a pins row (set when its table starts, below)
 
 static int ip_is_pin(size_t slot) {
-    for (size_t i = 0; i < sizeof k_ip_deep_pins / sizeof k_ip_deep_pins[0]; i++) if (k_ip_deep_pins[i] == slot) return 1;
+    if (!g_pins_on) return 0;
+    for (size_t i = 0; i < sizeof g_pins / sizeof g_pins[0]; i++) if (g_pins[i].slot == slot) return 1;
     return 0;
 }
 
@@ -255,7 +269,9 @@ static int ip_pins_active(void) {
 }
 
 static ip_range_t *ip_deep_range(void) {
-    for (int i = 0; i < g_nranges; i++) if (!strcmp(g_ranges[i].m->build_id, k_isaacprobe_deep[0])) return &g_ranges[i];
+    for (int i = 0; i < g_nranges; i++)
+        for (size_t j = 0; j < sizeof k_isaacprobe_deep / sizeof k_isaacprobe_deep[0]; j++)
+            if (!strcmp(g_ranges[i].m->build_id, k_isaacprobe_deep[j])) return &g_ranges[i];
     return NULL;
 }
 
@@ -264,7 +280,8 @@ static void ip_deep_reset(void) {
     free(g_deep); g_deep = NULL; g_ndeep = 0; g_deep_full_noted = 0;
     free(g_deep_seen); g_deep_seen = NULL;
     g_deep_mod = NULL; g_deep_lo = NULL;
-    for (size_t i = 0; i < sizeof g_pins / sizeof g_pins[0]; i++) { memset(&g_pins[i], 0, sizeof g_pins[i]); g_pins[i].slot = k_ip_deep_pins[i]; }
+    for (size_t i = 0; i < sizeof g_pins / sizeof g_pins[0]; i++) memset(&g_pins[i], 0, sizeof g_pins[i]);
+    g_pins_on = 0;   // re-armed (or not) from the deep module's build when its table starts
 }
 
 // Read a followed deep object's bytes: 0 on success (the heap read refuses a vanished object).
@@ -361,6 +378,7 @@ static int ip_pin_read(const ip_pin_t *p, uint8_t *out) {
 // restarts its diff and is logged with the usual deep tag; a root pointing at nothing followable
 // idles (never dropped) until it points again -- then diff the current objects.
 static int ip_deep_pin_poll(ip_range_t *r, uint64_t t) {
+    if (!g_pins_on) return 0;   // this build has no pinned roots: its slots are not the old build's
     int changed = 0;
     const uint64_t *cur = (const uint64_t *)(const void *)r->lo;
     uint8_t buf[IP_DEEP_OBJ];
@@ -406,8 +424,14 @@ static void *isaacprobe_main(void *arg) {
                 if (deep->nslots) g_deep_seen = calloc((deep->nslots + 7) / 8, 1);
                 LOG("[isaacprobe] deep-following the pointers in mod=%s's data segment (build %s): %d-byte objects, at most %d",
                     deep->m->name, deep->m->build_id, IP_DEEP_OBJ, IP_DEEP_MAX);
-                LOG("[isaacprobe] deep-pinned roots +0x%zx and +0x%zx: followed always, outside the table",
-                    k_ip_deep_pins[0], k_ip_deep_pins[1]);
+                for (size_t j = 0; j < sizeof k_isaacprobe_pins / sizeof k_isaacprobe_pins[0]; j++) {
+                    if (strcmp(deep->m->build_id, k_isaacprobe_pins[j].build_id)) continue;
+                    g_pins[0].slot = k_isaacprobe_pins[j].a; g_pins[1].slot = k_isaacprobe_pins[j].b; g_pins_on = 1;
+                    LOG("[isaacprobe] deep-pinned roots +0x%zx and +0x%zx: followed always, outside the table",
+                        g_pins[0].slot, g_pins[1].slot);
+                    break;
+                }
+                if (!g_pins_on) LOG("[isaacprobe] no pinned roots for build %s: this round runs the wide net only", deep->m->build_id);
             }
             ip_deep_scan_new(deep); changed += ip_deep_poll(deep, t); changed += ip_deep_pin_poll(deep, t);
         }
