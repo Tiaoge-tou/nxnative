@@ -135,7 +135,7 @@ private struct LauncherView: View {
                     CloudSavesSection()
                     Section {
                         HStack {
-                            Text("Memory available")
+                            Text("可用内存")
                             Spacer()
                             Text(ByteCountFormatter.string(fromByteCount: Int64(memory), countStyle: .memory)).monospacedDigit().foregroundStyle(.secondary)
                         }
