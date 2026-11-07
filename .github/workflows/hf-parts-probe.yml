@@ -1,0 +1,28 @@
+name: hf-parts-probe
+
+# Temporary diagnostic: why did the hf-push bridge get 401 from game-parts
+# with PARTS_TOKEN? Prints HTTP status codes only, never the token.
+on:
+  push:
+    branches: [isaac-abplus]
+    paths: ['.github/workflows/hf-parts-probe.yml']
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe PARTS_TOKEN against the GitHub API
+        env:
+          TOK: ${{ secrets.PARTS_TOKEN }}
+        run: |
+          set -u
+          echo "token length: ${#TOK}"
+          for url in \
+            "https://api.github.com/user" \
+            "https://api.github.com/repos/Tiaoge-tou/game-parts" \
+            "https://api.github.com/repos/Tiaoge-tou/game-parts/releases/tags/hf-bridge-tmp" \
+            "https://api.github.com/repos/Tiaoge-tou/game-parts/releases/tags/dsr-parts" ; do
+            code=$(curl -s -o /tmp/body -w '%{http_code}' -H "Authorization: Bearer $TOK" -H 'Accept: application/vnd.github+json' "$url")
+            echo "$code  $url"
+            head -c 300 /tmp/body; echo
+          done
