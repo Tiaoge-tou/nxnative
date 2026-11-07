@@ -180,6 +180,46 @@ static void cp_report(void) {
 static _Atomic int g_last_commit_error;
 static _Atomic int g_up_pending;
 
+// macOS revokes a process's GPU access after GPU hangs or faults it caused: from then on every command buffer comes back MTL4CommandQueueErrorAccessRevoked ("Ignored (for causing
+// prior/excessive GPU errors)", kIOGPUCommandBufferCallbackErrorSubmissionsIgnored) without running, the GPU signals no fence again and nothing is drawn; the game in #1326 ran about
+// 70 s like that before it aborted, and in full screen WindowServer froze. The first one stops the game: presents stop, the front end closes the game, and the shared event a game's
+// SyncWait waits on (for up to an hour, mtl_wait_at) is raised from the CPU to each fence whose feedback has come back. The feedback still comes, promptly, so g_done moves as
+// before and no command allocator is reset before Metal has handed its command buffer back. A hang or a fault alone is not enough: the GPU recovers from those, and a command buffer
+// discarded as the victim of another's error comes back with a timeout too while the game goes on, as it did in #1326's second run
+static _Atomic int g_gpu_lost;
+void front_gpu_lost(void);
+__attribute__((weak)) void front_gpu_lost(void) { MDIE("GPU access revoked: macOS runs none of this process's GPU work any more"); }   // the Mac front end leaves full screen, says why and quits
+static void gpu_lost_release(void) {
+    static os_unfair_lock lk = OS_UNFAIR_LOCK_INIT;   // never lower it
+    os_unfair_lock_lock(&lk); uint64_t f = atomic_load(&g_done); if (g_ev && g_ev.signaledValue < f) g_ev.signaledValue = f; os_unfair_lock_unlock(&lk);
+}
+// Metal 4 reports a commit's error as MTL4CommandQueueErrorTimeout with no text, and the command buffer's own error underneath (NSUnderlyingErrorKey, NSMultipleUnderlyingErrorsKey):
+// every command buffer error in both #1326 logs has that shape. Only this domain counts: an innocent victim's IOGPU error underneath has code 5 too
+static int gpu_err_has(NSError *e, NSInteger code, int depth) {
+    if (!e || depth > 3) return 0;
+    if (e.code == code && [e.domain isEqualToString:MTL4CommandQueueErrorDomain]) return 1;
+    for (NSError *u in e.underlyingErrors) if (gpu_err_has(u, code, depth + 1)) return 1;
+    return 0;
+}
+static void gpu_lost_check(NSError *e, const char *where) {
+    if (!e || atomic_load(&g_gpu_lost) || !gpu_err_has(e, MTL4CommandQueueErrorAccessRevoked, 0) || atomic_exchange(&g_gpu_lost, 1)) return;
+    MLOG("[RED] GPU access revoked: the %s command buffer was ignored (fences back %llu of %llu); macOS runs none of this process's GPU work any more, so the game stops", where,
+         (unsigned long long)atomic_load(&g_done), (unsigned long long)atomic_load(&g_fence));
+    gpu_lost_release();
+    front_gpu_lost();
+}
+// DM_TEST_GPU_LOST=n (for testing): from the n-th submission on, imitate the revoked access without faulting the GPU: each submission's feedback reports it, in the shape the #1326
+// logs show, and the GPU's signal of its fence is left out (its work still runs)
+static int gpu_lost_test(void) {
+    static int at = -2, n; if (at == -2) { const char *e = getenv("DM_TEST_GPU_LOST"); at = e ? atoi(e) : -1; }
+    return at > 0 && ++n >= at;
+}
+static NSError *gpu_lost_test_error(void) {
+    NSError *revoked = [NSError errorWithDomain:MTL4CommandQueueErrorDomain code:MTL4CommandQueueErrorAccessRevoked userInfo:@{NSLocalizedDescriptionKey: @"DM_TEST_GPU_LOST: Ignored (for causing prior/excessive GPU errors)",
+                                                                                                                             NSUnderlyingErrorKey: [NSError errorWithDomain:@"IOGPUCommandQueueErrorDomain" code:4 userInfo:nil]}];
+    return [NSError errorWithDomain:MTL4CommandQueueErrorDomain code:MTL4CommandQueueErrorTimeout userInfo:@{NSUnderlyingErrorKey: revoked, NSMultipleUnderlyingErrorsKey: @[revoked]}];
+}
+
 static pthread_mutex_t g_res_mu = PTHREAD_MUTEX_INITIALIZER;   // Dedicated lock for the residency set: res_add is called on paths that hold g_mu (arena_new), so it cannot share g_mu
 // Wait ledger (DM_NVN_WAITS=1): every place a thread of the host or the game waits on the CPU for the GPU or for the encode thread, counted per frame (calls, calls that blocked,
 // the time they blocked) and logged every 300 frames with the frame's GPU idle. The game's own SyncWait is split by how far its fence is behind the newest one (0: the last submission)
@@ -857,15 +897,33 @@ static vis_list *vis_snapshot(void) {
 }
 // Target ranges of buffer writes (copies / inline uniform updates) already encoded in this submission but not yet executed on the GPU: reading these addresses on the CPU side at encode time yields old values (uv_proof avoids them when reading uniforms)
 // Inline updates keep where their data sits in the update ring (g_pend_upd: index + 1 into g_upd), so a bindless handle they wrote can be read as the GPU will see it (pend_read).
-// Monster Hunter Rise queues more than 256 writes in a submission (the old limit, after which every address counted as written). The writes are indexed by 4 KB page (a chain per hash
-// bucket, newest first); a write over more than PEND_SPAN pages goes to a short list that every lookup scans
-enum { PEND_MAX = 8192, PEND_HB = 2048, PEND_NODES = 16384, PEND_SPAN = 8, PEND_WIDE = 256 };
-static uint64_t g_pend_lo[PEND_MAX], g_pend_hi[PEND_MAX]; static int g_npend, g_pend_over; static uint8_t g_pend_kind[PEND_MAX]; static uint16_t g_pend_upd[PEND_MAX];   // kind: 1 inline update, 2 copy, 3 fill
+// The writes are indexed by 4 KB page (a chain per hash bucket, newest first); a write over more than PEND_SPAN pages goes to a short list that every lookup scans.
+// The list grows as a submission needs it and keeps its size for the next (pend_room). It used to stop at a fixed count, and past it the submission counted as a write anywhere
+// (g_pend_over), which gw_commit carries past the submission: every partly covered uniform shadow of later submissions was refused while it ran, so every draw that read one ended its
+// pass. Monster Hunter Rise passed 256 writes in a submission, and Splatoon Raiders' third boss stage about 11,000 (7 uniform updates before each of about 1,550 ink-map queries; 2,800
+// in its other fights): past 8,192 each query took a pass of its own on its 6400x6400 map, the GPU fell behind, the submissions kept running, and the stage stayed at 1-2 fps.
+// A write anywhere is left for a list that cannot grow (no memory) and a full wide list
+enum { PEND_HB_BITS = 13, PEND_HB = 1 << PEND_HB_BITS, PEND_SPAN = 8, PEND_WIDE = 256 };
+static uint64_t *g_pend_lo, *g_pend_hi; static int g_npend, g_pend_over, g_pend_cap; static uint8_t *g_pend_kind; static uint32_t *g_pend_upd;   // kind: 1 inline update, 2 copy, 3 fill
 static int32_t g_pend_head[PEND_HB]; static uint32_t g_pend_hgen[PEND_HB], g_pend_gen = 1;   // a bucket's chain is valid when its generation is this submission's
-static struct { int32_t e, next; } g_pend_node[PEND_NODES]; static int g_npnode;
+typedef struct { int32_t e, next; } pend_node;
+static pend_node *g_pend_node; static int g_npnode, g_pnode_cap;
 static int32_t g_pend_wide[PEND_WIDE]; static int g_nwide;
 typedef struct { uint64_t lo; size_t off; __unsafe_unretained id<MTLBuffer> buf; } upd_ent;   // the ring block lives until this submission completes (mtl_sub_update)
-static upd_ent g_upd[PEND_MAX]; static int g_nupd;
+static upd_ent *g_upd; static int g_nupd;   // one per entry at most: sized with the entries
+static int *g_ubp_idx;   // every entry a lookup can meet (pend_since): at most one per node of the range's chains, plus the wide list
+static int pend_grow(void **p, size_t n, size_t each) { void *q = realloc(*p, n * each); if (!q) return 0; *p = q; return 1; }
+// Room for one more entry and nodes more nodes: 0 when memory runs out (the caller counts the write as one anywhere)
+static int pend_room(int nodes) {
+    if (g_npend == g_pend_cap) { if (g_pend_cap > INT_MAX / 2) return 0; int c = g_pend_cap ? g_pend_cap * 2 : 4096;
+        if (!pend_grow((void **)&g_pend_lo, c, sizeof *g_pend_lo) || !pend_grow((void **)&g_pend_hi, c, sizeof *g_pend_hi) || !pend_grow((void **)&g_pend_kind, c, sizeof *g_pend_kind)
+            || !pend_grow((void **)&g_pend_upd, c, sizeof *g_pend_upd) || !pend_grow((void **)&g_upd, c, sizeof *g_upd)) return 0;   // a grown array kept at its new size is only spare room
+        g_pend_cap = c; }
+    if (!g_pnode_cap || g_npnode + nodes > g_pnode_cap) { int c = g_pnode_cap ? g_pnode_cap : 8192; while (c < g_npnode + nodes) { if (c > INT_MAX / 2) return 0; c *= 2; }
+        if (!pend_grow((void **)&g_pend_node, c, sizeof *g_pend_node) || !pend_grow((void **)&g_ubp_idx, (size_t)c + PEND_WIDE, sizeof *g_ubp_idx)) return 0;
+        g_pnode_cap = c; }
+    return 1;
+}
 // Other writes to guest memory in this submission, which the pend list does not hold: writable storage buffers bound to a shader, texture→buffer copies, counter reports (ubp_get).
 // Kept by 4 KB page (Breath of the Wild's particle dispatches bind about ten storage buffers each, hundreds a frame): a set of pages tagged with the submission (g_pend_gen) and with what
 // wrote them. A counter report does not count against this submission's shadows: the host writes reports on the CPU when the whole submission has completed, so no draw of it reads one
@@ -905,14 +963,16 @@ static int sbw_hits(uint64_t lo, uint64_t hi) {
 // size not known) the rest of that buffer. A device pointer that runs past its buffer is out of bounds on Metal, which the host could not give the Switch's meaning anyway. Before, such
 // a binding counted as a write anywhere, and every partly covered uniform shadow after it in the submission was refused (BotW shrines: about 240 more passes a frame, GitHub issue #534)
 static uint64_t sbw_len(uint64_t size, void *mb, uint64_t mo) { if (size) return size; uint64_t len = ((__bridge id<MTLBuffer>)mb).length; return len > mo ? len - mo : 0; }
-static inline unsigned pend_bucket(uint64_t page) { return (unsigned)((page * 0x9E3779B97F4A7C15ull) >> 53) & (PEND_HB - 1); }
+static inline unsigned pend_bucket(uint64_t page) { return (unsigned)((page * 0x9E3779B97F4A7C15ull) >> (64 - PEND_HB_BITS)); }
 static void pend_reset(void) { g_npend = g_pend_over = g_nupd = g_npnode = g_nwide = g_nsbw = g_nsbw_w = g_sbw_over = 0; if (!++g_pend_gen) { memset(g_pend_hgen, 0, sizeof g_pend_hgen); memset(g_sbwp, 0, sizeof g_sbwp); g_pend_gen = 1; } }
 static void vc_gpu_write(uint64_t dst, uint64_t n);   // kept index ranges under the written range are not trusted again (ix_range)
 static int pend_add(uint64_t dst, uint64_t n, int kind) {
     vc_gpu_write(dst, n); drw_note(dst, n ? n : 1);
-    if (g_pend_over || g_npend == PEND_MAX) { g_pend_over = 1; return -1; }
-    int e = g_npend; uint64_t p0 = dst >> 12, p1 = (dst + (n ? n : 1) - 1) >> 12;
-    if (p1 - p0 < PEND_SPAN && g_npnode + (int)(p1 - p0 + 1) <= PEND_NODES)
+    if (g_pend_over) return -1;
+    uint64_t p0 = dst >> 12, p1 = (dst + (n ? n : 1) - 1) >> 12; int narrow = p1 - p0 < PEND_SPAN;
+    if (!pend_room(narrow ? (int)(p1 - p0 + 1) : 0)) { g_pend_over = 1; return -1; }
+    int e = g_npend;
+    if (narrow)
         for (uint64_t pg = p0; pg <= p1; pg++) { unsigned b = pend_bucket(pg); int k = g_npnode++;
             g_pend_node[k].e = e; g_pend_node[k].next = g_pend_hgen[b] == g_pend_gen ? g_pend_head[b] : -1; g_pend_head[b] = k; g_pend_hgen[b] = g_pend_gen; }
     else if (g_nwide < PEND_WIDE) g_pend_wide[g_nwide++] = e;
@@ -1033,7 +1093,10 @@ void mtl_sub_begin(void) {
     void arena_begin(void); arena_begin();
 }
 
-static void rp_end(void);
+static void rp_end_at(const char *fn, int line);
+// Every render pass end names its call site in a pass dump (E <pass> pass ends in <function>:<line>): a pass that ends with no record of its own was found only by reading the code (Splatoon Raiders'
+// third boss stage, about 1,500 one-draw passes a frame on its ink map, dm/games/0400380020056000/README.md). The line is in the file that holds the function (this one or an .inc it includes), at the build the log came from
+#define rp_end() rp_end_at(__func__, __LINE__)
 static void geo_mesh_flush_pass(void);   // a waiting run of mesh draws is drawn before its pass ends (nvn_geometry.inc)
 // DM_NVN_PASSGPU_SERIAL=1 (for measurement): before creating each encoder on the main command buffer, encode 'signal n+1 → wait for signal n+1' - the signal is only raised once all prior work has completed,
 // so the following encoder starts only after the previous one has fully finished; on TBDR passes no longer overlap in the pipeline, and the per-pass start-to-end span of DM_NVN_PASSGPU is that pass's exclusive time (the whole-frame total is inflated; look only at relative cost)
@@ -1504,7 +1567,6 @@ int nvn_host_readable(uint64_t a, uint64_t n);   // hle_nvn.c: guest memory and 
 // Shadows made from memory, per range. One is kept while no write is queued after it (the draws after an update bind the same block again and again); the next one for the same range starts
 // from it and lays over only the writes queued since (the game rewrites one block hundreds of times a submission). A range read whole from memory once is not read from memory again in the submission
 enum { UBP_CACHE = 16, UBP_MAX_BYTES = 65536 };
-static int g_ubp_idx[PEND_MAX + PEND_WIDE];   // every entry a lookup can meet: the chains of the range's pages hold each entry at most once after dedup, the wide list at most PEND_WIDE
 typedef struct { uint64_t lo, hi, gpu; uint8_t *cpu; int npend; uint32_t gen, sbw; uint64_t ready; } ubp_ent;   // sbw: g_sbw_gen when the other writes were last checked; ready: copy ops that fill it (ubc_push)
 static uint64_t g_ubp_ready;   // ready of the shadow ubp_get returned last (a CPU read of it waits for that: ubc_wait)
 static ubp_ent g_ubpc[UBP_CACHE]; static unsigned g_ubpc_i;
@@ -1566,7 +1628,7 @@ void mtl_sub_update(const void *data, uint64_t dst, uint64_t n) {
         res_add(g_ubs_buf); g_ubs_off = 0;
     }
     memcpy((uint8_t *)g_ubs_buf.contents + g_ubs_off, data, n);
-    if (pi >= 0) { g_upd[g_nupd] = (upd_ent){dst, g_ubs_off, g_ubs_buf}; g_pend_upd[pi] = (uint16_t)++g_nupd; }
+    if (pi >= 0) { g_upd[g_nupd] = (upd_ent){dst, g_ubs_off, g_ubs_buf}; g_pend_upd[pi] = (uint32_t)++g_nupd; }
     if (defer) {
         // A deferred update this one covers whole never needs to land: the same landing writes these bytes after it, and the draws that read it hold its ring copy (ubd_shadow).
         // Games rewrite one block before every draw group (Breath of the Wild: the same 64 bytes), so the list stays short: every lookup below scans it, for most bindings of most draws
@@ -1864,13 +1926,16 @@ uint64_t mtl_sub_commit(void) {
     if (!atomic_load(&pr->claimed) && pr->fence) MDIE("post ring: the writes of fence %llu never ran", (unsigned long long)pr->fence);
     pr->n = n; pr->ops = ops; pr->sc = sc; pr->seg_last = seg_last; pr->t_commit = guest_ns(); atomic_store(&pr->claimed, 0); atomic_store(&pr->fence, fence);
     pthread_mutex_unlock(&g_post_mu);
+    int lost_test = gpu_lost_test();
     [o addFeedbackHandler:^(id<MTL4CommitFeedback> cb) {
         gpu_tag_done(gpu_f, cb.GPUStartTime, cb.GPUEndTime);
         if (ws_on()) ws_fb(fence, cb.GPUEndTime);
         uint64_t c0 = 0, c1 = 0; if (seg_ts()) { c0 = gpu_s_guest_ns(cb.GPUStartTime); c1 = gpu_s_guest_ns(cb.GPUEndTime); }
         if (cb.error) { atomic_store(&g_last_commit_error, 1); res_top_once(cb.error); static int n, nv; int victim = [cb.error.description containsString:@"InnocentVictim"]; if (victim ? nv++ < 1 : n++ < 8) MLOG("[RED] command buffer error details fence=%llu: %s | GPU %.3f→%.3f", (unsigned long long)fence, cb.error.description.UTF8String, cb.GPUStartTime, cb.GPUEndTime); if (!victim) MLOG("[RED] state of the failed submission fence=%llu: %s", (unsigned long long)fence, cctx.UTF8String); MLOG("[RED] command buffer execution error: %s", cb.error.localizedDescription.UTF8String); }
         char where[64]; snprintf(where, sizeof where, "fence %llu, its last command buffer", (unsigned long long)fence); cbs_feedback(cbs, cb.error, where);
+        gpu_lost_check(lost_test ? gpu_lost_test_error() : cb.error, "submission");
         post_complete(fence, c0, c1);
+        if (atomic_load(&g_gpu_lost)) gpu_lost_release();   // the GPU signals none of these fences
         defer_drain();
     }];
     void arena_commit(uint64_t fence); arena_commit(fence);
@@ -1879,7 +1944,7 @@ uint64_t mtl_sub_commit(void) {
         [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) { (void)f; gp_report(gn, gl, gf); }]; }
     [g_cb endCommandBuffer];
     rec_commit(g_cb, o);
-    rec_signal(g_ev, fence);
+    if (!lost_test) rec_signal(g_ev, fence);
     if (g_classic) { g_ev.signaledValue = fence; post_complete(fence, 0, 0); }   // No GPU completes a submission under the classic part: it completes as it commits -- the shared event signalled here as the MTL4 queue signals it (rec_signal goes to that queue, which the classic part does not have) and the fence's CPU-side writes run now, so the game's fence waits return instead of waiting out their timeouts with the boot stalled at its first frames
     rec_drain();
     g_alloc_fence[g_alloc_cur] = fence;
@@ -2532,7 +2597,7 @@ static void up_flush(void) {
     MTL4CommitOptions *o = [NSClassFromString(@"MTL4CommitOptions") new];
     atomic_fetch_add(&g_up_pending, 1);
     [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) {
-        if (f.error) { MLOG("[RED] upload command buffer execution error: %s", f.error.description.UTF8String); res_top_once(f.error); }
+        if (f.error) { MLOG("[RED] upload command buffer execution error: %s", f.error.description.UTF8String); res_top_once(f.error); gpu_lost_check(f.error, "upload"); }
         if (f.error || fake_lost) {
             os_unfair_lock_lock(&g_up_lost_lk); if (!g_up_lost) g_up_lost = [NSHashTable weakObjectsHashTable]; for (id d in dsts) [g_up_lost addObject:d]; int n = (int)g_up_lost.allObjects.count; atomic_store(&g_up_lost_n, n); os_unfair_lock_unlock(&g_up_lost_lk);
             pthread_mutex_lock(&g_smu); g_ser_gen++; pthread_mutex_unlock(&g_smu);   // Make the view cache of every texture ID take the slow path once (on a cache hit tex_mtl is not passed through and this record is not seen)
@@ -4480,7 +4545,7 @@ static void rt_mirror_flush(void) {
     }
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
 }
-static void rp_end(void) { if (g_enc) { AP_B; geo_mesh_flush_pass();
+static void rp_end_at(const char *fn, int line) { if (g_enc) { AP_B; geo_mesh_flush_pass(); PD("E %llu pass ends in %s:%d", g_stat_pass, fn, line);
     if (enc_label_on()) { static uint64_t lf = ~0ull, base; uint64_t f = atomic_load(&g_cur_frame); if (f != lf) { lf = f; base = g_stat_pass - 1; }   // Intra-frame serial: the same pass has the same name every frame, so the table can aggregate by name
         [(id)g_enc setLabel:[NSString stringWithFormat:@"p%02llu %dx%d %s d%d", (unsigned long long)(g_stat_pass - base), g_el_w, g_el_h, g_el_key[0] ? g_el_key : "-", g_el_draws]]; }
 #ifdef NVN_RT_RANGE_TEST
@@ -13134,6 +13199,7 @@ static void sub_cut(void) {
         if (sc) { if (k < SEG_CLK_N) { atomic_store(&sc->t[k][0], gpu_s_guest_ns(cb.GPUStartTime)); atomic_store(&sc->t[k][1], gpu_s_guest_ns(cb.GPUEndTime)); } seg_clk_put(sc); }
         if (cb.error) { atomic_store(&g_last_commit_error, 1); static int k; if (k++ < 8) MLOG("[RED] segment command buffer execution error: %s", cb.error.description.UTF8String); res_top_once(cb.error); }
         char where[64]; snprintf(where, sizeof where, "fence %llu, segment %u", (unsigned long long)cbs_fence, k); cbs_feedback(cbs, cb.error, where);
+        gpu_lost_check(cb.error, "segment");
     }];
     gmem_commit_patch();
     res_commit();
@@ -14197,7 +14263,7 @@ static int present_offscreen_m4(id<MTLTexture> src, const int crop[4], id<MTLTex
     [options addFeedbackHandler:^(id<MTL4CommitFeedback> f) {
         (void)al; (void)cb; (void)raw; (void)fx.sc;   // keep the Metal 4 commands, source view and scaler alive too
         res_remove(out); res_remove(uvb); res_remove(fx.in); res_remove(fx.out);
-        if (f.error) MLOG("[RED] offscreen present: %s", f.error.description.UTF8String);
+        if (f.error) { MLOG("[RED] offscreen present: %s", f.error.description.UTF8String); gpu_lost_check(f.error, "offscreen present"); }
         done(f.error ? PRESENT_FAILED : kind);
     }];
     [g_q4 commit:&cb count:1 options:options];
@@ -14281,6 +14347,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     for (int i = 0; i < g_nshotq;) if (g_present_n >= g_shotq[i].frame) { mtl_finish_gpu(); shot(src, g_shotq[i].path, 1, crop); g_shotq[i] = g_shotq[--g_nshotq]; } else i++;
     pthread_mutex_unlock(&g_shotq_mu);
 
+    if (atomic_load(&g_gpu_lost)) return 0;   // the display command buffer would be ignored too: take no drawable from the screen the front end is about to close
     CAMetalLayer *layer = (__bridge CAMetalLayer *)front_metal_layer();
     if (!layer) return 0;
     if (g_present_layer_resident != layer) { [g_q4 addResidencySet:layer.residencySet]; g_present_layer_resident = layer; }
@@ -14332,7 +14399,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     [cb endCommandBuffer];
     MTL4CommitOptions *o = [NSClassFromString(@"MTL4CommitOptions") new];
     [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) {
-        if (f.error) MLOG("[RED] display command buffer error: %s", f.error.description.UTF8String);
+        if (f.error) { MLOG("[RED] display command buffer error: %s", f.error.description.UTF8String); gpu_lost_check(f.error, "display"); }
         pthread_mutex_lock(&g_pq_mu); if (ticket > g_pq_done) g_pq_done = ticket; if (ticket > g_present_alloc_done[alloc_i]) g_present_alloc_done[alloc_i] = ticket; g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv);
         present_gpu_note(f.GPUEndTime - f.GPUStartTime, fx_kind); pthread_mutex_unlock(&g_pq_mu);
     }];

@@ -162,7 +162,7 @@ DM_NVN_LAZY_CLEAR	switch	`0` makes clears with no draw after them open a pass of
 DM_NVN_LOADPROBE	diagnostic	`=1`, `2` or `3`: attachments whose load is skipped are cleared to a sentinel colour (`3` NaN; `1` NaN for float formats) and the sentinel pixels left at pass end are counted (should be 0)
 DM_NVN_LOG	diagnostic	`=1` logs the creation of NVN objects
 DM_NVN_MAGSCAN	diagnostic	`=<fs key>[:every[:phase]]`: device self-check that reads each pass's colour attachments every `every` frames (default 30) and logs `[mag]` lines for solid magenta 16×16 blocks or non-finite pixels
-DM_NVN_PASSDUMP	diagnostic	`=<f>`, `<f1>-<f2>` or `every:<n>`: logs every render pass of those frames (attachments, clears, shader keys, bindings, draw state, presents) for the `tbdr_*.py` tools
+DM_NVN_PASSDUMP	diagnostic	`=<f>`, `<f1>-<f2>` or `every:<n>`: logs every render pass of those frames (attachments, clears, shader keys, bindings, draw state, presents, and the host function and line that ended each pass) for the `tbdr_*.py` tools
 DM_NVN_PASSDUMP_ALL	diagnostic	`=1` makes `DM_NVN_PASSDUMP` record every draw and binding change, not only the first per pass and stage, including copies and inline uniform updates
 DM_NVN_PASSGPU	diagnostic	`=<file>` writes the GPU time of each render and compute pass from stage-boundary timestamp counters (off under Metal 4); also gives each dispatch its own encoder
 DM_NVN_PASSGPU_SERIAL	diagnostic	`=1` makes each encoder on the main command buffer wait until all earlier work has finished, so `DM_NVN_PASSGPU` times read each pass's exclusive time (totals read high)
@@ -334,6 +334,7 @@ DM_TEST_FS_FAIL	diagnostic	`=write:<n>[:<errno>]` makes the nth save write fail 
 DM_TEST_FS_FAILAT	diagnostic	`=<point>[:<count>][,…]` makes steps of the save transaction (`mountclone`, `reclone`, `guestname`, `renameback`) fail with ENOSPC
 DM_TEST_GEOMETRY	test	Path of the native `t_geometry` executable; `test_dmsh_geometry.py` runs its native geometry emitter checks only when it is set
 DM_TEST_GEOMETRY_PRIMITIVE_ID	test	Path to the native t_geometry_primitive_id replay executable used by test_dmsh_geometry.py with DMSH_TEST_GPU=1.
+DM_TEST_GPU_LOST	diagnostic	`=<n>` imitates the GPU access macOS revoked from the nth submission on: each submission's feedback reports `MTL4CommandQueueErrorAccessRevoked` and the GPU does not signal its fence, so the host stops presenting and the front end ends the game
 DM_TEST_KEYRACE	diagnostic	`=<n>` creates up to n (at most 512) pthread keys on a thread of its own while the host starts up
 DM_TEST_KILL_AT	diagnostic	`=write:<n>` exits the process (`_exit(9)`) at the nth save write, imitating a kill mid-write
 DM_TEST_LEAK_GPU	diagnostic	`=1` allocates and keeps a 1 MB shared Metal buffer every 100 ticks: a GPU memory leak on demand
