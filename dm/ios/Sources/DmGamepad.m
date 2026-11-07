@@ -483,8 +483,8 @@ enum { IA_MENU_A, IA_MENU_B, IA_GAME, IA_MENU_C };   // the layouts, dm_isaac_pa
 #define IA_IN_G (1 << IA_GAME)
 #define IA_IN_C (1 << IA_MENU_C)
 static const struct { const char *art; int bit; int modes; CGFloat x, y, w, ax, ay; } k_isaac[] = {
-    {"select",   B_A,     IA_IN_A | IA_IN_B, 0.7698, 0.6103, 0.116875, 0.5,    0.5},     // the paper confirm key (the menus' A), at the seat the player settled in the editor, at 0.85 of its first frame
-    {"return",   B_B,     IA_IN_A | IA_IN_B, 0.8210, 0.7853, 0.11249, 0.5,    0.5},     // the paper return key (the menus' B): the return art at the player's own seat, its frame trimmed past 0.85 of the first fitting's so its glyphs stand the select key's height
+    {"select",   B_A,     IA_IN_A | IA_IN_B, 0.83409, 0.64850, 0.116875, 0.5,    0.5},     // the paper confirm key (the menus' A), at 0.85 of its first frame; the pair's centre sits on the diamond's own centre, the two papers translated together off the seats the player settled in the editor
+    {"return",   B_B,     IA_IN_A | IA_IN_B, 0.88529, 0.82350, 0.11249, 0.5,    0.5},     // the paper return key (the menus' B): the return art translated with its pair (above), its frame trimmed past 0.85 of the first fitting's so its glyphs stand the select key's height
     {"letter_x", B_X,     IA_IN_B,           0.938, 0.097, 0.05309, 0.5,    0.5},     // menu B's sub-option key, at the top right, its disc shrunk to the - / + pair's disc size
     {"letter_a", B_A,     IA_IN_C,           0.91269, 0.736, 0.0728, 0.5,    0.5},     // the death page's restart key (menu C): the diamond's A seat and size, so the diary takes the right hand where the game left it
     {"letter_b", B_B,     IA_IN_C,           0.85969, 0.85108, 0.0728, 0.5,    0.5},     // the death page's quit key (menu C): the diamond's B seat and size, on the same terms
@@ -498,8 +498,8 @@ static const struct { const char *art; int bit; int modes; CGFloat x, y, w, ax, 
     {"pause",    B_PLUS,  IA_IN_G,           0.4619, 0.9190, 0.0502, 0.4986, 0.5069},  // + (pause), the pause art on the Plus key: placed by its disc's centre, like its pair; the pair is centred on the screen's middle line
 };
 #define ISAAC_N (int)(sizeof k_isaac / sizeof k_isaac[0])
-static const CGFloat IA_DPAD_X = 0.133, IA_DPAD_Y = 0.736, IA_DPAD_W = 0.167475;   // the menus' D-pad cross (the stick's column, at three quarters of the old disc's frame and then a tenth larger, at the player's word)
-static const CGFloat IA_STICK_X = 0.14031, IA_STICK_Y = 0.743, IA_STICK_W = 0.16725, IA_THUMB_W = 0.07725;   // the game's stick base and thumb (frame widths, as k_isaac's; three quarters of the first fitting, like the keys); the base's seat sits 20 px right of the cross's
+static const CGFloat IA_DPAD_X = 0.14031, IA_DPAD_Y = 0.743, IA_DPAD_W = 0.167475;   // the menus' D-pad cross, on the stick base's own seat, so the left hand's spot is the same in the menus as in the game (its frame at three quarters of the old disc's and then a tenth larger, at the player's word)
+static const CGFloat IA_STICK_X = 0.14031, IA_STICK_Y = 0.743, IA_STICK_W = 0.16725, IA_THUMB_W = 0.07725;   // the game's stick base and thumb (frame widths, as k_isaac's; three quarters of the first fitting, like the keys); the menus' cross sits on the same seat
 static UIImage *isaacImage(const char *name) {   // a padisaac image, loaded once and cached (nil when the file is absent)
     static NSMutableDictionary *cache;
     if (!cache) cache = [[NSMutableDictionary alloc] init];
@@ -517,7 +517,7 @@ static CALayer *isaacImgLayer(CALayer *parent, const char *name) {
     l.opacity = 1.0;   // the art bakes its own opacity in; the engine renders it at full strength and never multiplies it again (set explicitly: the default already is 1)
     [parent addSublayer:l]; return l;
 }
-static CGFloat isaacSeatY(CGFloat y, CGRect b) {   // a seat's height on this screen: below the top strip, seats stack up from the anchor line (0.736, the cross's and the diamond centre's own line) in width fractions, the skin pad's SKIN_REF_HW remap on this pad's own anchor, so the clusters keep the shape they were measured in on any screen; the top strip (menu B's X key) stays a raw height fraction, hugging the top edge as the skin pad's top row does
+static CGFloat isaacSeatY(CGFloat y, CGRect b) {   // a seat's height on this screen: below the top strip, seats stack up from the anchor line (0.736, the diamond centre's own line) in width fractions, the skin pad's SKIN_REF_HW remap on this pad's own anchor, so the clusters keep the shape they were measured in on any screen; the top strip (menu B's X key) stays a raw height fraction, hugging the top edge as the skin pad's top row does
     if (y > 0.2) y = 0.736 + (y - 0.736) * SKIN_REF_HW * b.size.width / b.size.height;
     return y;
 }
@@ -575,7 +575,7 @@ static CGPoint isaacCenter(int i, CGRect b) {   // key i's art frame centre, in 
     c.x += g_icustDX[i] * b.size.width; c.y += g_icustDY[i] * b.size.height;
     return clampCentre(c, isaacW(i) * b.size.width * 0.5, b);
 }
-static CGPoint isaacDpadCenterRaw(CGRect b) { return CGPointMake(IA_DPAD_X * b.size.width, isaacSeatY(IA_DPAD_Y, b) * b.size.height); }   // the cross's centre from the table alone (its seat is the remap's anchor line, so the remap leaves it where it is)
+static CGPoint isaacDpadCenterRaw(CGRect b) { return CGPointMake(IA_DPAD_X * b.size.width, isaacSeatY(IA_DPAD_Y, b) * b.size.height); }   // the cross's centre from the table alone (its seat is the stick's own, so the remap moves it exactly as it moves the stick's, and the two stay on one point on any screen)
 static CGFloat isaacDpadW(void) { icustLoad(); return IA_DPAD_W * g_icustS[IA_DPAD_SLOT]; }   // the cross's frame width with the player's size multiplier
 static CGPoint isaacDpadCenter(CGRect b) {   // the cross's centre: the table's plus the player's custom offset
     icustLoad();
