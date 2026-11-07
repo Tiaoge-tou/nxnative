@@ -13933,6 +13933,9 @@ static id<MTLTexture> present_raw_src(id<MTLTexture> src) {
 static int present_fullscreen(void) {   // fill the whole target instead of keeping the game picture's aspect ratio: the default (adaptive full-screen); only an env file's explicit DM_FULLSCREEN=0 asks for the native-aspect fit
     static int fs = -1; if (fs < 0) { const char *e = getenv("DM_FULLSCREEN"); fs = !e || atoi(e) ? 1 : 0; } return fs;
 }
+static int present_picture_fill(void) {   // DM_PICTURE_FIT=fill: the front end stretches the picture over the whole screen (front_ios.m takes the row's Fill as the game's fullscreen stretch); the present must draw into the whole canvas too, or it letterboxes the stretched view back to the fit rectangle
+    static int f = -1; if (f < 0) { const char *e = getenv("DM_PICTURE_FIT"); f = e && !strcmp(e, "fill") ? 1 : 0; } return f;
+}
 // The rectangle of the canvas (dw x dh) the picture (pw x ph) is drawn into: the picture's aspect ratio kept and centred, black bars in the rest (no stretching when the screen's ratio
 // differs from the game's, e.g. iPhone about 19.5:9 against the game's 16:9); when the ratios differ by under 1 % (the remainder from a game width that is a multiple of 8 in the
 // full-screen setup, e.g. 1952x900 against 2868x1320 differs by 0.17 %) the whole canvas, leaving no border of a few pixels
@@ -13941,6 +13944,7 @@ static MTLViewport present_viewport(double pw, double ph, double dw, double dh) 
     MTLViewport vp = {floor((dw - pw * s) / 2), floor((dh - ph * s) / 2), round(pw * s), round(ph * s), 0, 1};
     if (fabs((dw / dh) / (pw / ph) - 1) < 0.01) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
     if (present_fullscreen()) vp = (MTLViewport){0, 0, dw, dh, 0, 1};   // DM_FULLSCREEN fills the whole target instead (the picture stretches), as front_ios.m's view frame already promises on that switch
+    if (present_picture_fill()) vp = (MTLViewport){0, 0, dw, dh, 0, 1};   // DM_PICTURE_FIT=fill likewise: front_ios.m's layout already stretched the game view to the full bounds, so the present fills the whole canvas (the MetalFX scaler's output follows this viewport, as for the fit rectangle)
     return vp;
 }
 // The shape the picture is shown in, whatever part of the texture it comes from. The Switch's compositor stretches a buffer's crop to the layer, so a crop only picks texels: Super
