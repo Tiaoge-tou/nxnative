@@ -34,14 +34,20 @@
 // for this title gets derived from its own rounds, the way the old ones were.
 // Round 5 (that title; the wide rounds' lesson): no census this time -- broad nets kept producing
 // single-session false positives (the page-manager object's fields held through whole stretches of
-// play and through neither diary), so this round is a single-position instrument. The one pointer
-// chased is the death flag's sister at +0x85a50 (the spot section below): in this build's round 1 it
-// left 0 for a heap address in the death poll itself, the same moment and fate as the flag at
-// +0x85a20, and the old build's round 4 saw its analog point at objects allocated for the death /
-// diary flow. The chase logs the pointer, its target's vtable (the object's first word: the class
-// identity the diary page's instances share) and the target's first 0x108 bytes on change, so two
-// deaths in one run can name the diary page's object by its vtable. The flag and the in-run flag
-// (+0x85a20, +0x88d28) stay where they already are, timing anchors in the slot layer.
+// play and through neither diary), so that round was a single-position instrument: it chased the
+// death flag's sister at +0x85a50. Its session closed the question -- the sister points at the
+// death record's shell, an object born inside the first second after the first death and frozen
+// from then on, its first word stepping once more at the second death and never stepping back:
+// another event wearing state's clothes, no diary window in it.
+// Round 6 (this round) starts from the code-level hunt in that title's unstripped binary instead:
+// the diary page is a GameOver member embedded in the Game object at +0x27630, its first word a
+// plain u32 state -- the page's Show writes 2, its Hide writes 0, and the game's own per-frame
+// update gates the page's update on it -- and the Game instance pointer is a global, g_Game, at
+// +0x87448 in this build's data segment. So the probe chases just two words through g_Game (the
+// state section below): GOSTATE, the GameOver word, and PAUSESTATE, the same shape at the
+// PauseScreen member's +0x1AE128, logged for the record. The spot chase is gone; the flag and
+// the in-run flag (+0x85a20, +0x88d28) stay where they already are, timing anchors in the slot
+// layer.
 #include "hle.h"
 #include <stdlib.h>
 #include <string.h>
@@ -266,32 +272,31 @@ typedef struct {
 static ip_pin_t g_pins[IP_PIN_MAX];
 static int g_pins_on;       // the deep module's build has a pins row (set when its table starts, below)
 
-// ---- Round 5: the spot chase (see the file's head) ----
-// One root only, keyed by build like the pins: the death flag's sister pointer. It is followed
-// always, the way a pin is, but at its own object size -- the log needs the target's vtable and
-// the field window behind it (objoff 0x00..0x100), not a pin's whole 512 bytes.
-#define IP_SPOT_OBJ 0x108       // bytes followed behind the chased pointer: objoff 0x00..0x100
-static const struct { const char *build_id; size_t slot; } k_isaacprobe_spot[] = {
-    { "91c73fdd575061318d68886316afeac7", 0x85a50 },   // the 1.7.9b build's death-flag sister: 0 until the death poll, then the death / diary flow's object
+// ---- Round 6: the state chase (see the file's head) ----
+// Two u32 state words inside one object, keyed by build like the pins: the module's data segment
+// holds g_Game, the pointer to the single Game object, and two of its embedded members keep
+// their page state in their first word -- the GameOver member's word is 2 while the diary page
+// shows and 0 while it is hidden (the game's own per-frame gate reads it), and the PauseScreen
+// member's word is the same shape for the pause page. Both words are read through the pointer
+// every poll and logged on change; the pointer's own moves are logged too, so a Game object
+// that is created late, or recreated, is followed as it comes and goes.
+static const struct { const char *build_id; size_t gslot, go_off, pause_off; } k_isaacprobe_state[] = {
+    { "91c73fdd575061318d68886316afeac7", 0x87448, 0x27630, 0x1AE128 },   // 1.7.9b: g_Game, and the GameOver / PauseScreen members inside Game
 };
 typedef struct {
-    size_t slot;            // the root slot's offset (the log's root=)
-    uint64_t target;        // the object it points at now; 0 while it points at nothing followable
-    int heap;               // as ip_deep_t's heap
-    uint8_t snap[IP_SPOT_OBJ];
-    uint32_t streak[IP_SPOT_OBJ / 8];   // per 8-byte field, as ip_deep_t's streak
-} ip_spot_t;
-static ip_spot_t g_spot;
-static int g_spot_on;       // the deep module's build has a spot row (set when its table starts, below)
+    size_t gslot;             // the g_Game slot's offset in the module's data segment
+    size_t go_off, pause_off; // the two members' offsets inside the Game object
+    uint64_t game;            // the Game pointer last seen; 0 while no Game object exists
+    int have_go, have_pause;  // the words below hold a reading taken at the current pointer
+    uint32_t go, pause;       // the state words last logged (the log's gostate / pausestate)
+} ip_state_t;
+static ip_state_t g_state;
+static int g_state_on;       // the deep module's build has a state row (set when its table starts, below)
 
 static int ip_is_pin(size_t slot) {
     if (!g_pins_on) return 0;
     for (size_t i = 0; i < sizeof g_pins / sizeof g_pins[0]; i++) if (g_pins[i].slot == slot) return 1;
     return 0;
-}
-
-static int ip_is_spot(size_t slot) {
-    return g_spot_on && g_spot.slot == slot;
 }
 
 static int ip_pins_active(void) {
@@ -314,8 +319,8 @@ static void ip_deep_reset(void) {
     g_deep_mod = NULL; g_deep_lo = NULL;
     for (size_t i = 0; i < sizeof g_pins / sizeof g_pins[0]; i++) memset(&g_pins[i], 0, sizeof g_pins[i]);
     g_pins_on = 0;   // re-armed (or not) from the deep module's build when its table starts
-    memset(&g_spot, 0, sizeof g_spot);
-    g_spot_on = 0;   // the spot chase re-arms the same way
+    memset(&g_state, 0, sizeof g_state);
+    g_state_on = 0;   // the state chase re-arms the same way
 }
 
 // Read a followed deep object's bytes: 0 on success (the heap read refuses a vanished object).
@@ -338,7 +343,7 @@ static void ip_deep_scan_new(ip_range_t *r) {
     const uint64_t *cur = (const uint64_t *)(const void *)r->lo;
     for (size_t s = 0; s < r->nslots; s++) {
         if ((g_deep_seen[s / 8] >> (s % 8)) & 1) continue;
-        if (ip_is_pin(s * 8) || ip_is_spot(s * 8)) continue;   // the pinned and chased roots are followed separately, always
+        if (ip_is_pin(s * 8)) continue;   // the pinned roots are followed separately, always
         int heap; if (!ip_classify(cur[s], &heap, IP_DEEP_OBJ)) continue;
         if (g_ndeep >= IP_DEEP_MAX) {
             if (!g_deep_full_noted) { g_deep_full_noted = 1; LOG("[isaacprobe] deep pointer table full (%d); no further pointers are followed", IP_DEEP_MAX); }
@@ -438,61 +443,50 @@ static int ip_deep_pin_poll(ip_range_t *r, uint64_t t) {
     return changed;
 }
 
-// Read the chased root's object: 0 on success (the heap read refuses a vanished object).
-static int ip_spot_read(const ip_spot_t *p, uint8_t *out) {
-    if (p->heap) return dm_guest_heap_read(p->target, out, IP_SPOT_OBJ);
-    memcpy(out, (const void *)(uintptr_t)p->target, IP_SPOT_OBJ);   // a module's data: its mapping is process-lifetime
+// Read one state word behind the Game pointer: 0 on success. The word's address is classified
+// first (the pointer may be stale for a poll around the object's birth or death), and a heap read
+// refuses a vanished object instead of faulting; the word is never written, only read.
+static int ip_state_read(uint64_t addr, uint32_t *out) {
+    int heap;
+    if (!ip_classify(addr, &heap, 4)) return 1;
+    if (heap) { uint8_t b[4]; if (dm_guest_heap_read(addr, b, 4)) return 1; memcpy(out, b, 4); return 0; }
+    memcpy(out, (const void *)(uintptr_t)addr, 4);   // a module's data: its mapping is process-lifetime
     return 0;
 }
 
-// Diff the chased object's fresh bytes against its snapshot, logging each changed field (a field
-// that changes on every poll for 10 s is named a counter once, then left quiet). Returns the changes.
-static int ip_spot_diff(const char *modname, size_t slot, uint8_t *snap, uint32_t *streak, const uint8_t *buf, uint64_t t) {
-    int changed = 0;
-    for (size_t o = 0; o < IP_SPOT_OBJ; o += 8) {
-        uint64_t nv, ov;
-        memcpy(&nv, buf + o, 8); memcpy(&ov, snap + o, 8);
-        if (nv == ov) { if (streak[o / 8] != ~0u) streak[o / 8] = 0; continue; }
-        memcpy(snap + o, &nv, 8);
-        if (streak[o / 8] == ~0u) continue;   // a named counter stays quiet (and out of the heartbeat's count)
-        changed++;
-        if (++streak[o / 8] >= IP_HOT_POLLS) {
-            streak[o / 8] = ~0u;
-            LOG("[isaacprobe] t=%llu counter spot mod=%s root=0x%zx objoff=0x%zx (changed on every poll for 10 s; its changes are no longer logged)",
-                (unsigned long long)t, modname, slot, o);
-            continue;
-        }
-        LOG("[isaacprobe] t=%llu spot mod=%s root=0x%zx objoff=0x%zx old=0x%016llx new=0x%016llx",
-            (unsigned long long)t, modname, slot, o, (unsigned long long)ov, (unsigned long long)nv);
-    }
-    return changed;
+// Poll one state word behind the current Game pointer: log its first reading at this pointer and
+// every change after. Returns the changes logged.
+static int ip_state_word(ip_range_t *r, uint64_t t, const char *tag, size_t off, int *have, uint32_t *last) {
+    uint32_t v;
+    if (ip_state_read(g_state.game + off, &v)) return 0;   // unreadable this poll (the object is being born or freed): a later poll retries
+    if (*have && v == *last) return 0;
+    if (*have) LOG("[isaacprobe] t=%llu %s mod=%s old=%u new=%u",
+                   (unsigned long long)t, tag, r->m->name, *last, v);
+    else LOG("[isaacprobe] t=%llu %s mod=%s value=%u (first read, g_Game=0x%016llx)",
+             (unsigned long long)t, tag, r->m->name, v, (unsigned long long)g_state.game);
+    *have = 1; *last = v;
+    return 1;
 }
 
-// One poll over the chased root: re-resolve its target -- a swap adopts the new object, restarts its
-// diff and is logged with the spot tag, the target's vtable on the same line; a root pointing at
-// nothing followable idles (never dropped) until it points again -- then diff the current object.
-static int ip_spot_poll(ip_range_t *r, uint64_t t) {
-    if (!g_spot_on) return 0;   // this build has no chased root
-    ip_spot_t *p = &g_spot;
-    if (p->slot + 8 > r->len) return 0;
+// One poll over the chased state: follow g_Game itself -- logged as it appears, moves or goes,
+// with the words' readings restarted at each new pointer -- then the two state words behind it.
+static int ip_state_poll(ip_range_t *r, uint64_t t) {
+    if (!g_state_on) return 0;   // this build has no chased state
+    ip_state_t *p = &g_state;
+    if (p->gslot + 8 > r->len) return 0;
     const uint64_t *cur = (const uint64_t *)(const void *)r->lo;
-    uint8_t buf[IP_SPOT_OBJ];
-    uint64_t v = cur[p->slot / 8];
-    int heap;
-    if (v != p->target) {
-        if (ip_classify(v, &heap, IP_SPOT_OBJ)) {
-            p->target = v; p->heap = heap;
-            if (ip_spot_read(p, buf)) { p->target = 0; return 0; }   // died between the classify and the read: idle, a later poll retries
-            memcpy(p->snap, buf, IP_SPOT_OBJ); memset(p->streak, 0, sizeof p->streak);
-            uint64_t vt0; memcpy(&vt0, buf, 8);
-            LOG("[isaacprobe] t=%llu spot mod=%s root=0x%zx now points at 0x%016llx vt=0x%016llx",
-                (unsigned long long)t, r->m->name, p->slot, (unsigned long long)v, (unsigned long long)vt0);
-        } else p->target = 0;   // nothing followable there now: 0, or a pointer too near a range's end to hold the window
-        return 0;
+    int changed = 0;
+    uint64_t v = cur[p->gslot / 8];
+    if (v != p->game) {
+        LOG("[isaacprobe] t=%llu state mod=%s g_Game old=0x%016llx new=0x%016llx",
+            (unsigned long long)t, r->m->name, (unsigned long long)p->game, (unsigned long long)v);
+        p->game = v; p->have_go = 0; p->have_pause = 0;
+        changed++;
     }
-    if (!p->target) return 0;
-    if (ip_spot_read(p, buf)) { p->target = 0; return 0; }   // the object died under us: idle until the root points again
-    return ip_spot_diff(r->m->name, p->slot, p->snap, p->streak, buf, t);
+    if (!p->game) return changed;   // no Game object yet: the words behind the pointer do not exist
+    changed += ip_state_word(r, t, "gostate", p->go_off, &p->have_go, &p->go);
+    changed += ip_state_word(r, t, "pausestate", p->pause_off, &p->have_pause, &p->pause);
+    return changed;
 }
 
 static void *isaacprobe_main(void *arg) {
@@ -523,15 +517,15 @@ static void *isaacprobe_main(void *arg) {
                     break;
                 }
                 if (!g_pins_on) LOG("[isaacprobe] no pinned roots for build %s: this round runs the wide net only", deep->m->build_id);
-                for (size_t j = 0; j < sizeof k_isaacprobe_spot / sizeof k_isaacprobe_spot[0]; j++) {
-                    if (strcmp(deep->m->build_id, k_isaacprobe_spot[j].build_id)) continue;
-                    g_spot.slot = k_isaacprobe_spot[j].slot; g_spot_on = 1;
-                    LOG("[isaacprobe] spot-chasing root +0x%zx: followed always, its target logged by vtable and first %d bytes",
-                        g_spot.slot, IP_SPOT_OBJ);
+                for (size_t j = 0; j < sizeof k_isaacprobe_state / sizeof k_isaacprobe_state[0]; j++) {
+                    if (strcmp(deep->m->build_id, k_isaacprobe_state[j].build_id)) continue;
+                    g_state.gslot = k_isaacprobe_state[j].gslot; g_state.go_off = k_isaacprobe_state[j].go_off; g_state.pause_off = k_isaacprobe_state[j].pause_off; g_state_on = 1;
+                    LOG("[isaacprobe] state-chasing g_Game at +0x%zx: the GameOver state word at Game+0x%zx and the PauseScreen word at Game+0x%zx, logged on change",
+                        g_state.gslot, g_state.go_off, g_state.pause_off);
                     break;
                 }
             }
-            ip_deep_scan_new(deep); changed += ip_deep_poll(deep, t); changed += ip_deep_pin_poll(deep, t); changed += ip_spot_poll(deep, t);
+            ip_deep_scan_new(deep); changed += ip_deep_poll(deep, t); changed += ip_deep_pin_poll(deep, t); changed += ip_state_poll(deep, t);
         }
         changed10 += changed;
         if (++poll % 40 == 0) {
