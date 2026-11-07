@@ -1,0 +1,48 @@
+# The Binding of Isaac: Repentance (Nicalis' engine on NVN, SDK 12.3.3), base game v0 (the NACP's display version C1.4.1&M1.4.6).
+# This profile is the provisional one scripts/build_ipa_from_nsp.py generates for this title (survey of the game's own files with
+# dm/games/profile_guess.py, the modules row as the build's NRO collection leaves it), written into dm/games with one deliberate
+# difference: display_wide is on, a probe of whether the game sizes its picture from nn::oe's default display resolution
+# (hle_oe.c h_oe_DefRes). Every other row holds the provisional's value, checked against the build that shipped as gc-237:
+# its survey lines, the rewrite tables' build IDs in the shipped app and the device log of that build.
+# The game's own patches are in patches.py beside this file (the directory-entry comparator cut, NRO build 8821c0a7).
+
+# ---- Identity ----
+title_id	010021C000222000
+program_id	010021C000222000
+
+# ---- App ----
+name	The Binding of Isaac: Repentance
+ipa	TheBindingOfIsaacRepentance.ipa
+app_category	public.app-category.games
+
+# ---- Versions ----
+build	v0	C1.4.1&M1.4.6	main=b33a680a4eeaeedfd8e2e6f19320031c	subsdk0=52b481523227def10a2fdcb5137b8d8c	sdk=dfa12b7019fffbe725fa4b4f1335988c
+package	v0
+shader_versions	v0
+
+# ---- Files ----
+# subsdk1 (NintendoSDK_movie) is loaded because the NROs the game loads at run time import from it, which main does not
+modules	main subsdk0 subsdk1 sdk
+romfs_marker	.nro/Repentance.nro
+zip_store	.b:.mp4:.nro:.ogg:.metallib
+
+# ---- Graphics ----
+# With the fullscreen setting on, nn::oe reports the host's render width (2344x1080 on the phone) at the docked height
+# instead of 1920x1080. Whether this engine sizes its frame from that answer is unmeasured: from the provisional profile
+# it has only ever rendered 1920x1080, which the present then stretches to the screen (measured on the iPhone: the
+# picture stretched 1.221x horizontally). On as a probe; the answer is in the device log (default display resolution,
+# the present's picture shape and crop).
+display_wide	on
+
+# ---- Memory ----
+# main sets a heap of at most the pool - 64 MB: a 3328 MB heap region
+mem_reserve	0x100000000
+mem_alias	0x10000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+# the NPDM declares 0 MB of system resource: no virtual address memory
+sys_resource	0x0
+
+# ---- Shader split ----
+shader_groups	/resources/=resources /resources.kr/=resourceskr /resources.jp/=resourcesjp /.nrr/=nrr /.nro/=nro
+shader_note	The Binding of Isaac: Repentance shaders
